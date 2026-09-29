@@ -1,0 +1,8 @@
+[package]
+name = "fastjpeg"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+jpeg-encoder = "0.7"

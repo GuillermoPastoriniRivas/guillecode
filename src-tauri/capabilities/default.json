@@ -1,0 +1,26 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "permisos de la ventana principal",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "opener:default",
+    "opener:allow-open-url",
+    "opener:allow-reveal-item-in-dir",
+    "opener:allow-open-path",
+    "notification:default",
+    "core:window:allow-destroy",
+    "core:window:allow-close",
+    "core:window:allow-set-title",
+    "core:window:allow-request-user-attention",
+    "core:window:allow-is-minimized",
+    "core:window:allow-unminimize",
+    "core:window:allow-show",
+    "core:window:allow-set-focus",
+    "core:window:allow-hide"
+  ]
+}

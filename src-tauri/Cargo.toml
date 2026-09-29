@@ -1,0 +1,84 @@
+[package]
+name = "app"
+version = "0.2.0"
+description = "GuilleCode"
+authors = ["guille"]
+license = ""
+repository = ""
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.11.6", features = ["devtools", "tray-icon"] }
+tauri-plugin-log = "2"
+tauri-plugin-shell = "2.3.6"
+tauri-plugin-dialog = "2.7.3"
+tauri-plugin-opener = "2"
+tauri-plugin-notification = "2"
+uuid = { version = "1.20.0", features = ["v4"] }
+portable-pty = "0.8"
+ignore = "0.4"
+regex = "1"
+notify-debouncer-mini = "0.7"
+trash = "5"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+tauri-plugin-single-instance = "2.4.5"
+tauri-plugin-autostart = "2.5.1"
+chrono = "0.4.45"
+tiny_http = "0.12.0"
+ureq = { version = "2", features = ["json"] }
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
+p256 = { version = "0.13", features = ["ecdh", "ecdsa"] }
+aes-gcm = "0.10"
+hkdf = "0.12"
+sha2 = "0.10"
+rand_core = { version = "0.6", features = ["getrandom"] }
+base64 = "0.22"
+jpeg-encoder = "0.7"
+fastjpeg = { path = "fastjpeg" }
+
+[target.'cfg(windows)'.dependencies]
+uiautomation = "0.25"
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Dwm",
+  "Win32_Graphics_Gdi",
+  "Win32_Graphics_Direct3D",
+  "Win32_Graphics_Direct3D11",
+  "Win32_Graphics_Dxgi",
+  "Win32_Graphics_Dxgi_Common",
+  "Win32_Media_MediaFoundation",
+  "Win32_Storage_FileSystem",
+  "Win32_Storage_Xps",
+  "Win32_System_Com",
+  "Win32_System_DataExchange",
+  "Win32_System_Memory",
+  "Win32_System_Ole",
+  "Win32_System_Variant",
+  "Win32_System_Power",
+  "Win32_System_Registry",
+  "Win32_System_RemoteDesktop",
+  "Win32_System_StationsAndDesktops",
+  "Win32_System_Threading",
+  "Win32_System_SystemServices",
+  "Win32_UI_HiDpi",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+[profile.dev.package.jpeg-encoder]
+opt-level = 3
+
+[profile.dev.package.fastjpeg]
+opt-level = 3

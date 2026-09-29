@@ -1,0 +1,354 @@
+use serde::Serialize;
+use std::collections::HashMap;
+use std::net::TcpListener;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use tauri::Manager;
+use tauri_plugin_shell::process::{CommandChild, CommandEvent};
+use tauri_plugin_shell::ShellExt;
+
+pub mod accounts;
+pub mod desktop;
+pub mod fs;
+pub mod gh;
+pub mod git;
+pub mod hub;
+pub mod live;
+pub mod machine;
+pub mod oc;
+pub mod proc;
+pub mod push;
+pub mod remote;
+pub mod routines;
+pub mod search;
+pub mod term;
+pub mod usage;
+pub mod voice;
+pub mod watch;
+
+const MAX_RECENT_PROJECTS: usize = 12;
+
+#[derive(Serialize, Clone, Default)]
+pub struct ServerConfig {
+    pub url: String,
+    pub username: String,
+    pub password: String,
+    pub worktree: String,
+}
+
+pub struct ServerState {
+    child: Mutex<Option<CommandChild>>,
+    config: Mutex<Option<ServerConfig>>,
+    project: Mutex<Option<String>>,
+}
+
+pub fn ensure_server(app: &tauri::AppHandle) -> Result<ServerConfig, String> {
+    let state = app.state::<ServerState>();
+    let mut config = {
+        let mut cfg = state.config.lock().unwrap();
+        if cfg.is_none() {
+            *cfg = Some(spawn_server(app, &state, &fallback_cwd(app))?);
+        }
+        cfg.clone().unwrap()
+    };
+    config.worktree = current_project(app);
+    Ok(config)
+}
+
+fn current_project(app: &tauri::AppHandle) -> String {
+    let state = app.state::<ServerState>();
+    let mut project = state.project.lock().unwrap();
+    if project.is_none() {
+        *project = Some(load_saved_worktree(app));
+    }
+    project.clone().unwrap_or_default()
+}
+
+#[tauri::command]
+async fn server_config(app: tauri::AppHandle) -> Result<ServerConfig, String> {
+    ensure_server(&app)
+}
+
+#[tauri::command]
+async fn set_server_worktree(app: tauri::AppHandle, path: String) -> Result<ServerConfig, String> {
+    if !Path::new(&path).is_dir() {
+        return Err(format!("la carpeta no existe: {}", path));
+    }
+    remember_project(&app, &path);
+    *app.state::<ServerState>().project.lock().unwrap() = Some(path);
+    ensure_server(&app)
+}
+
+pub(crate) fn recent_project_list(app: &tauri::AppHandle) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for p in load_recent(app) {
+        if Path::new(&p).is_dir() && !out.iter().any(|o| same_project(o, &p)) {
+            out.push(p);
+        }
+    }
+    out
+}
+
+#[tauri::command]
+fn recent_projects(app: tauri::AppHandle) -> Vec<String> {
+    recent_project_list(&app)
+}
+
+fn spawn_server(app: &tauri::AppHandle, state: &ServerState, worktree: &str) -> Result<ServerConfig, String> {
+    let port = TcpListener::bind(("127.0.0.1", 0))
+        .and_then(|l| l.local_addr())
+        .map(|a| a.port())
+        .map_err(|e| format!("no hay puertos libres: {}", e))?;
+    let password = uuid::Uuid::new_v4().simple().to_string();
+    let sidecar = resolve_sidecar_path()?;
+    let mut command = app
+        .shell()
+        .command(sidecar.to_string_lossy().into_owned())
+        .args(["serve", "--port", &port.to_string()])
+        .current_dir(worktree)
+        .env("OPENCODE_SERVER_USERNAME", "opencode")
+        .env("OPENCODE_SERVER_PASSWORD", &password);
+    if let Some(extra) = desktop::opencode_config(app) {
+        command = command.env("OPENCODE_CONFIG_CONTENT", extra);
+    }
+    let (mut rx, child) = command
+        .spawn()
+        .map_err(|e| format!("no se pudo iniciar opencode: {}", e))?;
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            match event {
+                CommandEvent::Stdout(line) => log::info!("[opencode] {}", String::from_utf8_lossy(&line)),
+                CommandEvent::Stderr(line) => log::warn!("[opencode] {}", String::from_utf8_lossy(&line)),
+                CommandEvent::Terminated(payload) => {
+                    log::warn!("[opencode] terminado: {:?}", payload);
+                    let state = handle.state::<ServerState>();
+                    state.child.lock().unwrap().take();
+                    state.config.lock().unwrap().take();
+                }
+                _ => {}
+            }
+        }
+    });
+    *state.child.lock().unwrap() = Some(child);
+    Ok(ServerConfig {
+        url: format!("http://127.0.0.1:{}", port),
+        username: "opencode".into(),
+        password,
+        worktree: worktree.to_string(),
+    })
+}
+
+pub(crate) fn app_data_file(app: &tauri::AppHandle, name: &str) -> Option<PathBuf> {
+    let dir = app.path().app_data_dir().ok()?;
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir.join(name))
+}
+
+fn load_recent(app: &tauri::AppHandle) -> Vec<String> {
+    let from_json = app_data_file(app, "recent_projects.json")
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+        .unwrap_or_default();
+    if !from_json.is_empty() {
+        return from_json;
+    }
+    app_data_file(app, "last_project.txt")
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .map(|s| vec![s])
+        .unwrap_or_default()
+}
+
+fn same_project(a: &str, b: &str) -> bool {
+    let norm = |s: &str| s.replace('\\', "/").trim_end_matches('/').to_lowercase();
+    norm(a) == norm(b)
+}
+
+fn remember_project(app: &tauri::AppHandle, path: &str) {
+    let mut recent = load_recent(app);
+    recent.retain(|p| !same_project(p, path));
+    recent.insert(0, path.to_string());
+    recent.truncate(MAX_RECENT_PROJECTS);
+    if let Some(file) = app_data_file(app, "recent_projects.json") {
+        let _ = std::fs::write(file, serde_json::to_string_pretty(&recent).unwrap_or_default());
+    }
+    if let Some(file) = app_data_file(app, "last_project.txt") {
+        let _ = std::fs::write(file, path);
+    }
+}
+
+fn load_saved_worktree(app: &tauri::AppHandle) -> String {
+    load_recent(app)
+        .into_iter()
+        .find(|p| Path::new(p).is_dir())
+        .unwrap_or_default()
+}
+
+fn fallback_cwd(app: &tauri::AppHandle) -> String {
+    app.path()
+        .home_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| ".".to_string())
+}
+
+fn resolve_sidecar_path() -> Result<PathBuf, String> {
+    let exe_dir = std::env::current_exe()
+        .map_err(|e| format!("current_exe falló: {}", e))?
+        .parent()
+        .map(|p| p.to_path_buf())
+        .ok_or("no se pudo resolver la carpeta del exe")?;
+    let candidates = [
+        exe_dir.join("opencode.exe"),
+        exe_dir.join("binaries").join("opencode.exe"),
+        exe_dir.join("opencode-x86_64-pc-windows-msvc.exe"),
+        exe_dir.join("binaries").join("opencode-x86_64-pc-windows-msvc.exe"),
+        exe_dir.join("opencode"),
+    ];
+    candidates
+        .iter()
+        .find(|c| c.exists())
+        .cloned()
+        .ok_or_else(|| format!("no encontré el binario de opencode junto al exe: {:?}", candidates))
+}
+
+fn shutdown(app: &tauri::AppHandle) {
+    if let Some(child) = app.state::<ServerState>().child.lock().unwrap().take() {
+        let _ = child.kill();
+    }
+    term::kill_all(app);
+    app.state::<watch::WatchState>().current.lock().unwrap().take();
+    desktop::shutdown();
+    machine::keep_awake(false);
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| hub::show_main(app)))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![hub::HIDDEN_ARG]),
+        ))
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
+        .invoke_handler(tauri::generate_handler![
+            server_config,
+            set_server_worktree,
+            recent_projects,
+            hub::app_quit,
+            hub::autostart_get,
+            hub::autostart_set,
+            routines::routines_list,
+            routines::routines_save,
+            routines::routines_delete,
+            routines::routines_set_enabled,
+            routines::routines_run_now,
+            remote::remote_status,
+            remote::remote_set_enabled,
+            remote::remote_regenerate_token,
+            remote::remote_qr,
+            remote::remote_set_prefs,
+            remote::remote_push_test,
+            voice::voice_get,
+            voice::voice_set,
+            voice::voice_test,
+            git::git_root,
+            git::git_status,
+            git::git_log,
+            git::git_commit_detail,
+            git::git_show_file,
+            git::git_show_file_base64,
+            git::git_diff_file,
+            git::git_branches,
+            git::git_checkout,
+            git::git_subrepos,
+            git::git_stage,
+            git::git_stage_all,
+            git::git_unstage,
+            git::git_unstage_all,
+            git::git_discard,
+            git::git_apply_patch,
+            git::git_ignore_add,
+            git::git_commit,
+            git::git_push,
+            git::git_pull,
+            git::git_fetch,
+            git::git_stash,
+            git::git_blame,
+            git::git_default_branch,
+            git::git_staged_context,
+            git::git_range_context,
+            git::git_changes_context,
+            fs::fs_read_dir,
+            fs::fs_read_file,
+            fs::fs_read_base64,
+            fs::fs_write_file,
+            fs::fs_stat,
+            fs::fs_create_file,
+            fs::fs_create_dir,
+            fs::fs_rename,
+            fs::fs_delete,
+            fs::fs_list_files,
+            search::search_text,
+            search::search_replace,
+            watch::watch_start,
+            watch::watch_stop,
+            gh::gh_status,
+            gh::gh_pr_list,
+            gh::gh_pr_view,
+            gh::gh_pr_diff,
+            gh::gh_pr_create,
+            gh::gh_pr_merge,
+            gh::gh_pr_checkout,
+            gh::gh_pr_comment,
+            gh::gh_pr_review,
+            gh::gh_pr_ready,
+            term::terminal_shells,
+            term::terminal_spawn,
+            term::terminal_write,
+            term::terminal_resize,
+            term::terminal_kill,
+            term::terminal_kill_all,
+            usage::provider_usage,
+            usage::chatgpt_usage,
+            usage::go_usage,
+            accounts::auth_entries,
+            accounts::validate_opencode_key,
+            desktop::desktop_status,
+            desktop::desktop_update,
+            desktop::desktop_stop_all,
+            desktop::desktop_browser_restart,
+            live::live_busy_sessions
+        ])
+        .setup(|app| {
+            if cfg!(debug_assertions) {
+                app.handle().plugin(
+                    tauri_plugin_log::Builder::default()
+                        .level(log::LevelFilter::Info)
+                        .build(),
+                )?;
+            }
+            proc::install(app.handle().clone());
+            app.manage(ServerState { child: Mutex::new(None), config: Mutex::new(None), project: Mutex::new(None) });
+            desktop::start(app.handle());
+            routines::start(app.handle());
+            push::start(app.handle());
+            remote::start(app.handle());
+            live::start(app.handle());
+            hub::setup(app.handle())?;
+            app.manage(term::TermState { terms: Mutex::new(HashMap::new()) });
+            app.manage(watch::WatchState { current: Mutex::new(None) });
+            Ok(())
+        })
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                shutdown(app);
+            }
+        });
+}
