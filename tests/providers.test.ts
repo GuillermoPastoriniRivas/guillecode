@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { chooseAvailableModel, hasAccount, modelAvailable, EMPTY_MODEL } from "../src/lib/providers.ts"
+import { chooseAvailableModel, hasAccount, isFreeModel, modelAvailable, modelVisible, EMPTY_MODEL } from "../src/lib/providers.ts"
 
 const chatgpt = { providerID: "openai", modelID: "gpt-test" }
 const go = { providerID: "opencode-go", modelID: "deepseek-test" }
@@ -28,4 +28,17 @@ test("sin cuentas no habilita modelos gratuitos del motor ni deja modelo obsolet
 test("Zen con clave y cuentas configuradas por entorno siguen disponibles", () => {
   assert.equal(hasAccount({ id: "opencode", source: "config", options: { apiKey: "test" } }), true)
   assert.equal(hasAccount({ id: "opencode-go", source: "env" }), true)
+})
+
+test("solo gratuitos de Zen: detecta por costo y por sufijo y no toca otros proveedores", () => {
+  assert.equal(isFreeModel("big-pickle", { input: 0, output: 0 }), true)
+  assert.equal(isFreeModel("algo-free", { input: 1, output: 2 }), true)
+  assert.equal(isFreeModel("gpt-5.5", { input: 5, output: 30 }), false)
+  assert.equal(isFreeModel("sin-costo"), false)
+  const paid = { providerID: "opencode", modelID: "gpt-5.5", cost: { input: 5, output: 30 } }
+  const free = { providerID: "opencode", modelID: "big-pickle", cost: { input: 0, output: 0 } }
+  assert.equal(modelVisible(paid, true), false)
+  assert.equal(modelVisible(free, true), true)
+  assert.equal(modelVisible(paid, false), true)
+  assert.equal(modelVisible({ providerID: "opencode-go", modelID: "glm-5.3", cost: { input: 1, output: 4 } }, true), true)
 })

@@ -22,7 +22,7 @@ import { Composer, promptBody } from "./Composer"
 import { cacheHome, dismissPushNudge, ensureSeenBaseline, isUnread, markSeen, pushNudgeDismissed, readHomeCache, type ProjectData } from "./local"
 import { NotificationSettings, usePushStatus } from "./Notifications"
 import { PcCard } from "./Pc"
-import { ChatgptQuotaChip, ChatgptQuotaSheet, QuotaChip, QuotaSheet, useChatgptQuota, useQuota } from "./Quota"
+import { QuotaHub, type QuotaBarHandle } from "./Quota"
 import { Icon, Md, OfflineBanner, useLive, usePoll } from "./ui"
 
 export type Route = { kind: "home" } | { kind: "session"; project: string; id: string; title: string }
@@ -187,16 +187,8 @@ export function Home({ open, viewed }: { open: (r: Route) => void; viewed: strin
   const shown = useRef(false)
   const pendingViewed = useRef(viewed)
   const push = usePushStatus()
-  const quota = useQuota()
-  const onChatgpt = info?.prefs?.model?.providerID === "openai"
-  const chatgptQuota = useChatgptQuota(onChatgpt)
-  const refreshGoQuota = quota.refreshSoon
-  const refreshChatgptQuota = chatgptQuota.refreshSoon
-  const refreshQuota = useCallback(() => {
-    refreshGoQuota()
-    refreshChatgptQuota()
-  }, [refreshGoQuota, refreshChatgptQuota])
-  const [quotaOpen, setQuotaOpen] = useState(false)
+  const quotaBar = useRef<QuotaBarHandle>(null)
+  const refreshQuota = useCallback(() => quotaBar.current?.refreshSoon(), [])
 
   const showCache = useCallback(() => {
     const cached = cache.current
@@ -321,12 +313,7 @@ export function Home({ open, viewed }: { open: (r: Route) => void; viewed: strin
             <Icon name="loading" spin /> reconectando
           </span>
         )}
-        {info &&
-          (onChatgpt ? (
-            <ChatgptQuotaChip quota={chatgptQuota.quota} onOpen={() => setQuotaOpen(true)} />
-          ) : (
-            <QuotaChip quota={quota.quota} onGo={info.prefs?.model?.providerID === "opencode-go"} onOpen={() => setQuotaOpen(true)} />
-          ))}
+        {info && <QuotaHub ref={quotaBar} />}
         <button type="button" className="icon-btn" onClick={() => setSettings(true)} aria-label="Notificaciones">
           <Icon name={push.status?.kind === "on" ? "bell" : "bell-slash"} />
         </button>
@@ -402,6 +389,7 @@ export function Home({ open, viewed }: { open: (r: Route) => void; viewed: strin
                 placeholder="¿Qué le pedís al agente?"
                 initialModel={info?.prefs?.model ?? null}
                 favorites={info?.prefs?.favorites ?? []}
+                zenFreeOnly={info?.prefs?.zenFreeOnly ?? false}
                 rows={3}
                 autoFocus
                 voice={info?.voice}
@@ -449,10 +437,6 @@ export function Home({ open, viewed }: { open: (r: Route) => void; viewed: strin
         </section>
       )}
       {settings && <NotificationSettings push={push} onClose={() => setSettings(false)} />}
-      {quotaOpen && onChatgpt && chatgptQuota.quota && (
-        <ChatgptQuotaSheet quota={chatgptQuota.quota} onReload={chatgptQuota.reload} onClose={() => setQuotaOpen(false)} />
-      )}
-      {quotaOpen && !onChatgpt && quota.quota && <QuotaSheet quota={quota.quota} onReload={quota.reload} onClose={() => setQuotaOpen(false)} />}
     </main>
   )
 }

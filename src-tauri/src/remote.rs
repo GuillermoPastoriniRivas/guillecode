@@ -189,6 +189,9 @@ fn serve_static(app: &AppHandle, req: Request, path: &str) {
 }
 
 fn proxy(app: &AppHandle, mut req: Request, target_path: &str) {
+    if crate::updates::installing(app) && req.method().as_str() != "GET" {
+        return respond_json(req, 503, json!({ "error": "GuilleCode se está actualizando. Reintentá cuando vuelva a abrirse." }));
+    }
     let server = match ensure_server(app) {
         Ok(s) => s,
         Err(e) => return respond_json(req, 502, json!({ "error": e })),

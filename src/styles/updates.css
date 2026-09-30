@@ -1,0 +1,13 @@
+.update-button { white-space: nowrap; font-size: 11px; }
+.update-button.has-update { color: var(--accent-strong); border-color: var(--border-focus); }
+.updates-panel { position: fixed; z-index: 100; top: 50px; right: 16px; width: min(480px, calc(100vw - 32px)); max-height: calc(100vh - 90px); overflow: auto; padding: 20px; background: var(--bg-overlay); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); }
+.updates-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.updates-head h2 { font-size: 16px; }
+.updates-panel h3 { font-size: 14px; margin: 16px 0 10px; }
+.updates-panel p { margin: 10px 0; }
+.updates-version { color: var(--fg-dim); }
+.updates-notes { white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; background: var(--bg-input); padding: 12px; border-radius: var(--radius); max-height: 260px; overflow: auto; }
+.updates-error { color: var(--error); overflow-wrap: anywhere; }
+.updates-panel progress { width: 100%; accent-color: var(--accent); margin-top: 16px; }
+.updates-actions { display: flex; gap: 8px; margin: 16px 0; }
+.update-installing { position: fixed; z-index: 1000; inset: 0; background: var(--bg-app); display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 16px; }

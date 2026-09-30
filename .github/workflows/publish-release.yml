@@ -1,0 +1,35 @@
+name: Publicar versión de GuilleCode
+run-name: Publicar GuilleCode ${{ inputs.version }}
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Versión del borrador a publicar (X.Y.Z)
+        required: true
+        type: string
+      upgrade_tested:
+        description: Probé la actualización desde la versión anterior y conservó los datos
+        required: true
+        default: false
+        type: boolean
+permissions:
+  contents: write
+concurrency:
+  group: guillecode-release
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: inputs.upgrade_tested
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GC_RELEASE_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verificar artefactos y publicar estable
+        run: node scripts/release.mjs publish "$GC_RELEASE_VERSION" --tested

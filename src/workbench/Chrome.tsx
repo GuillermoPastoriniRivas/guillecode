@@ -27,6 +27,7 @@ import { recentlyActive, useDesktopStatus } from "../lib/desktop"
 import { useOutput } from "../state/output"
 import { showQuickOpen, pickOne, promptInput } from "../state/quickinput"
 import { executeCommand } from "../commands/registry"
+import { useZoom } from "../state/zoom"
 import { pickBranch } from "../views/ScmView"
 import { basename, projectName } from "../lib/paths"
 import { modelKey } from "../lib/opencode"
@@ -35,6 +36,7 @@ import { clockTime } from "../lib/time"
 import { Icon, IconButton } from "../components/ui"
 import { openMenuAt } from "../components/ContextMenu"
 import { Logo } from "../components/Logo"
+import { UpdateButton } from "../components/Updates"
 
 const VIEWS: Array<{ id: ViewId; icon: string; title: string; keys: string }> = [
   { id: "explorer", icon: "files", title: "Explorador", keys: "Ctrl+Shift+E" },
@@ -122,6 +124,7 @@ export function TitleBar() {
         <kbd className="kbd">Ctrl+P</kbd>
       </button>
       <div className="title-actions">
+        <UpdateButton />
         <IconButton icon="layout" title="Presets de layout" onClick={(e) => layoutMenu(e.currentTarget)} />
         <IconButton icon={sidebar ? "layout-sidebar-left" : "layout-sidebar-left-off"} title="Barra lateral (Ctrl+B)" active={sidebar} onClick={() => useLayout.getState().toggleSidebar()} />
         <IconButton icon={panel ? "layout-panel" : "layout-panel-off"} title="Panel inferior (Ctrl+J)" active={panel} onClick={() => useLayout.getState().togglePanel()} />
@@ -414,6 +417,7 @@ export function StatusBar() {
   const desktop = useAttention((s) => s.desktop)
   const alerting = useAttention((s) => s.alerting)
   const silenced = useAttention((s) => s.silenced)
+  const zoom = useZoom((s) => s.level)
 
   const attentionMenu = (el: HTMLElement) =>
     openMenuAt(el, [
@@ -485,6 +489,14 @@ export function StatusBar() {
         />
         <DesktopStatusItem />
         <QuotaStatus />
+        {zoom !== 1 && (
+          <StatusItem
+            icon="zoom-in"
+            label={`${Math.round(zoom * 100)}%`}
+            title="Zoom de la interfaz (Ctrl+= / Ctrl+-). Clic para restablecer"
+            onClick={() => useZoom.getState().reset()}
+          />
+        )}
         <StatusItem
           icon="sparkle"
           label={modelName}

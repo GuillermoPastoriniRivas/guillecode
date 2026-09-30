@@ -12,6 +12,7 @@ type PendingSource = { permissions: PermissionRequest[]; questions: QuestionRequ
 const TITLE = "GuilleCode"
 const TITLE_FLASH_MS = 1100
 const SOUND_MS = 5000
+const SOUND_REPEATS = 3
 const TASKBAR_MS = 4000
 const FOCUS_GRACE_MS = 1500
 
@@ -230,7 +231,15 @@ function engage(): void {
     const n = pendingCount(useAgent.getState())
     setTitle(on ? `● ${n} esperando · ${TITLE}` : TITLE)
   }, TITLE_FLASH_MS)
-  soundTimer = setInterval(playChime, SOUND_MS)
+  let chimes = 1
+  soundTimer = setInterval(() => {
+    chimes += 1
+    playChime()
+    if (chimes >= SOUND_REPEATS && soundTimer) {
+      clearInterval(soundTimer)
+      soundTimer = null
+    }
+  }, SOUND_MS)
   taskbarTimer = setInterval(() => {
     if (isTauri) void getCurrentWindow().requestUserAttention(UserAttentionType.Critical).catch(() => undefined)
   }, TASKBAR_MS)

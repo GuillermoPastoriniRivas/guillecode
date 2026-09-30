@@ -44,6 +44,12 @@ const MODES = [
   { prefix: "#", label: "Sesiones del agente", icon: "hubot" },
 ]
 
+const CATEGORY_ORDER = ["GuilleCode", "Archivo"]
+const categoryRank = (category?: string) => {
+  const i = CATEGORY_ORDER.indexOf(category ?? "")
+  return i === -1 ? CATEGORY_ORDER.length : i
+}
+
 function useRecentFiles(root: string | null): string[] {
   const groups = useEditors((s) => s.groups)
   return useMemo(() => {
@@ -129,6 +135,9 @@ export function QuickInput() {
               const ra = recent.indexOf(a.id)
               const rb = recent.indexOf(b.id)
               if (ra !== -1 || rb !== -1) return (ra === -1 ? 99 : ra) - (rb === -1 ? 99 : rb)
+              const rankA = categoryRank(a.category)
+              const rankB = categoryRank(b.category)
+              if (rankA !== rankB) return rankA - rankB
               return `${a.category}${a.title}`.localeCompare(`${b.category}${b.title}`)
             })
             .map((item) => ({ item, match: { score: 0, positions: [] as number[] } }))

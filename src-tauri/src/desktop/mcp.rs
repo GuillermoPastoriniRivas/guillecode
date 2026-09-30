@@ -45,6 +45,7 @@ fn handle(app: &AppHandle, mut req: Request, token: &str) {
     let channel = match path.as_str() {
         "/mcp/desktop" => Channel::Desktop,
         "/mcp/browser" => Channel::Browser,
+        "/mcp/routines" => Channel::Routines,
         _ => return reply(req, 404, Some(&json!({ "error": "no existe" }))),
     };
     let expected = format!("Bearer {}", token);

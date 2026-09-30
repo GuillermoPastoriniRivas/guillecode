@@ -23,6 +23,7 @@ pub mod routines;
 pub mod search;
 pub mod term;
 pub mod usage;
+pub mod updates;
 pub mod voice;
 pub mod watch;
 
@@ -215,6 +216,14 @@ fn resolve_sidecar_path() -> Result<PathBuf, String> {
 
 fn shutdown(app: &tauri::AppHandle) {
     if let Some(child) = app.state::<ServerState>().child.lock().unwrap().take() {
+        #[cfg(windows)]
+        {
+            // The engine can own browser/MCP children; release their executable locks too.
+            let mut command = std::process::Command::new("taskkill");
+            command.args(["/PID", &child.pid().to_string(), "/T", "/F"]);
+            proc::hide_console(&mut command);
+            let _ = command.output();
+        }
         let _ = child.kill();
     }
     term::kill_all(app);
@@ -235,7 +244,11 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
+            updates::update_check,
+            updates::update_download,
+            updates::update_install,
             server_config,
             set_server_worktree,
             recent_projects,
@@ -318,6 +331,7 @@ pub fn run() {
             usage::go_usage,
             accounts::auth_entries,
             accounts::validate_opencode_key,
+            accounts::set_opencode_zen,
             desktop::desktop_status,
             desktop::desktop_update,
             desktop::desktop_stop_all,
@@ -333,6 +347,7 @@ pub fn run() {
                 )?;
             }
             proc::install(app.handle().clone());
+            app.manage(updates::UpdatesState::default());
             app.manage(ServerState { child: Mutex::new(None), config: Mutex::new(None), project: Mutex::new(None) });
             desktop::start(app.handle());
             routines::start(app.handle());

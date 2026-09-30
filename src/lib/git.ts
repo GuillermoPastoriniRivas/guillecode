@@ -17,6 +17,10 @@ export type GitStatus = {
   behind: number
   entries: StatusEntry[]
   truncated: boolean
+  staged_added: number
+  staged_removed: number
+  unstaged_added: number
+  unstaged_removed: number
 }
 
 export type Commit = {

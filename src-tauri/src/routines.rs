@@ -146,9 +146,15 @@ fn load(app: &AppHandle) -> Vec<Routine> {
 }
 
 fn persist(app: &AppHandle, items: &[Routine]) {
-    if let Some(path) = app_data_file(app, "routines.json") {
-        let _ = std::fs::write(path, serde_json::to_string_pretty(items).unwrap_or_default());
+    if let Err(error) = persist_checked(app, items) {
+        log::error!("[rutinas] {}", error);
     }
+}
+
+fn persist_checked(app: &AppHandle, items: &[Routine]) -> Result<(), String> {
+    let path = app_data_file(app, "routines.json").ok_or("no se pudo localizar la carpeta de datos de GuilleCode")?;
+    let data = serde_json::to_vec_pretty(items).map_err(|e| e.to_string())?;
+    std::fs::write(path, data).map_err(|e| format!("no se pudieron guardar las rutinas: {}", e))
 }
 
 fn changed(app: &AppHandle) {
@@ -270,6 +276,9 @@ pub fn launch(app: &AppHandle, id: &str, manual: bool) -> Result<(), String> {
     let routine = {
         let state = app.state::<RoutinesState>();
         let mut items = state.items.lock().unwrap();
+        if crate::updates::installing(app) {
+            return Err("GuilleCode se está actualizando; intentá cuando vuelva a abrirse".into());
+        }
         let routine = items.iter_mut().find(|r| r.id == id).ok_or("no existe esa rutina")?;
         if is_running(routine) {
             return Err("la rutina ya está corriendo".into());
@@ -351,20 +360,61 @@ pub fn routines_list(app: AppHandle) -> Vec<RoutineView> {
 
 #[tauri::command]
 pub fn routines_save(app: AppHandle, routine: Routine) -> Result<RoutineView, String> {
+    let state = app.state::<RoutinesState>();
+    let mut items = state.items.lock().unwrap();
+    let mut candidate = items.clone();
+    let saved = save_into(&mut candidate, routine)?;
+    persist_checked(&app, &candidate)?;
+    *items = candidate;
+    drop(items);
+    changed(&app);
+    let next = next_run(&saved);
+    Ok(RoutineView { routine: saved, next_run: next })
+}
+
+pub fn update(app: &AppHandle, id: &str, patch: impl FnOnce(Routine) -> Result<Routine, String>) -> Result<RoutineView, String> {
+    let state = app.state::<RoutinesState>();
+    let mut items = state.items.lock().unwrap();
+    let existing = items.iter().find(|r| r.id == id).ok_or("no existe esa rutina")?.clone();
+    let mut candidate = items.clone();
+    let saved = save_into(&mut candidate, patch(existing)?)?;
+    persist_checked(app, &candidate)?;
+    *items = candidate;
+    drop(items);
+    changed(app);
+    let next = next_run(&saved);
+    Ok(RoutineView { routine: saved, next_run: next })
+}
+
+fn validate_schedule(schedule: &Schedule) -> Result<(), String> {
+    let valid_time = |time: &str| {
+        time.len() == 5 && NaiveTime::parse_from_str(time, "%H:%M").is_ok()
+    };
+    match schedule {
+        Schedule::Interval { hours } if *hours == 0 => Err("el intervalo debe ser de al menos una hora".into()),
+        Schedule::Daily { time } | Schedule::Weekly { time, .. } if !valid_time(time) => Err("el horario debe ser HH:MM de 24 horas (hora local de esta PC)".into()),
+        Schedule::Weekly { days, .. } if days.is_empty() || days.iter().any(|d| *d > 6) || days.iter().collect::<HashSet<_>>().len() != days.len() => Err("elegí días únicos entre 0 (lunes) y 6 (domingo)".into()),
+        _ => Ok(()),
+    }
+}
+
+fn save_into(items: &mut Vec<Routine>, routine: Routine) -> Result<Routine, String> {
     if routine.name.trim().is_empty() || routine.prompt.trim().is_empty() {
         return Err("la rutina necesita nombre e instrucciones".into());
     }
-    if !std::path::Path::new(&routine.project).is_dir() {
+    if !std::path::Path::new(&routine.project).is_absolute() || !std::path::Path::new(&routine.project).is_dir() {
         return Err(format!("la carpeta del proyecto no existe: {}", routine.project));
     }
-    let state = app.state::<RoutinesState>();
-    let mut items = state.items.lock().unwrap();
+    validate_schedule(&routine.schedule)?;
     let saved = if let Some(existing) = items.iter_mut().find(|r| !routine.id.is_empty() && r.id == routine.id) {
         let runs = std::mem::take(&mut existing.runs);
         let created_at = existing.created_at;
         *existing = Routine { runs, created_at, ..routine };
         existing.clone()
     } else {
+        if !routine.id.is_empty() {
+            return Err("no existe esa rutina; consultá la lista antes de modificarla".into());
+        }
         let fresh = Routine {
             id: uuid::Uuid::new_v4().simple().to_string(),
             created_at: now_ms(),
@@ -374,11 +424,7 @@ pub fn routines_save(app: AppHandle, routine: Routine) -> Result<RoutineView, St
         items.push(fresh.clone());
         fresh
     };
-    persist(&app, &items);
-    drop(items);
-    changed(&app);
-    let next = next_run(&saved);
-    Ok(RoutineView { routine: saved, next_run: next })
+    Ok(saved)
 }
 
 #[tauri::command]
@@ -409,4 +455,43 @@ pub fn routines_set_enabled(app: AppHandle, id: String, enabled: bool) {
 #[tauri::command]
 pub fn routines_run_now(app: AppHandle, id: String) -> Result<(), String> {
     launch(&app, &id, true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn routine() -> Routine {
+        Routine { id: String::new(), name: "Salud NOVORA".into(), project: std::env::current_dir().unwrap().to_string_lossy().into(), prompt: "Solo diagnóstico".into(), schedule: Schedule::Weekly { days: vec![0, 1, 2, 3, 4], time: "11:30".into() }, agent: None, model: None, variant: None, enabled: true, created_at: 0, runs: vec![] }
+    }
+
+    #[test]
+    fn native_create_update_and_unknown_id() {
+        let mut items = vec![];
+        let created = save_into(&mut items, routine()).unwrap();
+        assert!(!created.id.is_empty());
+        assert!(next_run(&created).is_some());
+        let mut edit = created.clone();
+        edit.name = "Nuevo nombre".into();
+        edit.enabled = false;
+        edit.created_at = 0;
+        items[0].runs.push(RoutineRun { id: "run".into(), started_at: now_ms(), finished_at: Some(now_ms()), session_id: Some("session".into()), status: "ok".into(), summary: "diagnóstico".into(), error: None, manual: true });
+        let updated = save_into(&mut items, edit).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(updated.created_at, created.created_at);
+        assert_eq!(updated.runs[0].session_id.as_deref(), Some("session"));
+        assert!(next_run(&updated).is_none());
+        let mut missing = routine();
+        missing.id = "missing".into();
+        assert!(save_into(&mut items, missing).is_err());
+        assert_eq!(items.len(), 1);
+    }
+
+    #[test]
+    fn invalid_schedules_are_rejected_instead_of_silently_using_nine_am() {
+        for schedule in [Schedule::Interval { hours: 0 }, Schedule::Daily { time: "25:00".into() }, Schedule::Daily { time: "9:00".into() }, Schedule::Weekly { days: vec![], time: "11:30".into() }, Schedule::Weekly { days: vec![7], time: "11:30".into() }, Schedule::Weekly { days: vec![0, 0], time: "11:30".into() }] {
+            assert!(validate_schedule(&schedule).is_err());
+        }
+        assert!(validate_schedule(&routine().schedule).is_ok());
+    }
 }

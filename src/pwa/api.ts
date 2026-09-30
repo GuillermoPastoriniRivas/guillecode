@@ -1,4 +1,5 @@
 const TOKEN_KEY = "guillecode.remote.token"
+let connectionToken: string | null = null
 
 export type SessionInfo = { id: string; title: string; parentID?: string; directory?: string; time: { created: number; updated: number } }
 
@@ -48,7 +49,7 @@ export type RoutineRun = { id: string; startedAt: number; finishedAt: number | n
 
 export type Routine = { id: string; name: string; project: string; schedule: Schedule; enabled: boolean; nextRun: number | null; runs: RoutineRun[] }
 
-export type DesktopPrefs = { model?: ModelRef; favorites?: string[]; variants?: Record<string, string>; agent?: string }
+export type DesktopPrefs = { model?: ModelRef; favorites?: string[]; variants?: Record<string, string>; agent?: string; zenFreeOnly?: boolean }
 
 export type PcActivity = { at: number; channel: "desktop" | "browser"; tool: string; summary: string; ok: boolean }
 
@@ -92,17 +93,24 @@ export class OfflineError extends Error {
 
 export function readToken(): string | null {
   const url = new URL(window.location.href)
-  const fromUrl = url.searchParams.get("t")
+  const fromUrl = url.searchParams.get("t") ?? new URLSearchParams(url.hash.slice(1)).get("t")
   if (fromUrl) {
-    localStorage.setItem(TOKEN_KEY, fromUrl)
+    connectionToken = fromUrl
+    // Safari/private contexts can deny third-party storage in the fleet iframe.
+    if (window.parent === window) {
+      try { localStorage.setItem(TOKEN_KEY, fromUrl) } catch { /* keep the in-memory credential */ }
+    }
     url.searchParams.delete("t")
+    if (new URLSearchParams(url.hash.slice(1)).has("t")) url.hash = ""
     window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`)
   }
-  return localStorage.getItem(TOKEN_KEY)
+  if (connectionToken) return connectionToken
+  try { return localStorage.getItem(TOKEN_KEY) } catch { return null }
 }
 
 export function authHeader(): string {
-  return `Bearer ${localStorage.getItem(TOKEN_KEY) ?? ""}`
+  if (connectionToken) return `Bearer ${connectionToken}`
+  try { return `Bearer ${localStorage.getItem(TOKEN_KEY) ?? ""}` } catch { return "Bearer " }
 }
 
 function isLocal(): boolean {

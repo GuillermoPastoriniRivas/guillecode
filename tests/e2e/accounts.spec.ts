@@ -15,6 +15,7 @@ async function setup(page: Page, initial: string[] = []) {
         if (cmd === "server_config") return { url: `${location.origin}/test-oc`, username: "test", password: "test", worktree: "" }
         if (cmd === "auth_entries") return fetch("/test-auth").then((r) => r.json())
         if (cmd === "validate_opencode_key") { if (args.key !== "test-go-key") throw "OpenCode Go rechazó la clave"; return null }
+        if (cmd === "set_opencode_zen") { await fetch(`/test-zen?enabled=${args.enabled ? 1 : 0}`, { method: "POST" }); return null }
         if (cmd === "recent_projects" || cmd === "live_busy_sessions" || cmd === "routines_list") return []
         if (cmd === "plugin:event|listen") return ++next
         if (cmd.startsWith("plugin:window|is_")) return false
@@ -23,6 +24,13 @@ async function setup(page: Page, initial: string[] = []) {
     } })
   })
   await page.route("**/test-auth", (route) => route.fulfill({ json: [...accounts].map((id) => ({ id, kind: id === "openai" ? "oauth" : "api" })) }))
+  await page.route("**/test-zen*", (route) => {
+    const enabled = new URL(route.request().url()).searchParams.get("enabled") === "1"
+    mutations.push(`${enabled ? "PUT" : "DELETE"} opencode`)
+    if (enabled) accounts.add("opencode")
+    else accounts.delete("opencode")
+    return route.fulfill({ json: true })
+  })
   await page.route("**/test-oc/**", async (route) => {
     const path = new URL(route.request().url()).pathname.replace("/test-oc", "")
     if (path === "/event") return route.fulfill({ contentType: "text/event-stream", body: 'data: {"type":"server.connected","properties":{}}\n\n' })
@@ -38,7 +46,15 @@ async function setup(page: Page, initial: string[] = []) {
     if (path === "/config/providers") return route.fulfill({ json: { providers: [
       // The engine includes free models even without an account: they must not bypass onboarding.
       { id: "opencode", name: "OpenCode", source: "custom", options: { apiKey: "public" }, models: { free: { id: "free", name: "Free" } } },
-      ...[...accounts].map((id) => ({ id, name: id === "openai" ? "ChatGPT" : "OpenCode Go", source: "api", options: { apiKey: id === "openai" ? "opencode-oauth-dummy-key" : "test" }, models: { model: { id: `${id}-model`, name: `${id} model` } } })),
+      ...[...accounts].map((id) => ({
+        id,
+        name: id === "openai" ? "ChatGPT" : id === "opencode" ? "OpenCode Zen" : "OpenCode Go",
+        source: "api",
+        options: { apiKey: id === "openai" ? "opencode-oauth-dummy-key" : "test" },
+        models: id === "opencode"
+          ? { "zen-free": { id: "zen-free", name: "Zen Free", cost: { input: 0, output: 0 } }, "zen-paid": { id: "zen-paid", name: "Zen Paid", cost: { input: 5, output: 30 } } }
+          : { model: { id: `${id}-model`, name: `${id} model` } },
+      })),
     ] } })
     return route.fulfill({ json: path === "/session/status" ? {} : [] })
   })
@@ -85,4 +101,27 @@ test("ambos: selecciona cualquiera, quitar el activo pasa al restante; quitar ú
   await page.getByRole("dialog").getByRole("button", { name: "Desconectar", exact: true }).click()
   await expect(page.getByRole("heading", { name: "Bienvenido a GuilleCode" })).toBeVisible()
   await expect(page.getByRole("button", { name: "Continuar con GuilleCode" })).toBeDisabled()
+})
+
+test("Zen: el interruptor agrega y quita el proveedor sin repetir la clave", async ({ page }) => {
+  const { mutations } = await setup(page, ["opencode-go", "opencode"])
+  await page.getByRole("button", { name: "Cuentas de IA", exact: true }).click()
+  const zen = page.getByRole("switch", { name: "Incluir OpenCode Zen (pago por token)" })
+  await expect(zen).toHaveAttribute("aria-checked", "true")
+  await zen.click()
+  await expect(zen).toHaveAttribute("aria-checked", "false")
+  expect(mutations).toEqual(["DELETE opencode"])
+  await zen.click()
+  await expect(zen).toHaveAttribute("aria-checked", "true")
+  expect(mutations).toEqual(["DELETE opencode", "PUT opencode"])
+})
+
+test("Zen: por defecto solo lista los modelos gratuitos, el interruptor muestra todos", async ({ page }) => {
+  await setup(page, ["opencode-go", "opencode"])
+  await page.getByRole("button", { name: "Cuentas de IA", exact: true }).click()
+  const select = page.getByLabel("Elegí el modelo que querés usar")
+  await expect(select).toContainText("Zen Free")
+  await expect(select).not.toContainText("Zen Paid")
+  await page.getByRole("switch", { name: "Solo modelos gratuitos de Zen" }).click()
+  await expect(select).toContainText("Zen Paid")
 })

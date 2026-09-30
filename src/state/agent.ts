@@ -5,7 +5,7 @@ import { loadJson, projectKey, saveJson } from "../lib/persist"
 import { call, isTauri } from "../lib/tauri"
 import { normalizePath, relativePath, toFileUrl } from "../lib/paths"
 import { notify } from "./toasts"
-import { chooseAvailableModel, hasAccount, modelAvailable } from "../lib/providers"
+import { chooseAvailableModel, hasAccount, modelAvailable, modelVisible } from "../lib/providers"
 
 export type ChatMessage = { info: Message; parts: Part[] }
 
@@ -70,6 +70,7 @@ type AgentState = {
   providers: ConnectedProvider[]
   favoriteModels: string[]
   variants: Record<string, string>
+  zenFreeOnly: boolean
   agents: AgentInfo[]
   commands: CommandInfo[]
   composerFocus: number
@@ -104,6 +105,7 @@ export const useAgent = create<AgentState>(() => ({
   providers: [],
   favoriteModels: loadJson("agent.favoriteModels", []),
   variants: loadJson("agent.variants", {}),
+  zenFreeOnly: loadJson("agent.zenFreeOnly", true),
   agents: [],
   commands: [],
   composerFocus: 0,
@@ -124,16 +126,17 @@ export function bindAgentProject(root: string | null): void {
 
 function shareRemotePrefs(s: AgentState): void {
   if (!isTauri) return
-  void call("remote_set_prefs", { prefs: { model: s.model, favorites: s.favoriteModels, variants: s.variants, agent: s.agentName } }).catch(() => undefined)
+  void call("remote_set_prefs", { prefs: { model: s.model, favorites: s.favoriteModels, variants: s.variants, agent: s.agentName, zenFreeOnly: s.zenFreeOnly } }).catch(() => undefined)
 }
 
 shareRemotePrefs(useAgent.getState())
 
 useAgent.subscribe((s, prev) => {
-  if (s.model !== prev.model || s.favoriteModels !== prev.favoriteModels || s.variants !== prev.variants || s.agentName !== prev.agentName) shareRemotePrefs(s)
+  if (s.model !== prev.model || s.favoriteModels !== prev.favoriteModels || s.variants !== prev.variants || s.agentName !== prev.agentName || s.zenFreeOnly !== prev.zenFreeOnly) shareRemotePrefs(s)
   if (s.model !== prev.model) saveJson("agent.model", s.model)
   if (s.favoriteModels !== prev.favoriteModels) saveJson("agent.favoriteModels", s.favoriteModels)
   if (s.variants !== prev.variants) saveJson("agent.variants", s.variants)
+  if (s.zenFreeOnly !== prev.zenFreeOnly) saveJson("agent.zenFreeOnly", s.zenFreeOnly)
   if (s.agentName !== prev.agentName) saveJson("agent.name", s.agentName)
   if (s.includeActiveFile !== prev.includeActiveFile) saveJson("agent.includeActiveFile", s.includeActiveFile)
   if (s.activeSessionId !== prev.activeSessionId) saveJson(projectKey(boundProject, "agent.activeSession"), s.activeSessionId)
@@ -317,6 +320,7 @@ export async function loadAgentMeta(): Promise<void> {
             capabilities?: { reasoning?: boolean; input?: { image?: boolean } }
             variants?: Record<string, unknown>
             limit?: { context?: number }
+            cost?: { input?: number; output?: number }
           }
         >
       }>
@@ -335,8 +339,10 @@ export async function loadAgentMeta(): Promise<void> {
   if (providers.status === "fulfilled") {
     const models: ProviderModel[] = []
     const accounts = (providers.value.providers ?? []).filter(hasAccount)
+    const zenFreeOnly = useAgent.getState().zenFreeOnly
     for (const p of accounts) {
       for (const m of Object.values(p.models ?? {})) {
+        if (!modelVisible({ providerID: p.id, modelID: m.id, cost: m.cost }, zenFreeOnly)) continue
         models.push({
           providerID: p.id,
           providerName: p.name,
@@ -776,6 +782,27 @@ export async function abortSession(id: string | null) {
   await client.session.abort({ path: { id } }).catch(() => undefined)
 }
 
+export async function retryMessage(sessionID: string, message: ChatMessage): Promise<void> {
+  if (message.info.role !== "user") return
+  const s = useAgent.getState()
+  const parts: PromptPart[] = []
+  for (const p of message.parts) {
+    if (p.type === "text") {
+      if (!p.synthetic && p.text.trim()) parts.push({ type: "text", text: p.text })
+    } else if (p.type === "file") {
+      parts.push({ type: "file", mime: p.mime, url: p.url, filename: p.filename ?? "" })
+    }
+  }
+  if (parts.length === 0) return
+  const variant = selectedVariant(s)
+  await api("POST", `/session/${sessionID}/prompt_async`, {
+    model: s.model,
+    agent: s.agentName,
+    ...(variant ? { variant } : {}),
+    parts,
+  })
+}
+
 export async function replyPermission(req: PermissionRequest, reply: "once" | "always" | "reject", message?: string) {
   useAgent.setState((s) => ({ permissions: s.permissions.filter((p) => p.id !== req.id) }))
   try {
@@ -840,6 +867,11 @@ export function toggleFavoriteModel(key: string): void {
 
 export function setModel(model: ModelRef) {
   useAgent.setState({ model })
+}
+
+export function setZenFreeOnly(zenFreeOnly: boolean): void {
+  useAgent.setState({ zenFreeOnly })
+  void loadAgentMeta()
 }
 
 export function setAgentName(agentName: string) {

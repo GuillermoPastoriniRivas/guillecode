@@ -301,9 +301,9 @@ export function Segmented<T extends string>({
   )
 }
 
-export function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (value: boolean) => void; label?: string }) {
+export function Toggle({ checked, onChange, label, disabled }: { checked: boolean; onChange: (value: boolean) => void; label?: string; disabled?: boolean }) {
   return (
-    <button type="button" role="switch" aria-checked={checked} className={`toggle${checked ? " on" : ""}`} onClick={() => onChange(!checked)}>
+    <button type="button" role="switch" aria-checked={checked} className={`toggle${checked ? " on" : ""}`} disabled={disabled} onClick={() => onChange(!checked)}>
       <span className="toggle-track">
         <span className="toggle-knob" />
       </span>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { readToken } from "./api"
+import { readToken, hub, oc, AuthError, type HubInfo, type Permission, type Question } from "./api"
 import { Home, type Route } from "./Home"
 import { SessionScreen } from "./Session"
 import { Icon } from "./ui"
@@ -30,6 +30,43 @@ export function App() {
   const [viewed, setViewed] = useState<string | null>(null)
   const [toast, setToast] = useState<Toast | null>(null)
   const current = useRef(route)
+  const [fleetVisible, setFleetVisible] = useState(() => !new URLSearchParams(window.location.search).has("fleet"))
+
+  useEffect(() => {
+    if (window.parent === window) return
+    let origin: string | null = null
+    let stopped = false
+    let reporting = false
+    const report = async () => {
+      if (reporting) return
+      reporting = true
+      try {
+        const info = await hub<HubInfo>("GET", "/info")
+        const summaries = await Promise.all(info.projects.map(async project => {
+          const [status, permissions, questions] = await Promise.all([
+            oc<Record<string, { type: string }>>("GET", "/session/status", project).catch(() => ({})),
+            oc<Permission[]>("GET", "/permission", project).catch(() => []),
+            oc<Question[]>("GET", "/question", project).catch(() => []),
+          ])
+          return { busy: Object.values(status).filter(s => s.type !== "idle").length, pending: permissions.length + questions.length }
+        }))
+        if (!stopped && origin) window.parent.postMessage({ type: "guillecode:status", state: "online", projects: info.projects.length, routines: info.routines.length, busy: summaries.reduce((n, s) => n + s.busy, 0), pending: summaries.reduce((n, s) => n + s.pending, 0) }, origin)
+      } catch (error) {
+        if (!stopped && origin) window.parent.postMessage({ type: "guillecode:status", state: error instanceof AuthError ? "unauthorized" : "offline" }, origin)
+      } finally {
+        reporting = false
+      }
+    }
+    const receive = (event: MessageEvent) => {
+      if (event.source !== window.parent || event.data?.type !== "guillecode:hello") return
+      if (event.origin !== "https://fluws.com" && event.origin !== "http://localhost:3300") return
+      origin = event.origin
+      setFleetVisible(event.data.active === true)
+      void report()
+    }
+    window.addEventListener("message", receive)
+    return () => { stopped = true; window.removeEventListener("message", receive) }
+  }, [])
 
   const go = useCallback((r: Route) => {
     current.current = r
@@ -79,6 +116,8 @@ export function App() {
     const timer = setTimeout(() => setToast(null), 8000)
     return () => clearTimeout(timer)
   }, [toast])
+
+  if (!fleetVisible) return <main className="screen center"><p>GuilleCode · conectada a Mis computadoras</p></main>
 
   if (!token)
     return (

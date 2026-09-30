@@ -1,4 +1,4 @@
-use crate::usage::opencode_data;
+use crate::usage::{opencode_data, GO_PROVIDER};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -69,6 +69,32 @@ pub async fn validate_opencode_key(key: String) -> Result<(), String> {
         }
         Ok(())
     }).await
+}
+
+const ZEN_PROVIDER: &str = "opencode";
+
+#[tauri::command]
+pub async fn set_opencode_zen(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    crate::proc::blocking(move || {
+        let auth = read_auth()?;
+        if !enabled && auth.get(ZEN_PROVIDER).is_none() {
+            return Ok(());
+        }
+        let server = crate::ensure_server(&app)?;
+        let opencode = crate::oc::Opencode::new(&server, "");
+        if enabled {
+            let key = auth[GO_PROVIDER]
+                .get("key")
+                .and_then(Value::as_str)
+                .filter(|key| !key.is_empty())
+                .ok_or_else(|| "Primero conectá tu clave de OpenCode Go".to_string())?;
+            opencode.put(&format!("/auth/{}", ZEN_PROVIDER), serde_json::json!({ "type": "api", "key": key }))?;
+        } else {
+            opencode.delete(&format!("/auth/{}", ZEN_PROVIDER))?;
+        }
+        Ok(())
+    })
+    .await
 }
 
 #[cfg(test)]

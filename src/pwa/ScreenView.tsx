@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type PointerEvent, type KeyboardEvent } from "react"
 import { authHeader, errorText } from "./api"
 import { Icon } from "./ui"
+import { ScreenTouchpad } from "./ScreenTouchpad"
+import { ScreenCommands } from "./ScreenCommands"
 import { ScreenPackets, screenPoint, type InputEvent, type ScreenMeta } from "./screen-protocol"
 
 const MAX_ZOOM = 6
@@ -66,6 +68,9 @@ export function ScreenView({ target, active = true, controls = true, floating = 
   const input = useRef<InputQueue | null>(null)
   const [session, setSession] = useState<string | null>(null)
   const [control, setControl] = useState(false)
+  const [touchpad, setTouchpad] = useState(true)
+  const directControl = control && !touchpad
+  const mouse = useRef({ x: 0.5, y: 0.5 })
   const [error, setError] = useState<string | null>(null)
   const [inputError, setInputError] = useState<string | null>(null)
   const [status, setStatus] = useState("Conectando…")
@@ -126,6 +131,7 @@ export function ScreenView({ target, active = true, controls = true, floating = 
   useEffect(() => {
     setControl(false)
     setSession(null)
+    mouse.current = { x: 0.5, y: 0.5 }
     resetZoom()
     if (!active || !visible) { setStatus("Vista en pausa"); return }
     const abort = new AbortController()
@@ -223,7 +229,12 @@ export function ScreenView({ target, active = true, controls = true, floating = 
               if (!decoder) throw new Error("El video llegó sin configuración")
               if (decoder.decodeQueueSize > 8) throw new Error("El celular no alcanza a decodificar el video")
               decoder.decode(new EncodedVideoChunk({ type: p.kind === 2 ? "key" : "delta", timestamp: p.seq, data: p.data as AllowSharedBufferSource }))
-            } else if (p.kind === 4) { cursor = JSON.parse(textDecoder.decode(p.data)); paint() }
+            } else if (p.kind === 4) {
+              cursor = JSON.parse(textDecoder.decode(p.data))
+              // While controlling, keep our latest position: cursor packets can lag behind input.
+              if (cursor && !input.current) mouse.current = { x: Math.max(0, Math.min(1, cursor.x)), y: Math.max(0, Math.min(1, cursor.y)) }
+              paint()
+            }
             else if (p.kind === 5) throw new Error((JSON.parse(textDecoder.decode(p.data)) as {error: string}).error)
           }
         }
@@ -321,16 +332,17 @@ export function ScreenView({ target, active = true, controls = true, floating = 
 
     if (fingers.current.size >= 2) { beginPinch(); return }
 
-    if (control && input.current && !pointer.current) {
+    if (directControl && input.current && !pointer.current) {
       const pos = point(e.clientX, e.clientY)
       if (!pos) return
       e.preventDefault(); e.currentTarget.focus()
       const b = e.button === 2 ? "right" : e.button === 1 ? "middle" : "left"
       pointer.current = { id: e.pointerId, ...pos, b }
+      mouse.current = pos
       input.current.add({ t: "down", ...pos, b })
       return
     }
-    if (control) return
+    if (directControl) return
     e.preventDefault()
     tap.current = { x: e.clientX, y: e.clientY }
     if (zoom.current.s > 1) gesture.current = { kind: "pan", p0: { x: e.clientX, y: e.clientY }, t0: { x: zoom.current.tx, y: zoom.current.ty } }
@@ -342,15 +354,16 @@ export function ScreenView({ target, active = true, controls = true, floating = 
     if (fingers.current.size >= 2) { movePinch(); return }
 
     if (pointer.current && pointer.current.id === e.pointerId) {
-      if (!control) return
+      if (!directControl) return
       const pos = point(e.clientX, e.clientY)
       if (!pos) return
       Object.assign(pointer.current, pos)
+      mouse.current = pos
       input.current?.add({ t: "move", ...pos })
       return
     }
     const g = gesture.current
-    if (g?.kind === "pan" && !control) {
+    if (g?.kind === "pan" && !directControl) {
       e.preventDefault()
       setZoom(zoom.current.s, g.t0.x + (e.clientX - g.p0.x), g.t0.y + (e.clientY - g.p0.y))
     }
@@ -363,7 +376,7 @@ export function ScreenView({ target, active = true, controls = true, floating = 
 
     const tapAt = tap.current
     tap.current = null
-    if (tapAt && !control && fingers.current.size === 0) {
+    if (tapAt && !directControl && fingers.current.size === 0) {
       const now = Date.now()
       if (now - lastTap.current < 300) {
         lastTap.current = 0
@@ -392,43 +405,68 @@ export function ScreenView({ target, active = true, controls = true, floating = 
   }
 
   const clipboard = async (action: "read" | "write") => {
-    if (!session || !control) return
+    if (!session || !control) return false
     try {
       const data = await post("input", {id: session, clipboard: action, text})
       if (action === "read") setText((data.text ?? "").slice(0, 2000))
       setInputError(null)
-    } catch (e) { setInputError(errorText(e)) }
+      return true
+    } catch (e) { setInputError(errorText(e)); return false }
+  }
+
+  const moveMouse = (dx: number, dy: number) => {
+    const el = canvas.current
+    if (!input.current || !el || !el.width || !el.height) return
+    const rect = el.getBoundingClientRect()
+    const scale = Math.min(rect.width / el.width, rect.height / el.height)
+    if (scale <= 0) return
+    const pos = {
+      x: Math.max(0, Math.min(1, mouse.current.x + dx / (el.width * scale))),
+      y: Math.max(0, Math.min(1, mouse.current.y + dy / (el.height * scale))),
+    }
+    mouse.current = pos
+    input.current.add({ t: "move", ...pos })
+  }
+  const clickMouse = (b: "left" | "right") => input.current?.add({ t: "click", ...mouse.current, b })
+  const dragHeld = useRef(false)
+  const dragMouse = (held: boolean) => {
+    if (held === dragHeld.current) return
+    dragHeld.current = held
+    input.current?.add({ t: held ? "down" : "up", ...mouse.current, b: "left" })
   }
 
   const panel = <>
-    <div className="row">
+    <div className="screen-control-status">
       <button type="button" className={`btn btn-sm${control ? " primary" : ""}`} disabled={!session || !active} onClick={() => setControl(!control)}><Icon name="hand" /> {control ? "Soltar control" : "Controlar"}</button>
-      <button type="button" className="btn btn-sm" onClick={() => { setJpeg(!jpeg); setRetry(n => n + 1) }}>{jpeg ? "Probar video" : "Usar JPEG"}</button>
-      <small className="muted">{status}</small>
+      <small className="muted">{control ? "Control remoto activo" : session ? "Solo viendo · sin controlar" : status}</small>
     </div>
     {inputError && <div className="alert">{inputError}</div>}
     {control && <>
-      <div className="screen-keys">
-        {["Esc", "Tab", "Enter", "Backspace", "Delete", "Ctrl+C", "Ctrl+V", "Alt+Tab", "ArrowLeft", "ArrowUp", "ArrowDown", "ArrowRight"].map(k => <button key={k} type="button" className="chip" onClick={() => input.current?.add({t:"key", k})}>{k.replace("ArrowLeft","←").replace("ArrowRight","→").replace("ArrowUp","↑").replace("ArrowDown","↓")}</button>)}
-        <button type="button" className="chip" onClick={() => input.current?.add({t:"key", k:"shift+f10"})}>Clic derecho</button>
-        <button type="button" className="chip" onClick={() => input.current?.add({t:"wheel", x:0.5,y:0.5,dy:360})}>Subir</button>
-        <button type="button" className="chip" onClick={() => input.current?.add({t:"wheel", x:0.5,y:0.5,dy:-360})}>Bajar</button>
-      </div>
-      <form className="row" onSubmit={e => {e.preventDefault(); if (text) {input.current?.add({t:"text",s:text});setText("")}}}>
-        <input aria-label="Texto para escribir en la PC" placeholder="Escribir en la PC…" value={text} maxLength={2000} onChange={e => setText(e.target.value)} />
-        <button className="btn btn-sm" type="submit" disabled={!text}>Escribir</button>
-      </form>
-      <div className="row">
-        <button type="button" className="btn btn-sm" onClick={() => void clipboard("read")}>Leer portapapeles de la PC</button>
-        <button type="button" className="btn btn-sm" disabled={!text} onClick={() => void clipboard("write")}>Copiar texto a la PC</button>
-      </div>
-      <small className="muted">Tocá para hacer clic y arrastrá para mover. El texto se pega usando el portapapeles de la PC. Debe estar desbloqueada y el control habilitado.</small>
+      <ScreenCommands text={text} onTextChange={setText} onKey={k => input.current?.add({ t: "key", k })}
+        onWrite={enter => { if (!text) return; input.current?.add({ t: "text", s: text }); if (enter) input.current?.add({ t: "key", k: "Enter" }); setText("") }}
+        onClipboard={clipboard} mouse={<>
+          <div className="screen-command-tabs" role="group" aria-label="Modo de mouse">
+            <button type="button" aria-pressed={touchpad} onClick={() => { releaseClick(); setTouchpad(true) }}>Panel táctil</button>
+            <button type="button" aria-pressed={!touchpad} onClick={() => { dragMouse(false); setTouchpad(false) }}>Tocar pantalla</button>
+          </div>
+          {touchpad ? <ScreenTouchpad onMove={moveMouse} onClick={clickMouse} onDrag={dragMouse} onScroll={dy => input.current?.add({ t: "wheel", ...mouse.current, dy })} /> : <>
+            <small className="muted">Tocá la imagen para hacer clic; deslizá para arrastrar. Usá dos dedos para hacer zoom.</small>
+            <button type="button" className="btn" onClick={() => clickMouse("right")}>Clic derecho</button>
+          </>}
+        </>} />
     </>}
+    <details className="screen-command-details"><summary>Vista y conexión</summary>
+      <div className="screen-command-grid">
+        <button type="button" className="btn" onClick={resetZoom}>Ajustar imagen</button>
+        <button type="button" className="btn" onClick={() => { setJpeg(!jpeg); setRetry(n => n + 1) }}>{jpeg ? "Probar video" : "Modo compatible"}</button>
+      </div>
+      <small className="muted">{status} · Pellizcá la imagen para ampliar. Para controlar, la PC debe estar desbloqueada.</small>
+    </details>
   </>
 
   // The canvas has its own column, so screenPoint still maps the visible image
   // correctly and the controls can never intercept a tap on the PC.
-  const sidebarWidth = floatOpen ? Math.min(220, viewport.width * 0.3) : 44
+  const sidebarWidth = floatOpen ? Math.min(300, Math.max(200, viewport.width * 0.34)) : 44
   const videoWidth = Math.min(viewport.height * aspect, Math.max(0, viewport.width - sidebarWidth))
 
   return <div ref={view} className={`screen-view${control ? " controlling" : ""}${floating ? " floating" : ""}`}
@@ -444,7 +482,7 @@ export function ScreenView({ target, active = true, controls = true, floating = 
       <div className={`screen-controls floating${floatOpen ? "" : " collapsed"}`}>
         <button type="button" className="float-head" aria-expanded={floatOpen} onClick={() => setFloatOpen(o => !o)}>
           <Icon name={floatOpen ? "chevron-right" : "chevron-left"} />
-          <span>Botones</span>
+          <span>Controles</span>
           {control && <span className="float-tag">controlando</span>}
         </button>
         {floatOpen && <div className="float-body">{panel}</div>}

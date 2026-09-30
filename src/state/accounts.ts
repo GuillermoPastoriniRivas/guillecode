@@ -1,12 +1,14 @@
 import { create } from "zustand"
 import { openUrl } from "@tauri-apps/plugin-opener"
 import { api } from "../lib/opencode"
-import { chooseAvailableModel } from "../lib/providers"
+import { chooseAvailableModel, ZEN } from "../lib/providers"
 import { call, errorMessage, isTauri } from "../lib/tauri"
 import { loadAgentMeta, setModel, useAgent } from "./agent"
 import { notify } from "./toasts"
 
 export const CHATGPT = "openai"
+export { ZEN }
+const OPENCODE = "opencode-go"
 const METHODS = { browser: 0, device: 1 } as const
 const BROWSER_CANCEL_URL = "http://localhost:1455/cancel"
 const RELOAD_RETRY_MS = 5000
@@ -15,29 +17,44 @@ export type LoginMethod = keyof typeof METHODS
 export type LoginFlow = { method: LoginMethod; url: string; code: string | null }
 export type AuthEntry = { id: string; kind: string }
 
-type AccountsState = { starting: LoginMethod | null; flow: LoginFlow | null; waitingFor: number; authEntries: AuthEntry[] | null; savingKey: boolean }
+type AccountsState = { starting: LoginMethod | null; flow: LoginFlow | null; waitingFor: number; authEntries: AuthEntry[] | null; savingKey: boolean; savingZen: boolean }
 
-export const useAccounts = create<AccountsState>(() => ({ starting: null, flow: null, waitingFor: 0, authEntries: null, savingKey: false }))
+export const useAccounts = create<AccountsState>(() => ({ starting: null, flow: null, waitingFor: 0, authEntries: null, savingKey: false, savingZen: false }))
 
-export async function connectOpencode(key: string): Promise<boolean> {
+export async function connectOpencode(key: string, includeZen: boolean): Promise<boolean> {
   const value = key.trim()
   if (!value || /\s/.test(value)) {
-    notify.error("Revisá la clave", "Pegá tu API key de OpenCode Go, sin espacios.")
+    notify.error("Revisá la clave", "Pegá tu API key de OpenCode, sin espacios.")
     return false
   }
   useAccounts.setState({ savingKey: true })
   try {
     await call("validate_opencode_key", { key: value })
-    await api("PUT", "/auth/opencode-go", { type: "api", key: value })
+    await api("PUT", `/auth/${OPENCODE}`, { type: "api", key: value })
+    if (includeZen) await call("set_opencode_zen", { enabled: true })
     await loadAuthEntries()
     await reloadProviders()
-    notify.success("OpenCode Go conectado", "Tu clave quedó guardada. No necesitás conectar ChatGPT.")
+    notify.success("OpenCode Go conectado", includeZen ? "Tu clave quedó guardada y Zen también quedó activado." : "Tu clave quedó guardada. No necesitás conectar ChatGPT.")
     return true
   } catch (e) {
     notify.error("No se pudo conectar OpenCode Go", errorMessage(e))
     return false
   } finally {
     useAccounts.setState({ savingKey: false })
+  }
+}
+
+export async function setOpencodeZen(enabled: boolean): Promise<void> {
+  useAccounts.setState({ savingZen: true })
+  try {
+    await call("set_opencode_zen", { enabled })
+    await loadAuthEntries()
+    await reloadProviders()
+    notify.info(enabled ? "OpenCode Zen activado" : "OpenCode Zen desactivado", enabled ? "Sus modelos ya aparecen en el selector del chat." : "Sus modelos salieron del selector del chat.")
+  } catch (e) {
+    notify.error(enabled ? "No se pudo activar OpenCode Zen" : "No se pudo desactivar OpenCode Zen", errorMessage(e))
+  } finally {
+    useAccounts.setState({ savingZen: false })
   }
 }
 

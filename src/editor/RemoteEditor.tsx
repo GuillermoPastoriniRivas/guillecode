@@ -30,6 +30,7 @@ export function RemoteEditor() {
   const [selected, setSelected] = useState(0)
   const [qr, setQr] = useState<{ url: string; svg: string } | null>(null)
   const [busy, setBusy] = useState(false)
+  const [fleetQr, setFleetQr] = useState(false)
 
   const refresh = useCallback(async () => {
     try {
@@ -44,15 +45,17 @@ export function RemoteEditor() {
   }, [refresh])
 
   const url = status?.urls[Math.min(selected, (status?.urls.length ?? 1) - 1)] ?? null
+  const pairUrl = url?.startsWith("https://") ? `https://fluws.com/guillecode/app#${new URLSearchParams({ pair: url, name: status?.tailscaleName?.split(".")[0] ?? "Mi PC" })}` : null
+  const qrUrl = fleetQr && pairUrl ? pairUrl : url
 
   useEffect(() => {
-    if (!url || !status?.enabled) return
-    call<string>("remote_qr", { text: url })
-      .then((svg) => setQr({ url, svg }))
+    if (!qrUrl || !status?.enabled) return
+    call<string>("remote_qr", { text: qrUrl })
+      .then((svg) => setQr({ url: qrUrl, svg }))
       .catch(() => undefined)
-  }, [url, status?.enabled])
+  }, [qrUrl, status?.enabled])
 
-  const qrSvg = qr && qr.url === url ? qr.svg : ""
+  const qrSvg = qr && qr.url === qrUrl ? qr.svg : ""
 
   const toggle = async () => {
     if (!status) return
@@ -150,6 +153,7 @@ export function RemoteEditor() {
             <div className="remote-qr" dangerouslySetInnerHTML={{ __html: qrSvg }} />
             <div className="remote-links">
               <strong>Escaneá el QR con la cámara del celular</strong>
+              {pairUrl && <label className="remote-url"><input type="checkbox" checked={fleetQr} onChange={e => setFleetQr(e.target.checked)} /><span>Agregar esta PC a mi cuenta en fluws (varios teléfonos y computadoras)</span></label>}
               {status.urls.map((u, i) => (
                 <label key={u} className="remote-url">
                   <input type="radio" checked={i === selected} onChange={() => setSelected(i)} />
@@ -159,7 +163,7 @@ export function RemoteEditor() {
                   </span>
                 </label>
               ))}
-              <button type="button" className="btn btn-sm" onClick={() => copy(url, "Link")}>
+              <button type="button" className="btn btn-sm" onClick={() => copy(qrUrl ?? url, "Link")}>
                 <Icon name="copy" /> Copiar link
               </button>
             </div>

@@ -10,6 +10,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 pub mod browser;
 mod mcp;
+mod routines;
 #[cfg(windows)]
 mod tools;
 #[cfg(windows)]
@@ -50,6 +51,7 @@ const DEFAULT_BLOCKED: &[&str] = &[
 pub enum Channel {
     Desktop,
     Browser,
+    Routines,
 }
 
 impl Channel {
@@ -57,6 +59,7 @@ impl Channel {
         match self {
             Channel::Desktop => "desktop",
             Channel::Browser => "browser",
+            Channel::Routines => "routines",
         }
     }
 }
@@ -150,6 +153,7 @@ fn write_skill(app: &AppHandle) -> Option<PathBuf> {
     let dir = root.join("escritorio");
     std::fs::create_dir_all(&dir).ok()?;
     std::fs::write(dir.join("SKILL.md"), SKILL).ok()?;
+    std::fs::write(root.join("routines.md"), routines::INSTRUCTIONS).ok()?;
     Some(root)
 }
 
@@ -175,6 +179,10 @@ pub fn opencode_config(app: &AppHandle) -> Option<String> {
     if state.port == 0 {
         return None;
     }
+    Some(agent_config(&state).to_string())
+}
+
+fn agent_config(state: &DesktopState) -> Value {
     let server = |path: &str, timeout: u64| {
         json!({
             "type": "remote",
@@ -184,15 +192,16 @@ pub fn opencode_config(app: &AppHandle) -> Option<String> {
             "timeout": timeout,
         })
     };
-    let mut mcp = json!({ "desktop": server("desktop", 120_000) });
+    let mut mcp = json!({ "desktop": server("desktop", 120_000), "routines": server("routines", 120_000) });
     if state.browser_injected {
         mcp["browser"] = server("browser", 180_000);
     }
     let mut config = json!({ "mcp": mcp });
     if let Some(dir) = &state.skills {
         config["skills"] = json!({ "paths": [dir.to_string_lossy()] });
+        config["instructions"] = json!([dir.join("routines.md").to_string_lossy()]);
     }
-    Some(config.to_string())
+    config
 }
 
 pub fn config(app: &AppHandle) -> DesktopConfig {
@@ -260,6 +269,7 @@ fn instructions(channel: Channel) -> &'static str {
     match channel {
         Channel::Desktop => "Maneja apps de Windows por accesibilidad. Ciclo: status → windows → snapshot (refs [eN]) → click/type/select por ref → leer el snapshot que devuelve. screenshot y click_xy solo como respaldo. Con la PC bloqueada solo funcionan las acciones por accesibilidad. Para la web usá las herramientas browser_*. Cargá la skill «escritorio» para las reglas completas.",
         Channel::Browser => "Maneja el Chrome real del usuario (con sus sesiones iniciadas) a través de la extensión de Playwright. Ciclo: snapshot → click/type por ref → verificar. Antes de enviar, pagar, borrar o publicar, confirmá con el usuario.",
+        Channel::Routines => routines::INSTRUCTIONS,
     }
 }
 
@@ -270,6 +280,7 @@ fn tool_list(channel: Channel) -> Vec<Value> {
         #[cfg(not(windows))]
         Channel::Desktop => Vec::new(),
         Channel::Browser => browser::tools(),
+        Channel::Routines => routines::definitions(),
     }
 }
 
@@ -284,6 +295,7 @@ fn browser_summary(name: &str, args: &Value) -> String {
 
 fn call_tool(app: &AppHandle, channel: Channel, name: &str, args: &Value) -> Value {
     match channel {
+        Channel::Routines => routines::call(app, name, args),
         #[cfg(windows)]
         Channel::Desktop => {
             let r = tools::call(app, name, args);

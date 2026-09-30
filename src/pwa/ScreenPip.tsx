@@ -14,11 +14,15 @@ type Mode = "follow" | "screen" | (string & {})
 type Geom = { x: number; y: number; w: number; h: number; mode: Mode; live: boolean }
 
 export function pipOpen(): boolean {
-  return localStorage.getItem(OPEN_KEY) === "1"
+  try { return localStorage.getItem(OPEN_KEY) === "1" } catch { return false }
 }
 
 export function setPipOpen(open: boolean) {
-  localStorage.setItem(OPEN_KEY, open ? "1" : "0")
+  store(OPEN_KEY, open ? "1" : "0")
+}
+
+function store(key: string, value: string): void {
+  try { localStorage.setItem(key, value) } catch { /* optional persistence in third-party frames */ }
 }
 
 const num = (v: unknown, fallback: number) => (typeof v === "number" && Number.isFinite(v) ? v : fallback)
@@ -93,7 +97,7 @@ export function ScreenPip({ open, onClose }: { open: boolean; onClose: () => voi
     setGeom((g) => {
       const next = { ...g, ...patch }
       geomRef.current = next
-      if (persist) localStorage.setItem(GEO_KEY, JSON.stringify(next))
+      if (persist) store(GEO_KEY, JSON.stringify(next))
       return next
     })
   }, [])
@@ -154,7 +158,7 @@ export function ScreenPip({ open, onClose }: { open: boolean; onClose: () => voi
     if (!drag.current) return
     drag.current = null
     if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId)
-    localStorage.setItem(GEO_KEY, JSON.stringify(geomRef.current))
+    store(GEO_KEY, JSON.stringify(geomRef.current))
   }
 
   const onResizeDown = (e: ReactPointerEvent<HTMLElement>) => {
@@ -180,7 +184,7 @@ export function ScreenPip({ open, onClose }: { open: boolean; onClose: () => voi
     if (!resize.current) return
     resize.current = null
     if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId)
-    localStorage.setItem(GEO_KEY, JSON.stringify(geomRef.current))
+    store(GEO_KEY, JSON.stringify(geomRef.current))
   }
 
   if (!open) return null

@@ -11,6 +11,7 @@ import {
   forkSession,
   loadOlderMessages,
   queuedUserIds,
+  retryMessage,
   revertToMessage,
   runningAssistantId,
   unrevertSession,
@@ -169,7 +170,7 @@ const PartView = memo(function PartView({ part, live }: { part: Part; live: bool
   }
 })
 
-function AssistantFooter({ message }: { message: ChatMessage }) {
+function AssistantFooter({ message, onRetry, retrying }: { message: ChatMessage; onRetry?: () => void; retrying?: boolean }) {
   const info = message.info
   if (info.role !== "assistant") return null
   const tokens = info.tokens
@@ -183,7 +184,17 @@ function AssistantFooter({ message }: { message: ChatMessage }) {
           <Icon name="error" /> {error.data?.message ?? error.name}
         </div>
       )}
-      {error?.name === "MessageAbortedError" && <div className="msg-aborted">Detenido</div>}
+      {error?.name === "MessageAbortedError" && (
+        <div className="msg-aborted">
+          <Icon name="debug-stop" />
+          <span>Detenido</span>
+          {onRetry && (
+            <button type="button" className="msg-retry" onClick={onRetry} disabled={retrying}>
+              <Icon name={retrying ? "loading" : "refresh"} spin={retrying} /> Reintentar
+            </button>
+          )}
+        </div>
+      )}
       {info.time.completed && (
         <div className="msg-footer">
           <span>{info.modelID}</span>
@@ -215,6 +226,12 @@ function ContextBlock({ message }: { message: ChatMessage }) {
       )}
     </div>
   )
+}
+
+function copyUserMessage(message: ChatMessage) {
+  const text = visibleUserText(message)
+  if (!text) return
+  void navigator.clipboard.writeText(text).then(() => notify.success("Mensaje copiado"))
 }
 
 function userMenu(session: Session, message: ChatMessage, e: React.MouseEvent) {
@@ -249,7 +266,24 @@ export function Chat({ session, busy }: { session: Session; busy: boolean }) {
   const topRef = useRef<HTMLDivElement>(null)
   const pinSentinel = useRef<HTMLDivElement | null>(null)
   const [stuck, setStuck] = useState(false)
+  const [retrying, setRetrying] = useState<string | null>(null)
   const revert = (session as Session & { revert?: { messageID: string } }).revert
+
+  const userById = useMemo(() => {
+    const map = new Map<string, ChatMessage>()
+    for (const m of messages) if (m.info.role === "user") map.set(m.info.id, m)
+    return map
+  }, [messages])
+
+  const retry = (message: ChatMessage) => {
+    if (message.info.role !== "assistant" || retrying) return
+    const parent = userById.get(message.info.parentID)
+    if (!parent) return
+    setRetrying(message.info.id)
+    retryMessage(session.id, parent)
+      .catch((err) => notify.error("No se pudo reintentar", err instanceof Error ? err.message : String(err)))
+      .finally(() => setRetrying(null))
+  }
 
   const revertIndex = revert ? messages.findIndex((m) => m.info.id === revert.messageID) : -1
   const runningId = useMemo(() => runningAssistantId(messages, busy), [messages, busy])
@@ -407,6 +441,14 @@ export function Chat({ session, busy }: { session: Session; busy: boolean }) {
                         </span>
                       )}
                       <span>{clockTime(m.info.time.created)}</span>
+                      <button
+                        type="button"
+                        className="msg-action msg-copy"
+                        title="Copiar mensaje"
+                        onClick={() => void copyUserMessage(m)}
+                      >
+                        <Icon name="copy" />
+                      </button>
                       <button type="button" className="msg-action" title="Acciones" onClick={(e) => userMenu(session, m, e)}>
                         <Icon name="kebab-vertical" />
                       </button>
@@ -424,7 +466,11 @@ export function Chat({ session, busy }: { session: Session; busy: boolean }) {
                         </div>
                       )}
                     </div>
-                    <AssistantFooter message={m} />
+                    <AssistantFooter
+                      message={m}
+                      onRetry={!busy && m.info.role === "assistant" && userById.has(m.info.parentID) ? () => retry(m) : undefined}
+                      retrying={retrying === m.info.id}
+                    />
                   </div>
                 )}
               </div>

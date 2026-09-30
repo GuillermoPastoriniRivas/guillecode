@@ -113,6 +113,7 @@ export function Section({
   onToggle,
   actions,
   count,
+  stats,
   children,
   grow,
 }: {
@@ -121,6 +122,7 @@ export function Section({
   onToggle: () => void
   actions?: ReactNode
   count?: number
+  stats?: { added: number; removed: number } | null
   children: ReactNode
   grow?: boolean
 }) {
@@ -129,6 +131,15 @@ export function Section({
       <div className="pane-section-header" onClick={onToggle} role="button">
         <Icon name={open ? "chevron-down" : "chevron-right"} className="pane-chevron" />
         <span className="pane-section-title">{title}</span>
+        {stats && (stats.added > 0 || stats.removed > 0) && (
+          <span
+            className="pane-stats"
+            title={`${stats.added} líneas agregadas, ${stats.removed} eliminadas`}
+          >
+            <span className="pane-added">+{stats.added}</span>
+            <span className="pane-removed">−{stats.removed}</span>
+          </span>
+        )}
         {count !== undefined && count > 0 && <span className="pane-count">{count}</span>}
         <span className="pane-section-actions" onClick={(e) => e.stopPropagation()}>
           {actions}

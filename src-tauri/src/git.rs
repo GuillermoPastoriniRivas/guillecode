@@ -59,6 +59,10 @@ pub struct GitStatus {
     pub behind: u32,
     pub entries: Vec<StatusEntry>,
     pub truncated: bool,
+    pub staged_added: u64,
+    pub staged_removed: u64,
+    pub unstaged_added: u64,
+    pub unstaged_removed: u64,
 }
 
 fn parse_branch_header(header: &str, status: &mut GitStatus) {
@@ -100,6 +104,63 @@ fn parse_branch_header(header: &str, status: &mut GitStatus) {
     }
 }
 
+fn parse_numstat(out: &str) -> (u64, u64) {
+    let mut added = 0u64;
+    let mut removed = 0u64;
+    for line in out.lines() {
+        let mut parts = line.split('\t');
+        let a = parts.next().unwrap_or("0");
+        let d = parts.next().unwrap_or("0");
+        // "-" = binario: no suma líneas
+        if a != "-" {
+            added += a.parse().unwrap_or(0);
+        }
+        if d != "-" {
+            removed += d.parse().unwrap_or(0);
+        }
+    }
+    (added, removed)
+}
+
+const MAX_UNTRACKED_COUNT: usize = 500;
+const MAX_UNTRACKED_BYTES: u64 = 5 * 1024 * 1024;
+
+fn count_untracked_lines(worktree: &str, paths: &[String]) -> u64 {
+    use std::io::{BufRead, BufReader};
+    let root = Path::new(worktree);
+    let mut total = 0u64;
+    for rel in paths.iter().take(MAX_UNTRACKED_COUNT) {
+        if rel.ends_with('/') {
+            continue;
+        }
+        let abs = root.join(rel.replace('/', std::path::MAIN_SEPARATOR_STR));
+        let meta = std::fs::metadata(&abs);
+        let Ok(meta) = meta else { continue };
+        if !meta.is_file() || meta.len() > MAX_UNTRACKED_BYTES {
+            continue;
+        }
+        let Ok(file) = std::fs::File::open(&abs) else { continue };
+        let mut reader = BufReader::new(file);
+        let mut lines = 0u64;
+        let mut buf = Vec::with_capacity(8 * 1024);
+        loop {
+            buf.clear();
+            let Ok(n) = reader.read_until(b'\n', &mut buf) else { break };
+            if n == 0 {
+                break;
+            }
+            // Heurística binaria: NUL en el chunk => no es texto
+            if buf.contains(&0) {
+                lines = 0;
+                break;
+            }
+            lines += 1;
+        }
+        total += lines;
+    }
+    total
+}
+
 fn status_sync(worktree: &str) -> Result<GitStatus, String> {
     let out = git_quiet(
         worktree,
@@ -131,6 +192,28 @@ fn status_sync(worktree: &str) -> Result<GitStatus, String> {
             continue;
         }
         status.entries.push(StatusEntry { path, orig, index, worktree: worktree_code });
+    }
+    // Totales de líneas: un solo `diff --numstat` por lado (rápido, sin N llamadas).
+    // Si el repo es enorme y el status se truncó, igual sumamos el diff global.
+    if let Ok(out) = git_quiet(worktree, &["diff", "--no-ext-diff", "--numstat"]) {
+        let (a, r) = parse_numstat(&out);
+        status.unstaged_added = a;
+        status.unstaged_removed = r;
+    }
+    if let Ok(out) = git_quiet(worktree, &["diff", "--no-ext-diff", "--cached", "--numstat"]) {
+        let (a, r) = parse_numstat(&out);
+        status.staged_added = a;
+        status.staged_removed = r;
+    }
+    // Untracked no aparece en numstat: cada línea cuenta como agregada.
+    let untracked: Vec<String> = status
+        .entries
+        .iter()
+        .filter(|e| e.index == "?" && e.worktree == "?")
+        .map(|e| e.path.clone())
+        .collect();
+    if !untracked.is_empty() {
+        status.unstaged_added += count_untracked_lines(worktree, &untracked);
     }
     Ok(status)
 }

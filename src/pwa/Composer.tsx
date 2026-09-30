@@ -3,7 +3,7 @@ import { errorText, oc, type DesktopPrefs, type ModelRef } from "./api"
 import { recentModels, rememberModel } from "./local"
 import { useRecorder } from "./recorder"
 import { Icon, Sheet } from "./ui"
-import { hasAccount, chooseAvailableModel } from "../lib/providers"
+import { hasAccount, chooseAvailableModel, modelVisible } from "../lib/providers"
 
 export type ModelInfo = { key: string; providerID: string; modelID: string; name: string; provider: string; image: boolean }
 
@@ -15,22 +15,24 @@ const MAX_SIDE = 1600
 const KEEP_BYTES = 1_500_000
 const PICKER_LIMIT = 80
 
-export function loadModels(directory: string): Promise<ModelInfo[]> {
-  return oc<{ providers?: Array<{ id: string; name: string; source?: string; options?: { apiKey?: unknown }; models?: Record<string, { id: string; name?: string; capabilities?: { input?: { image?: boolean } } }> }> }>(
+export function loadModels(directory: string, zenFreeOnly = false): Promise<ModelInfo[]> {
+  return oc<{ providers?: Array<{ id: string; name: string; source?: string; options?: { apiKey?: unknown }; models?: Record<string, { id: string; name?: string; capabilities?: { input?: { image?: boolean } }; cost?: { input?: number; output?: number } }> }> }>(
     "GET",
     "/config/providers",
     directory,
   )
     .then((res) =>
       (res.providers ?? []).filter(hasAccount).flatMap((p) =>
-        Object.values(p.models ?? {}).map((m) => ({
-          key: `${p.id}/${m.id}`,
-          providerID: p.id,
-          modelID: m.id,
-          name: m.name ?? m.id,
-          provider: p.name,
-          image: m.capabilities?.input?.image ?? true,
-        })),
+        Object.values(p.models ?? {})
+          .filter((m) => modelVisible({ providerID: p.id, modelID: m.id, cost: m.cost }, zenFreeOnly))
+          .map((m) => ({
+            key: `${p.id}/${m.id}`,
+            providerID: p.id,
+            modelID: m.id,
+            name: m.name ?? m.id,
+            provider: p.name,
+            image: m.capabilities?.input?.image ?? true,
+          })),
       ),
     )
 }
@@ -167,6 +169,7 @@ export function Composer({
   placeholder,
   initialModel,
   favorites,
+  zenFreeOnly = false,
   autoFocus,
   rows = 2,
   voice,
@@ -176,6 +179,7 @@ export function Composer({
   placeholder: string
   initialModel: ModelRef | null
   favorites: string[]
+  zenFreeOnly?: boolean
   autoFocus?: boolean
   rows?: number
   voice?: boolean
@@ -230,7 +234,7 @@ export function Composer({
     let alive = true
     const refresh = () => {
       if (document.hidden) return
-      void loadModels(directory)
+      void loadModels(directory, zenFreeOnly)
         .then((m) => { if (alive) { setModels(m); setError(null) } })
         .catch((e) => { if (alive) { setModels(null); setError(errorText(e)) } })
     }
@@ -244,7 +248,7 @@ export function Composer({
       document.removeEventListener("visibilitychange", refresh)
       window.clearInterval(timer)
     }
-  }, [directory])
+  }, [directory, zenFreeOnly])
 
   const info = model ? models?.find((m) => m.key === modelKey(model)) : undefined
   const label = info?.name || model?.modelID || "Conectá un proveedor"
@@ -272,7 +276,7 @@ export function Composer({
     setSending(true)
     setError(null)
     try {
-      const fresh = await loadModels(directory)
+      const fresh = await loadModels(directory, zenFreeOnly)
       setModels(fresh)
       if (fresh.length === 0) throw new Error("Conectá ChatGPT u OpenCode en Cuentas de IA de GuilleCode en la PC.")
       const available = chooseAvailableModel(fresh, model ?? { providerID: "", modelID: "" }, favorites)

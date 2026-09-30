@@ -23,6 +23,31 @@
   border-color: rgba(248, 81, 73, 0.5);
 }
 
+.quota-block {
+  margin: 0 0 14px;
+  padding: 12px 14px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-raised);
+}
+
+.quota-block:last-of-type {
+  margin-bottom: 4px;
+}
+
+.quota-section {
+  margin: 14px 0 2px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+.quota-block .quota-section {
+  margin: 0 0 10px;
+  color: var(--fg);
+}
+
 .quota-row {
   display: flex;
   flex-direction: column;

@@ -68,4 +68,22 @@ impl Opencode {
             .map_err(describe)?;
         Ok(parse(resp.into_string().map_err(|e| e.to_string())?))
     }
+
+    pub fn put(&self, path: &str, body: Value) -> Result<Value, String> {
+        let resp = ureq::put(&format!("{}{}", self.base, path))
+            .set("Authorization", &self.auth)
+            .timeout(Duration::from_secs(30))
+            .send_json(body)
+            .map_err(describe)?;
+        Ok(parse(resp.into_string().map_err(|e| e.to_string())?))
+    }
+
+    pub fn delete(&self, path: &str) -> Result<Value, String> {
+        let resp = ureq::delete(&format!("{}{}", self.base, path))
+            .set("Authorization", &self.auth)
+            .timeout(Duration::from_secs(30))
+            .call()
+            .map_err(describe)?;
+        Ok(parse(resp.into_string().map_err(|e| e.to_string())?))
+    }
 }

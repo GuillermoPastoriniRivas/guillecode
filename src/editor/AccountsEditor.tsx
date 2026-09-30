@@ -1,22 +1,25 @@
 import { useEffect, useState } from "react"
 import { openUrl } from "@tauri-apps/plugin-opener"
 import { confirmAction } from "../components/Dialog"
+import { Toggle } from "../components/fields"
 import { Icon } from "../components/ui"
 import { formatTokens } from "../lib/format"
 import { modelKey } from "../lib/opencode"
 import {
   CHATGPT,
+  ZEN,
   cancelLogin,
   connectOpencode,
   loadAuthEntries,
   loginChatgpt,
   reloadProviders,
   removeProvider,
+  setOpencodeZen,
   useAccounts,
   type AuthEntry,
   type LoginFlow,
 } from "../state/accounts"
-import { setModel, useAgent, type ConnectedProvider, type ProviderModel } from "../state/agent"
+import { setModel, setZenFreeOnly, useAgent, type ConnectedProvider, type ProviderModel } from "../state/agent"
 import { pickOne } from "../state/quickinput"
 import { notify } from "../state/toasts"
 
@@ -37,13 +40,15 @@ type ProviderRow = {
   inUse: boolean
 }
 
+const PROVIDER_LABELS: Record<string, string> = { [ZEN]: "OpenCode Zen" }
+
 function describeProviders(providers: ConnectedProvider[], entries: AuthEntry[] | null, models: ProviderModel[], current: string): ProviderRow[] {
   const ids = [...new Set([...providers.map((p) => p.id), ...(entries ?? []).map((e) => e.id)])]
   return ids
     .map((id) => {
       const p = providers.find((x) => x.id === id)
       const entry = entries?.find((e) => e.id === id)
-      const name = p?.name ?? id
+      const name = PROVIDER_LABELS[id] ?? p?.name ?? id
       const oauth = entry ? entry.kind === "oauth" : !!p?.oauth
       const apiKey = entry ? entry.kind === "api" : p?.source === "api"
       let how = "Incluido en opencode"
@@ -185,9 +190,13 @@ export function AccountsEditor({ onboarding = false, onContinue }: { onboarding?
   const { starting, flow, waitingFor } = useAccounts()
   const modelsLoaded = useAgent((s) => s.modelsLoaded)
   const modelsError = useAgent((s) => s.modelsError)
+  const zenFreeOnly = useAgent((s) => s.zenFreeOnly)
   const savingKey = useAccounts((s) => s.savingKey)
+  const savingZen = useAccounts((s) => s.savingZen)
+  const entries = useAccounts((s) => s.authEntries)
   const [key, setKey] = useState("")
   const go = providers.find((p) => p.id === "opencode-go")
+  const zenOn = !!entries?.some((e) => e.id === ZEN)
   const canContinue = modelsLoaded && !modelsError && models.length > 0 && waitingFor === 0
   const loading = !connected && providers.length === 0
 
@@ -316,7 +325,7 @@ export function AccountsEditor({ onboarding = false, onContinue }: { onboarding?
           <span>Conectá tu propia API key del plan OpenCode Go. No necesitás una cuenta de ChatGPT.</span>
           <form className="accounts-key-form" onSubmit={(event) => {
             event.preventDefault()
-            void connectOpencode(key).then((saved) => { if (saved) setKey("") })
+            void connectOpencode(key, zenOn).then((saved) => { if (saved) setKey("") })
           }}>
             <label htmlFor="opencode-key">API key de OpenCode Go</label>
             <div className="remote-command">
@@ -326,6 +335,11 @@ export function AccountsEditor({ onboarding = false, onContinue }: { onboarding?
               </button>
             </div>
           </form>
+          <Toggle checked={zenOn} disabled={!go || savingZen || !!starting || !!flow} onChange={(value) => void setOpencodeZen(value)} label="Incluir OpenCode Zen (pago por token)" />
+          <span>Zen usa la misma clave y suma modelos de pago por token, aparte de tu plan Go. Los modelos gratuitos de Zen no consumen saldo.</span>
+          {zenOn && (
+            <Toggle checked={zenFreeOnly} onChange={(value) => setZenFreeOnly(value)} label={zenFreeOnly ? "Solo modelos gratuitos de Zen" : "Todos los modelos de Zen"} />
+          )}
           <button type="button" className="btn btn-sm" onClick={() => void openUrl("https://opencode.ai/auth")}><Icon name="link-external" /> Abrir consola de OpenCode</button>
           <span>La clave se verifica antes de guardarla, sin generar mensajes ni consumir tokens.</span>
         </div>

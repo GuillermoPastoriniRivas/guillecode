@@ -382,6 +382,7 @@ export function ScmView() {
           <Section
             title="En el stage"
             count={groups.staged.length}
+            stats={{ added: status?.staged_added ?? 0, removed: status?.staged_removed ?? 0 }}
             open={open.staged}
             onToggle={() => setOpen((o) => ({ ...o, staged: !o.staged }))}
             actions={<IconButton icon="remove" title="Sacar todo del stage" disabled={!!busy} onClick={unstageAll} />}
@@ -394,6 +395,7 @@ export function ScmView() {
         <Section
           title="Cambios"
           count={groups.changes.length}
+          stats={{ added: status?.unstaged_added ?? 0, removed: status?.unstaged_removed ?? 0 }}
           open={open.changes}
           onToggle={() => setOpen((o) => ({ ...o, changes: !o.changes }))}
           actions={

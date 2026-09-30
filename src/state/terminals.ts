@@ -229,7 +229,11 @@ export async function runInTerminal(command: string, opts: { newTerminal?: boole
 }
 
 export function clearTerminal(id: string | null): void {
-  if (id) instances.get(id)?.term.clear()
+  if (!id) return
+  const inst = instances.get(id)
+  if (!inst) return
+  inst.term.clear()
+  void terminalWrite(id, "\x0c").catch(() => undefined)
 }
 
 export function disposeAllTerminals(): void {

@@ -17,6 +17,7 @@ import { registerBuiltinCommands } from "../commands/builtin"
 import { installKeybindings } from "../commands/registry"
 import { isTauri, onEvent } from "../lib/tauri"
 import { closeToTray, hideToTray, hubAvailable, requestQuit } from "../state/hub"
+import { useZoom } from "../state/zoom"
 import { startSync } from "./sync"
 import { ActivityBar, StatusBar, TitleBar } from "./Chrome"
 import { Panel } from "./Panel"
@@ -36,6 +37,8 @@ import { ImageLightbox } from "../components/ImageLightbox"
 import { Toasts } from "../components/Toasts"
 import { Icon, Spinner } from "../components/ui"
 import { Logo } from "../components/Logo"
+import { UpdatesHost } from "../components/Updates"
+import { startUpdates } from "../state/updates"
 
 const VIEW_COMPONENTS: Record<ViewId, () => React.ReactElement> = {
   explorer: ExplorerView,
@@ -53,8 +56,10 @@ function boot() {
   booted = true
   registerBuiltinCommands()
   installKeybindings()
+  useZoom.getState().apply()
   startOutputCapture()
   initAttention()
+  startUpdates()
   void initProject().then(() => {
     const root = useProject.getState().root
     bindAgentProject(root)
@@ -154,6 +159,7 @@ export function Workbench() {
     <div className="workbench">
       <TitleBar />
       <AccountsEditor onboarding onContinue={() => setSetup(false)} />
+      <UpdatesHost />
       <DialogHost />
       <Toasts />
     </div>
@@ -238,6 +244,7 @@ export function Workbench() {
       <ContextMenuHost />
       <DialogHost />
       <ImageLightbox />
+      <UpdatesHost />
       <Toasts />
     </div>
   )

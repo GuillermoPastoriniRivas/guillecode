@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react"
 import { hub } from "./api"
 import { Icon, Sheet, usePoll } from "./ui"
 import "./quota.css"
@@ -166,12 +166,10 @@ export function ChatgptQuotaChip({ quota, onOpen }: { quota: ChatgptQuota | null
   )
 }
 
-export function ChatgptQuotaSheet({ quota, onReload, onClose }: { quota: ChatgptQuota; onReload: () => Promise<void>; onClose: () => void }) {
-  const [busy, setBusy] = useState(false)
+function ChatgptSection({ quota }: { quota: ChatgptQuota }) {
   const usage = quota.usage
-  const plan = usage?.plan ? ` ${usage.plan[0].toUpperCase()}${usage.plan.slice(1)}` : ""
   return (
-    <Sheet title={`Cuota de ChatGPT${plan}`} onClose={onClose}>
+    <>
       {!usage && <div className="alert">{quota.error ?? "No pude leer la cuota de ChatGPT."}</div>}
       {usage?.windows.map((w) => {
         const ratio = w.usedPercent / 100
@@ -194,36 +192,14 @@ export function ChatgptQuotaSheet({ quota, onReload, onClose }: { quota: Chatgpt
           {usage.limitReached ? " Llegaste al límite: los modelos de ChatGPT no responden hasta que se renueve." : ""}
         </small>
       )}
-      <button
-        type="button"
-        className="btn"
-        disabled={busy}
-        onClick={() => {
-          setBusy(true)
-          void onReload().finally(() => setBusy(false))
-        }}
-      >
-        <Icon name={busy ? "loading" : "refresh"} spin={busy} /> Actualizar
-      </button>
-    </Sheet>
+    </>
   )
 }
 
-export function QuotaChip({ quota, onGo, onOpen }: { quota: Quota | null; onGo: boolean; onOpen: () => void }) {
-  const m = quota ? measure(quota) : null
-  if (!m || (!onGo && m.worst.ratio === 0)) return null
-  return (
-    <button type="button" className={`quota-chip ${toneOf(m.worst.ratio)}`} onClick={onOpen} aria-label="Cuota de OpenCode Go">
-      <Icon name="credit-card" /> Go {percent(m.worst.ratio)}
-    </button>
-  )
-}
-
-export function QuotaSheet({ quota, onReload, onClose }: { quota: Quota; onReload: () => Promise<void>; onClose: () => void }) {
-  const [busy, setBusy] = useState(false)
+function GoSection({ quota }: { quota: Quota }) {
   const m = measure(quota)
   return (
-    <Sheet title="Cuota de OpenCode Go" onClose={onClose}>
+    <>
       {!m && <div className="alert">{quota.error ?? "No pude leer la cuota de OpenCode Go."}</div>}
       {m?.rows.map((r) => (
         <div key={r.id} className="quota-row">
@@ -245,17 +221,137 @@ export function QuotaSheet({ quota, onReload, onClose }: { quota: Quota; onReloa
           Es la cuota real de OpenCode Go, medida a las {clock(m.usage.measuredAt)}. Los montos salen de tus topes: cambialos en GuilleCode → «Go» → Editar topes.
         </small>
       )}
-      <button
-        type="button"
-        className="btn"
-        disabled={busy}
-        onClick={() => {
-          setBusy(true)
-          void onReload().finally(() => setBusy(false))
-        }}
-      >
-        <Icon name={busy ? "loading" : "refresh"} spin={busy} /> Actualizar
-      </button>
+    </>
+  )
+}
+
+function ReloadButton({ onReload }: { onReload: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false)
+  return (
+    <button
+      type="button"
+      className="btn"
+      disabled={busy}
+      onClick={() => {
+        setBusy(true)
+        void onReload().finally(() => setBusy(false))
+      }}
+    >
+      <Icon name={busy ? "loading" : "refresh"} spin={busy} /> Actualizar
+    </button>
+  )
+}
+
+export function ChatgptQuotaSheet({ quota, onReload, onClose }: { quota: ChatgptQuota; onReload: () => Promise<void>; onClose: () => void }) {
+  const usage = quota.usage
+  const plan = usage?.plan ? ` ${usage.plan[0].toUpperCase()}${usage.plan.slice(1)}` : ""
+  return (
+    <Sheet title={`Cuota de ChatGPT${plan}`} onClose={onClose}>
+      <ChatgptSection quota={quota} />
+      <ReloadButton onReload={onReload} />
     </Sheet>
   )
 }
+
+export function QuotaChip({ quota, onGo, onOpen }: { quota: Quota | null; onGo: boolean; onOpen: () => void }) {
+  const m = quota ? measure(quota) : null
+  if (!m || (!onGo && m.worst.ratio === 0)) return null
+  return (
+    <button type="button" className={`quota-chip ${toneOf(m.worst.ratio)}`} onClick={onOpen} aria-label="Cuota de OpenCode Go">
+      <Icon name="credit-card" /> Go {percent(m.worst.ratio)}
+    </button>
+  )
+}
+
+export function QuotaSheet({ quota, onReload, onClose }: { quota: Quota; onReload: () => Promise<void>; onClose: () => void }) {
+  return (
+    <Sheet title="Cuota de OpenCode Go" onClose={onClose}>
+      <GoSection quota={quota} />
+      <ReloadButton onReload={onReload} />
+    </Sheet>
+  )
+}
+
+export type QuotaBarHandle = { refreshSoon: () => void }
+
+export const QuotaBar = forwardRef<QuotaBarHandle, { provider: string }>(function QuotaBar({ provider }, ref) {
+  const go = useQuota()
+  const chatgpt = useChatgptQuota(provider === "openai")
+  const [open, setOpen] = useState(false)
+  const goSoon = go.refreshSoon
+  const chatgptSoon = chatgpt.refreshSoon
+
+  const refreshSoon = useCallback(() => {
+    goSoon()
+    chatgptSoon()
+  }, [goSoon, chatgptSoon])
+
+  useImperativeHandle(ref, () => ({ refreshSoon }), [refreshSoon])
+
+  if (provider === "openai") {
+    return (
+      <>
+        <ChatgptQuotaChip quota={chatgpt.quota} onOpen={() => setOpen(true)} />
+        {open && chatgpt.quota && <ChatgptQuotaSheet quota={chatgpt.quota} onReload={chatgpt.reload} onClose={() => setOpen(false)} />}
+      </>
+    )
+  }
+  return (
+    <>
+      <QuotaChip quota={go.quota} onGo={provider === "opencode-go"} onOpen={() => setOpen(true)} />
+      {open && go.quota && <QuotaSheet quota={go.quota} onReload={go.reload} onClose={() => setOpen(false)} />}
+    </>
+  )
+})
+
+export const QuotaHub = forwardRef<QuotaBarHandle>(function QuotaHub(_props, ref) {
+  const go = useQuota()
+  const chatgpt = useChatgptQuota(true)
+  const [open, setOpen] = useState(false)
+  const goSoon = go.refreshSoon
+  const chatgptSoon = chatgpt.refreshSoon
+  const goReload = go.reload
+  const chatgptReload = chatgpt.reload
+
+  const refreshSoon = useCallback(() => {
+    goSoon()
+    chatgptSoon()
+  }, [goSoon, chatgptSoon])
+
+  useImperativeHandle(ref, () => ({ refreshSoon }), [refreshSoon])
+
+  const reload = useCallback(() => Promise.all([goReload(), chatgptReload()]).then(() => undefined), [goReload, chatgptReload])
+
+  const goM = go.quota ? measure(go.quota) : null
+  const chatgptUsage = chatgpt.quota?.usage ?? null
+  const ratios: number[] = []
+  if (goM) ratios.push(goM.worst.ratio)
+  if (chatgptUsage) ratios.push(chatgptWorst(chatgptUsage))
+  const worst = ratios.length > 0 ? Math.max(...ratios) : null
+
+  return (
+    <>
+      <button
+        type="button"
+        className={`quota-chip ${worst === null ? "warn" : toneOf(worst)}`}
+        onClick={() => setOpen(true)}
+        aria-label="Cuotas de tus proveedores"
+      >
+        <Icon name="credit-card" /> Cuotas{worst === null ? "" : ` ${percent(worst)}`}
+      </button>
+      {open && (
+        <Sheet title="Cuotas" onClose={() => setOpen(false)}>
+          <section className="quota-block">
+            <h3 className="quota-section">ChatGPT</h3>
+            {chatgpt.quota ? <ChatgptSection quota={chatgpt.quota} /> : <div className="alert">No pude leer la cuota de ChatGPT.</div>}
+          </section>
+          <section className="quota-block">
+            <h3 className="quota-section">OpenCode Go</h3>
+            {go.quota ? <GoSection quota={go.quota} /> : <div className="alert">No pude leer la cuota de OpenCode Go.</div>}
+          </section>
+          <ReloadButton onReload={reload} />
+        </Sheet>
+      )}
+    </>
+  )
+})

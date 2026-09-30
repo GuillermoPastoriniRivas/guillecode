@@ -8,6 +8,7 @@ Cada usuario conecta sus propias cuentas. Se puede usar **solo ChatGPT**, **solo
 
 - **ChatGPT:** iniciar sesión desde el navegador o mediante un código de dispositivo. Se usan los modelos y los límites habilitados por la cuenta. No requiere cuenta ni API key de OpenCode.
 - **OpenCode Go:** pegar la API key del plan Go desde la consola de OpenCode. GuilleCode consulta la cuota para verificar la clave antes de guardarla; no genera mensajes para validarla.
+- **OpenCode Zen (opcional):** usa la misma clave y se activa con el interruptor «Incluir OpenCode Zen» en Cuentas de IA. Suma modelos que se cobran por token, aparte del plan Go; con «Solo modelos gratuitos de Zen» (por defecto) la lista se limita a los que no consumen saldo, y el interruptor se puede apagar para ver todos.
 - **Ambos:** elegir el proveedor y modelo desde el selector del chat o desde Cuentas de IA.
 
 OpenCode está incluido como **motor interno**, independientemente del proveedor elegido. El motor y la cuenta de OpenCode Go son cosas distintas.

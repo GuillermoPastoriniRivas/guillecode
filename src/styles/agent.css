@@ -237,6 +237,12 @@
   color: var(--fg);
   background: var(--bg-hover);
 }
+.msg-copy {
+  opacity: 0.45;
+}
+.msg:hover .msg-copy {
+  opacity: 1;
+}
 .pin-sentinel {
   height: 1px;
   margin-bottom: -1px;
@@ -368,10 +374,38 @@
   word-break: break-word;
 }
 .msg-aborted {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin-top: 4px;
   font-size: 11px;
   color: var(--fg-faint);
   font-style: italic;
+}
+.msg-aborted .codicon {
+  font-size: 12px;
+}
+.msg-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 11px;
+  font-style: normal;
+  cursor: pointer;
+}
+.msg-retry:hover:not(:disabled) {
+  color: var(--fg);
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+.msg-retry:disabled {
+  cursor: default;
+  opacity: 0.7;
 }
 .msg-image {
   max-width: 260px;

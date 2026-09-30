@@ -19,6 +19,8 @@ import { pickBranch } from "../views/ScmView"
 import { toggleInlineBlame } from "../editor/cm/blame"
 import { wrapCompartment, wrapExtension } from "../editor/cm/setup"
 import { relativePath } from "../lib/paths"
+import { useZoom } from "../state/zoom"
+import { showUpdates, checkUpdates } from "../state/updates"
 
 let wrapOn = false
 let blameOn = true
@@ -39,6 +41,7 @@ async function saveActive() {
 
 export function registerBuiltinCommands(): void {
   const cmds: Command[] = [
+    { id: "app.updates", title: "Buscar actualizaciones de GuilleCode", category: "Aplicación", icon: "cloud-download", global: true, run: () => { showUpdates(); void checkUpdates() } },
     { id: "workbench.quickOpen", title: "Ir a archivo…", category: "Ver", icon: "go-to-file", keys: ["ctrl+p", "ctrl+e"], global: true, run: () => showQuickOpen() },
     { id: "workbench.commandPalette", title: "Mostrar todos los comandos", category: "Ver", icon: "symbol-event", keys: ["ctrl+shift+p", "f1"], global: true, run: () => showQuickOpen(">") },
     { id: "workbench.gotoLine", title: "Ir a línea…", category: "Editor", icon: "symbol-number", keys: ["ctrl+g"], run: () => showQuickOpen(":") },
@@ -46,6 +49,9 @@ export function registerBuiltinCommands(): void {
     { id: "workbench.toggleSidebar", title: "Mostrar/ocultar barra lateral", category: "Ver", icon: "layout-sidebar-left", keys: ["ctrl+b"], global: true, run: () => useLayout.getState().toggleSidebar() },
     { id: "workbench.togglePanel", title: "Mostrar/ocultar panel inferior", category: "Ver", icon: "layout-panel", keys: ["ctrl+j"], global: true, run: () => useLayout.getState().togglePanel() },
     { id: "workbench.toggleAgent", title: "Mostrar/ocultar panel del agente", category: "Ver", icon: "layout-sidebar-right", keys: ["ctrl+alt+b"], global: true, run: () => useLayout.getState().toggleAgent() },
+    { id: "workbench.zoomIn", title: "Aumentar zoom", category: "Ver", icon: "zoom-in", keys: ["ctrl+=", "ctrl+shift+="], global: true, run: () => useZoom.getState().zoomIn() },
+    { id: "workbench.zoomOut", title: "Reducir zoom", category: "Ver", icon: "zoom-out", keys: ["ctrl+-"], global: true, run: () => useZoom.getState().zoomOut() },
+    { id: "workbench.zoomReset", title: "Restablecer zoom", category: "Ver", icon: "screen-normal", keys: ["ctrl+0"], global: true, run: () => useZoom.getState().reset() },
     { id: "workbench.view.explorer", title: "Explorador", category: "Ver", icon: "files", keys: ["ctrl+shift+e"], run: () => useLayout.getState().showView("explorer", false) },
     {
       id: "workbench.view.search",

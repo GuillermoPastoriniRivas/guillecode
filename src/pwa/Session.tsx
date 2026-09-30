@@ -17,6 +17,7 @@ import {
 } from "./api"
 import { Composer, promptBody, type Draft } from "./Composer"
 import { pipOpen, ScreenPip, setPipOpen } from "./ScreenPip"
+import { QuotaBar, type QuotaBarHandle } from "./Quota"
 import type { Route } from "./Home"
 import { Icon, Md, OfflineBanner, useLive, usePoll } from "./ui"
 
@@ -332,6 +333,7 @@ export function SessionScreen({ route, back }: { route: Extract<Route, { kind: "
   const [unseen, setUnseen] = useState(false)
   const stick = useRef(true)
   const first = useRef(true)
+  const quotaBar = useRef<QuotaBarHandle>(null)
 
   const mine = useCallback((sessionID: string | undefined) => !!sessionID && (sessionID === route.id || children.has(sessionID)), [children, route.id])
 
@@ -398,7 +400,10 @@ export function SessionScreen({ route, back }: { route: Extract<Route, { kind: "
           if (p.sessionID === route.id) setBusy((p.status as { type?: string } | undefined)?.type !== "idle")
           break
         case "session.idle":
-          if (p.sessionID === route.id) setBusy(false)
+          if (p.sessionID === route.id) {
+            setBusy(false)
+            quotaBar.current?.refreshSoon()
+          }
           break
         case "session.created":
         case "session.updated": {
@@ -490,6 +495,7 @@ export function SessionScreen({ route, back }: { route: Extract<Route, { kind: "
             {projectName(route.project)} · {busy ? "trabajando…" : "en espera"}
           </small>
         </div>
+        <QuotaBar ref={quotaBar} provider={initialModel?.providerID ?? ""} />
         <button
           type="button"
           className={`icon-btn${screen ? " active" : ""}`}
@@ -543,6 +549,7 @@ export function SessionScreen({ route, back }: { route: Extract<Route, { kind: "
           placeholder={busy ? "Queda en cola hasta que termine" : "Respondele al agente"}
           initialModel={initialModel}
           favorites={info?.prefs?.favorites ?? []}
+          zenFreeOnly={info?.prefs?.zenFreeOnly ?? false}
           voice={info?.voice}
           onSend={send}
         />

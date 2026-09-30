@@ -11,6 +11,7 @@ export type Toast = {
   detail?: string
   actions?: ToastAction[]
   sticky?: boolean
+  duration?: number
 }
 
 type ToastState = {
@@ -23,7 +24,7 @@ type ToastState = {
 let nextId = 1
 const AUTO_DISMISS_MS: Record<ToastKind, number> = {
   info: 4200,
-  success: 3200,
+  success: 10000,
   warning: 7000,
   error: 9000,
   progress: 0,
@@ -34,14 +35,14 @@ export const useToasts = create<ToastState>((set, get) => ({
   push: (toast) => {
     const id = nextId++
     set((s) => ({ toasts: [...s.toasts.slice(-4), { ...toast, id }] }))
-    const ms = AUTO_DISMISS_MS[toast.kind]
+    const ms = toast.duration ?? AUTO_DISMISS_MS[toast.kind]
     if (!toast.sticky && ms > 0) setTimeout(() => get().dismiss(id), ms)
     return id
   },
   update: (id, patch) => {
     set((s) => ({ toasts: s.toasts.map((t) => (t.id === id ? { ...t, ...patch } : t)) }))
     const kind = patch.kind
-    if (kind && kind !== "progress" && !patch.sticky) setTimeout(() => get().dismiss(id), AUTO_DISMISS_MS[kind])
+    if (kind && kind !== "progress" && !patch.sticky) setTimeout(() => get().dismiss(id), patch.duration ?? AUTO_DISMISS_MS[kind])
   },
   dismiss: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 }))
