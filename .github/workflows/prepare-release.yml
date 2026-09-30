@@ -60,6 +60,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run test:engine
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Compilar frontend y PWA
+        run: |
+          npm run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run build:pwa
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Pruebas Rust
         working-directory: src-tauri
         run: cargo test --release --locked --lib
