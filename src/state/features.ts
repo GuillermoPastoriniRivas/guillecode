@@ -11,6 +11,7 @@ import {
   type FeatureList,
   type MergeResult,
   type ProjectSettings,
+  type RepoGroup,
 } from "../lib/features"
 import { gitBranches } from "../lib/git"
 import { api } from "../lib/opencode"
@@ -31,7 +32,7 @@ import {
   useAgent,
 } from "./agent"
 import { killTerminal, runInTerminal, useTerminals } from "./terminals"
-import { useGit } from "./git"
+import { repoForPath, setActiveRepo, useGit } from "./git"
 import { useLayout } from "./layout"
 import { openEditor } from "./editors"
 import { pickOne, promptInput } from "./quickinput"
@@ -55,8 +56,9 @@ export const useFeatures = create<FeaturesState>(() => ({
   showArchived: false,
 }))
 
-export function featureTitle(f: Pick<Feature, "kind" | "label">): string {
-  return f.kind === "main" ? "Principal" : f.label
+export function featureTitle(f: Pick<Feature, "kind" | "label" | "group">): string {
+  if (f.kind === "main") return "Principal"
+  return f.group ? `${f.group} · ${f.label}` : f.label
 }
 
 export function findFeature(root: string | null, list: FeatureList | null = useFeatures.getState().list): Feature | null {
@@ -72,6 +74,49 @@ function requireProject(): string {
   const project = useProject.getState().project
   if (!project) throw new Error("Abrí un proyecto primero")
   return project
+}
+
+function scopeOf(feature: Pick<Feature, "repo">): string {
+  return feature.repo || requireProject()
+}
+
+export function findGroup(path: string | null | undefined, list: FeatureList | null = useFeatures.getState().list): RepoGroup | null {
+  if (!path || !list) return null
+  return list.repos.find((g) => samePath(g.path, path) || samePath(g.main, path)) ?? null
+}
+
+function contextScope(): string {
+  return activeFeature()?.repo || requireProject()
+}
+
+export function contextSettings(list: FeatureList | null = useFeatures.getState().list, root = useProject.getState().root): ProjectSettings | null {
+  if (!list) return null
+  const feature = findFeature(root, list)
+  return findGroup(feature?.repo, list)?.settings ?? list.settings
+}
+
+export async function openFeatureCreate(repo?: string): Promise<void> {
+  const list = useFeatures.getState().list
+  if (!list?.git) {
+    notify.info("Las features necesitan un repositorio git", "Abrí un repo, o una carpeta que tenga repos adentro")
+    return
+  }
+  if (!list.multi) {
+    openEditor({ kind: "featureCreate" })
+    return
+  }
+  let target = repo ? findGroup(repo, list) : null
+  if (!target) {
+    const preferred = activeFeature()?.repo || useGit.getState().activeRepo
+    const ordered = [...list.repos].sort((a, b) => Number(samePath(b.main, preferred ?? "")) - Number(samePath(a.main, preferred ?? "")))
+    const choice = await pickOne(
+      ordered.map((g) => ({ id: g.path, label: g.name, description: g.branch ?? "HEAD detached", icon: "repo" })),
+      { title: "Nueva feature", placeholder: "¿En qué repositorio?" },
+    )
+    if (!choice) return
+    target = findGroup(choice.id, list)
+  }
+  if (target) openEditor({ kind: "featureCreate", repo: target.path })
 }
 
 let generation = 0
@@ -147,7 +192,7 @@ export async function switchToFeature(feature: Feature): Promise<boolean> {
 export async function pickFeature(): Promise<void> {
   const list = useFeatures.getState().list
   if (!list?.git) {
-    notify.info("Las features necesitan que el proyecto sea un repositorio git")
+    notify.info("Las features necesitan un repositorio git", "Abrí un repo, o una carpeta que tenga repos adentro")
     return
   }
   const root = useProject.getState().root
@@ -157,7 +202,11 @@ export async function pickFeature(): Promise<void> {
       ...visible.map((f) => ({
         id: f.root,
         label: featureTitle(f),
-        description: f.missing ? "carpeta no encontrada" : (f.branch ?? "HEAD detached"),
+        description: f.missing
+          ? "carpeta no encontrada"
+          : list.multi && f.kind === "main"
+            ? `${list.repos.length} repositorios`
+            : (f.branch ?? "HEAD detached"),
         icon: root && samePath(f.root, root) ? "check" : f.kind === "main" ? "home" : "git-branch",
       })),
       { id: "__new__", label: "Nueva feature…", icon: "add" },
@@ -166,7 +215,7 @@ export async function pickFeature(): Promise<void> {
   )
   if (!choice) return
   if (choice.id === "__new__") {
-    openEditor({ kind: "featureCreate" })
+    await openFeatureCreate()
     return
   }
   const feature = list.features.find((f) => samePath(f.root, choice.id))
@@ -174,6 +223,7 @@ export async function pickFeature(): Promise<void> {
 }
 
 export type CreateInput = {
+  repo: string | null
   label: string
   branch: string
   base: string
@@ -186,7 +236,7 @@ export type CreateInput = {
 
 export async function createFeature(input: CreateInput): Promise<Feature | null> {
   try {
-    const project = requireProject()
+    const project = input.repo || requireProject()
     const result = await featuresCreate({
       project,
       label: input.label,
@@ -196,8 +246,8 @@ export async function createFeature(input: CreateInput): Promise<Feature | null>
       copy: input.copy,
     })
     if (result.skipped.length > 0) notify.warning("Algunos archivos no se copiaron", result.skipped.join("\n"))
-    const settings = useFeatures.getState().list?.settings
-    if ((input.setup ?? null) !== (settings?.setup ?? null)) await saveSettings({ setup: input.setup })
+    const settings = settingsOf(project)
+    if ((input.setup ?? null) !== (settings?.setup ?? null)) await saveSettings({ setup: input.setup }, project)
     await refreshFeatures()
     notify.success(`Feature «${result.feature.label}» creada`, result.feature.branch ?? undefined)
     if (input.open) {
@@ -218,12 +268,21 @@ export async function createFeature(input: CreateInput): Promise<Feature | null>
   }
 }
 
-export async function saveSettings(patch: Partial<ProjectSettings>): Promise<void> {
-  const project = requireProject()
-  const current = useFeatures.getState().list?.settings ?? { run: null, setup: null, copy: [] }
+export function settingsOf(scope: string, list: FeatureList | null = useFeatures.getState().list): ProjectSettings | null {
+  if (!list) return null
+  return findGroup(scope, list)?.settings ?? list.settings
+}
+
+export async function saveSettings(patch: Partial<ProjectSettings>, scope: string = contextScope()): Promise<void> {
+  const current = settingsOf(scope) ?? { run: null, setup: null, copy: [] }
   const next = { ...current, ...patch }
-  await featuresSetSettings(project, next)
-  useFeatures.setState((s) => (s.list ? { list: { ...s.list, settings: next } } : {}))
+  await featuresSetSettings(scope, next)
+  useFeatures.setState((s) => {
+    if (!s.list) return {}
+    const repos = s.list.repos.map((g) => (samePath(g.path, scope) ? { ...g, settings: next } : g))
+    const settings = samePath(s.list.project, scope) ? next : s.list.settings
+    return { list: { ...s.list, repos, settings } }
+  })
 }
 
 export async function renameFeature(feature: Feature): Promise<void> {
@@ -234,7 +293,7 @@ export async function renameFeature(feature: Feature): Promise<void> {
   })
   if (!label) return
   try {
-    await featuresUpdate({ project: requireProject(), path: feature.path, label: label.trim() })
+    await featuresUpdate({ project: scopeOf(feature), path: feature.path, label: label.trim() })
     await refreshFeatures()
   } catch (e) {
     notify.error("No se pudo renombrar", errorMessage(e))
@@ -243,7 +302,7 @@ export async function renameFeature(feature: Feature): Promise<void> {
 
 export async function setArchived(feature: Feature, archived: boolean): Promise<void> {
   try {
-    await featuresUpdate({ project: requireProject(), path: feature.path, archived })
+    await featuresUpdate({ project: scopeOf(feature), path: feature.path, archived })
     await refreshFeatures()
     notify.info(archived ? `«${feature.label}» archivada` : `«${feature.label}» vuelve a la lista`)
   } catch (e) {
@@ -273,7 +332,7 @@ export async function changeBase(feature: Feature): Promise<void> {
   )
   if (!choice) return
   try {
-    await featuresUpdate({ project: requireProject(), path: feature.path, base: choice.id })
+    await featuresUpdate({ project: scopeOf(feature), path: feature.path, base: choice.id })
     await refreshFeatures()
   } catch (e) {
     notify.error("No se pudo cambiar la base", errorMessage(e))
@@ -296,6 +355,7 @@ function plural(n: number, one: string, many: string): string {
 export async function removeFeature(feature: Feature): Promise<void> {
   if (feature.kind === "main") return
   const project = requireProject()
+  const scope = scopeOf(feature)
   const activity = featureSessions(feature)
   if (activity.busy > 0) {
     notify.warning("Hay agentes trabajando en esta feature", "Esperá a que terminen o detenelos antes de eliminarla")
@@ -303,7 +363,7 @@ export async function removeFeature(feature: Feature): Promise<void> {
   }
   let check
   try {
-    check = await featuresRemoveCheck(project, feature.path)
+    check = await featuresRemoveCheck(scope, feature.path)
   } catch (e) {
     notify.error("No se pudo revisar la feature", errorMessage(e))
     return
@@ -367,7 +427,7 @@ export async function removeFeature(feature: Feature): Promise<void> {
   await api("POST", "/instance/dispose", undefined, undefined, { directory: feature.root }).catch(() => undefined)
   try {
     const result = await featuresRemove({
-      project,
+      project: scope,
       path: feature.path,
       deleteBranch: choice === "branch" && (check.unmerged === 0 || forceBranch),
       force,
@@ -379,6 +439,21 @@ export async function removeFeature(feature: Feature): Promise<void> {
     notify.error("No se pudo eliminar la feature", errorMessage(e))
   }
   await refreshFeatures()
+}
+
+function focusRepo(path: string): void {
+  const apply = () => {
+    const repo = repoForPath(path)
+    if (repo) setActiveRepo(repo)
+    return !!repo
+  }
+  if (apply()) return
+  const off = useGit.subscribe((s) => {
+    if (s.repos.length === 0) return
+    off()
+    apply()
+  })
+  setTimeout(off, 10000)
 }
 
 export async function handleMergeResult(result: MergeResult, success: string): Promise<void> {
@@ -401,12 +476,14 @@ export async function handleMergeResult(result: MergeResult, success: string): P
   }
   await refreshFeatures()
   const checkout = result.checkout
-  const target = useFeatures.getState().list?.features.find((f) => samePath(f.path, checkout))
+  const list = useFeatures.getState().list
+  const target = list?.features.find((f) => samePath(f.path, checkout)) ?? (findGroup(checkout, list) ? list?.features.find((f) => f.kind === "main") : undefined)
   const root = useProject.getState().root
   if (target && root && !samePath(target.root, root)) {
     const ok = await activateRoot(target.root, { label: featureTitle(target) })
     if (!ok) return
   }
+  focusRepo(checkout)
   useLayout.getState().showView("scm", false)
   notify.warning(
     `Merge con conflictos en ${plural(result.conflicts.length, "archivo", "archivos")}`,
@@ -429,7 +506,7 @@ export async function updateFromBase(feature: Feature): Promise<void> {
     return
   }
   try {
-    const result = await featuresUpdateFromBase(requireProject(), feature.path)
+    const result = await featuresUpdateFromBase(scopeOf(feature), feature.path)
     await handleMergeResult(result, `«${feature.label}» actualizada con ${feature.base}`)
   } catch (e) {
     notify.error("No se pudo traer la base", errorMessage(e))
@@ -521,7 +598,7 @@ export function isAppRunning(runTerminalId: string | null, terminals = useTermin
 export async function runApp(): Promise<void> {
   const root = useProject.getState().root
   if (!root) return
-  const command = useFeatures.getState().list?.settings.run ?? (await configureRunCommand())
+  const command = contextSettings()?.run ?? (await configureRunCommand())
   if (!command) return
   const current = useFeatures.getState().runTerminalId
   if (current && isAppRunning(current)) await killTerminal(current)

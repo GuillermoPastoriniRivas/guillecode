@@ -193,6 +193,7 @@ export function Composer({
   const model = models ? chooseAvailableModel(models, requestedModel ?? { providerID: "", modelID: "" }, favorites) : requestedModel
   const [picking, setPicking] = useState(false)
   const [sending, setSending] = useState(false)
+  const sendingRef = useRef(false)
   const [reading, setReading] = useState<"camera" | "gallery" | null>(null)
   const [error, setError] = useState<string | null>(null)
   const cameraInput = useRef<HTMLInputElement>(null)
@@ -201,13 +202,9 @@ export function Composer({
   const [now, setNow] = useState(() => Date.now())
   const recorder = useRecorder(
     (heard) => {
-      setText((prev) => (prev.trim() ? `${prev.trim()} ${heard}` : heard))
-      requestAnimationFrame(() => {
-        const el = textarea.current
-        if (!el) return
-        el.focus()
-        el.setSelectionRange(el.value.length, el.value.length)
-      })
+      const message = text.trim() ? `${text.trim()} ${heard}` : heard
+      setText(message)
+      void send(message)
     },
     setError,
   )
@@ -271,8 +268,10 @@ export function Composer({
     }
   }
 
-  const send = async () => {
-    if (!ready) return
+  async function send(transcript?: string) {
+    if (sendingRef.current || (transcript === undefined ? !ready : !!reading || !transcript.trim())) return
+    const message = transcript ?? text
+    sendingRef.current = true
     setSending(true)
     setError(null)
     try {
@@ -281,13 +280,14 @@ export function Composer({
       if (fresh.length === 0) throw new Error("Conectá ChatGPT u OpenCode en Cuentas de IA de GuilleCode en la PC.")
       const available = chooseAvailableModel(fresh, model ?? { providerID: "", modelID: "" }, favorites)
       setPicked(available)
-      await onSend({ text, attachments, model: available })
+      await onSend({ text: message, attachments, model: available })
       rememberModel(modelKey(available))
       setText("")
       setAttachments([])
     } catch (e) {
       setError(errorText(e))
     } finally {
+      sendingRef.current = false
       setSending(false)
     }
   }
@@ -337,7 +337,7 @@ export function Composer({
             )}
           </span>
           <span className="spacer" />
-          <button type="button" className="btn primary" onClick={() => void recorder.stop()} disabled={transcribing} aria-label="Terminar y transcribir">
+          <button type="button" className="btn primary" onClick={() => void recorder.stop()} disabled={transcribing} aria-label="Terminar y enviar">
             <Icon name={transcribing ? "loading" : "check"} spin={transcribing} />
           </button>
         </div>

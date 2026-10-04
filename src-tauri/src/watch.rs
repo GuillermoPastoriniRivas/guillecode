@@ -64,6 +64,9 @@ fn classify(root: &Path, path: &Path) -> Classified {
     if parts.iter().any(|p| NOISY_DIRS.contains(&p.as_str())) {
         return Classified::Skip;
     }
+    if parts.iter().position(|p| p == crate::features::WORKTREES_DIR).is_some_and(|pos| parts.len() > pos + 2) {
+        return Classified::Skip;
+    }
     if let Some(name) = parts.last() {
         if name.contains(".guillecode-") && name.ends_with(".tmp") {
             return Classified::Skip;
@@ -196,4 +199,20 @@ pub fn watch_stop(window: tauri::WebviewWindow, state: tauri::State<WatchState>,
         }
     }
     watchers.remove(label);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn worktree_folders_are_seen_but_not_their_files() {
+        let root = Path::new("C:/repo");
+        assert!(matches!(classify(root, Path::new("C:/repo/.worktrees")), Classified::File(_)));
+        assert!(matches!(classify(root, Path::new("C:/repo/.worktrees/login")), Classified::File(_)));
+        assert!(matches!(classify(root, Path::new("C:/repo/.worktrees/login/src/a.ts")), Classified::Skip));
+        assert!(matches!(classify(root, Path::new("C:/repo/src/a.ts")), Classified::File(_)));
+        let inside = Path::new("C:/repo/.worktrees/login");
+        assert!(matches!(classify(inside, Path::new("C:/repo/.worktrees/login/src/a.ts")), Classified::File(_)));
+    }
 }

@@ -1,6 +1,6 @@
 use std::time::Duration;
 use windows::core::{BOOL, HSTRING, PCWSTR, PWSTR};
-use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, RECT, WPARAM};
+use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows::Win32::Graphics::Gdi::{
     BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, CAPTUREBLT, DIB_RGB_COLORS, HDC,
@@ -17,7 +17,7 @@ use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, EnumWindows, GetAncestor, GetClassNameW, GetForegroundWindow, GetSystemMetrics, GetWindowLongW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
     GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, PostMessageW, SetForegroundWindow, ShowWindow, GA_ROOT, GWL_EXSTYLE, PW_RENDERFULLCONTENT, SM_CXVIRTUALSCREEN,
-    SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_RESTORE, SW_SHOWNORMAL, WM_CLOSE, WS_EX_TOOLWINDOW,
+    SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_RESTORE, SW_SHOWNORMAL, WM_CLOSE, WS_EX_TOOLWINDOW, WindowFromPoint,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -314,27 +314,28 @@ pub fn wheel(x: i32, y: i32, notches: i32) -> Result<(), String> {
 }
 
 pub fn type_text(text: &str) -> Result<(), String> {
-    let mut inputs: Vec<INPUT> = Vec::new();
-    for unit in text.encode_utf16() {
-        match unit {
-            13 => continue,
-            10 => {
-                inputs.push(key_input(0x0D, 0, KEYBD_EVENT_FLAGS(0)));
-                inputs.push(key_input(0x0D, 0, KEYEVENTF_KEYUP));
+    let units: Vec<u16> = text.encode_utf16().filter(|u| *u != 13).collect();
+    let mut i = 0;
+    while i < units.len() {
+        let unit = units[i];
+        let pair: Vec<INPUT> = match unit {
+            10 => vec![key_input(0x0D, 0, KEYBD_EVENT_FLAGS(0)), key_input(0x0D, 0, KEYEVENTF_KEYUP)],
+            9 => vec![key_input(0x09, 0, KEYBD_EVENT_FLAGS(0)), key_input(0x09, 0, KEYEVENTF_KEYUP)],
+            _ if (0xD800..0xDC00).contains(&unit) && i + 1 < units.len() => {
+                let low = units[i + 1];
+                i += 1;
+                vec![
+                    key_input(0, unit, KEYEVENTF_UNICODE),
+                    key_input(0, low, KEYEVENTF_UNICODE),
+                    key_input(0, unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP),
+                    key_input(0, low, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP),
+                ]
             }
-            9 => {
-                inputs.push(key_input(0x09, 0, KEYBD_EVENT_FLAGS(0)));
-                inputs.push(key_input(0x09, 0, KEYEVENTF_KEYUP));
-            }
-            _ => {
-                inputs.push(key_input(0, unit, KEYEVENTF_UNICODE));
-                inputs.push(key_input(0, unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP));
-            }
-        }
-    }
-    for chunk in inputs.chunks(120) {
-        send(chunk)?;
-        std::thread::sleep(Duration::from_millis(15));
+            _ => vec![key_input(0, unit, KEYEVENTF_UNICODE), key_input(0, unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP)],
+        };
+        send(&pair)?;
+        std::thread::sleep(Duration::from_millis(if unit == 10 { 25 } else { 6 }));
+        i += 1;
     }
     Ok(())
 }
@@ -495,6 +496,11 @@ pub fn capture_window(raw: isize) -> Result<Shot, String> {
             return Err("la ventana está minimizada: traela al frente con focus_window antes de capturarla".into());
         }
     }
+    if in_front(raw) {
+        if let Ok(shot) = capture_visible(raw) {
+            return Ok(shot);
+        }
+    }
     let mut outer = RECT::default();
     unsafe { GetWindowRect(h, &mut outer) }.map_err(|e| e.to_string())?;
     let outer: Rect = outer.into();
@@ -576,6 +582,57 @@ fn downscale(src: &[u8], sw: u32, sh: u32, dw: u32, dh: u32) -> Vec<u8> {
     out
 }
 
+fn upscale(src: &[u8], sw: u32, sh: u32, dw: u32, dh: u32) -> Vec<u8> {
+    let mut out = vec![0u8; (dw * dh * 4) as usize];
+    let fx = sw as f64 / dw as f64;
+    let fy = sh as f64 / dh as f64;
+    for dy in 0..dh {
+        let y = ((dy as f64 + 0.5) * fy - 0.5).clamp(0.0, (sh - 1) as f64);
+        let (y0, ty) = (y.floor() as u32, y - y.floor());
+        let y1 = (y0 + 1).min(sh - 1);
+        for dx in 0..dw {
+            let x = ((dx as f64 + 0.5) * fx - 0.5).clamp(0.0, (sw - 1) as f64);
+            let (x0, tx) = (x.floor() as u32, x - x.floor());
+            let x1 = (x0 + 1).min(sw - 1);
+            let at = |px: u32, py: u32, c: usize| src[((py * sw + px) * 4) as usize + c] as f64;
+            let o = ((dy * dw + dx) * 4) as usize;
+            for c in 0..3 {
+                let top = at(x0, y0, c) * (1.0 - tx) + at(x1, y0, c) * tx;
+                let bottom = at(x0, y1, c) * (1.0 - tx) + at(x1, y1, c) * tx;
+                out[o + c] = (top * (1.0 - ty) + bottom * ty).round() as u8;
+            }
+            out[o + 3] = 255;
+        }
+    }
+    out
+}
+
+pub fn resample(src: &[u8], sw: u32, sh: u32, dw: u32, dh: u32) -> Vec<u8> {
+    if dw >= sw && dh >= sh {
+        upscale(src, sw, sh, dw, dh)
+    } else {
+        downscale(src, sw, sh, dw, dh)
+    }
+}
+
+pub fn crop(shot: &Shot, area: Rect) -> Option<Shot> {
+    let local = Rect {
+        left: (area.left - shot.origin.0).clamp(0, shot.width as i32),
+        top: (area.top - shot.origin.1).clamp(0, shot.height as i32),
+        right: (area.right - shot.origin.0).clamp(0, shot.width as i32),
+        bottom: (area.bottom - shot.origin.1).clamp(0, shot.height as i32),
+    };
+    if local.width() < 4 || local.height() < 4 {
+        return None;
+    }
+    Some(Shot {
+        width: local.width() as u32,
+        height: local.height() as u32,
+        bgra: cut(&shot.bgra, shot.width as i32, local),
+        origin: (shot.origin.0 + local.left, shot.origin.1 + local.top),
+    })
+}
+
 pub struct Encoded {
     pub jpeg: Vec<u8>,
     pub width: u32,
@@ -584,11 +641,15 @@ pub struct Encoded {
 }
 
 pub fn encode(shot: &Shot, max_side: u32, quality: u8) -> Result<Encoded, String> {
+    encode_zoomed(shot, max_side, quality, 1.0)
+}
+
+pub fn encode_zoomed(shot: &Shot, max_side: u32, quality: u8, max_scale: f64) -> Result<Encoded, String> {
     let longest = shot.width.max(shot.height).max(1);
-    let scale = (max_side as f64 / longest as f64).min(1.0);
+    let scale = (max_side as f64 / longest as f64).min(max_scale);
     let width = ((shot.width as f64 * scale).round() as u32).max(1);
     let height = ((shot.height as f64 * scale).round() as u32).max(1);
-    let pixels = if width == shot.width && height == shot.height { shot.bgra.clone() } else { downscale(&shot.bgra, shot.width, shot.height, width, height) };
+    let pixels = if width == shot.width && height == shot.height { shot.bgra.clone() } else { resample(&shot.bgra, shot.width, shot.height, width, height) };
     let mut jpeg = Vec::new();
     jpeg_encoder::Encoder::new(&mut jpeg, quality)
         .encode(&pixels, width as u16, height as u16, jpeg_encoder::ColorType::Bgra)
@@ -609,4 +670,33 @@ pub fn launch(target: &str, args: &str) -> Result<(), String> {
         return Err(format!("Windows no pudo abrir «{}» (código {})", target, code));
     }
     Ok(())
+}
+
+pub fn window_at(x: i32, y: i32) -> isize {
+    root_of(unsafe { WindowFromPoint(POINT { x, y }) }.0 as isize)
+}
+
+pub fn capture_visible(raw: isize) -> Result<Shot, String> {
+    let v = virtual_screen();
+    let b = bounds(raw);
+    let area = Rect { left: b.left.max(v.left), top: b.top.max(v.top), right: b.right.min(v.right), bottom: b.bottom.min(v.bottom) };
+    if area.width() <= 1 || area.height() <= 1 {
+        return Err("la ventana está fuera de la pantalla".into());
+    }
+    let bgra = unsafe {
+        let screen = GetDC(None);
+        let result = grab(screen, area.left, area.top, area.width(), area.height(), None);
+        ReleaseDC(None, screen);
+        result?
+    };
+    if blank(&bgra) {
+        return Err("la captura salió negra: la PC está bloqueada o la pantalla apagada".into());
+    }
+    Ok(Shot { width: area.width() as u32, height: area.height() as u32, bgra, origin: (area.left, area.top) })
+}
+
+pub fn physical_thread() {
+    unsafe {
+        let _ = windows::Win32::UI::HiDpi::SetThreadDpiAwarenessContext(windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    }
 }

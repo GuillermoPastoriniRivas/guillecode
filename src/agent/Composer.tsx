@@ -446,79 +446,82 @@ export function Composer({
         }}
       />
       <div className="composer-footer">
-        <button type="button" className="composer-pill agent-pill" onClick={() => void chooseAgent()} title="Modo del agente">
-          <Icon name={agentName === "plan" ? "checklist" : "hubot"} />
-          <span>{agentName}</span>
-        </button>
-        <button type="button" className="composer-pill" onClick={() => void chooseModel()} title="Elegir modelo">
-          <Icon name="sparkle" />
-          <span className="composer-pill-text">{modelName}</span>
-          <Icon name="chevron-down" />
-        </button>
-        {modelVariants && modelVariants.length > 0 && (
-          <button
-            type="button"
-            className={`composer-pill${variant ? " set" : ""}`}
-            onClick={() => void chooseVariant()}
-            title="Esfuerzo de razonamiento"
-          >
-            <Icon name="lightbulb" />
-            <span>{variantLabel(variant)}</span>
+        <div className="composer-options">
+          <button type="button" className="composer-pill agent-pill" onClick={() => void chooseAgent()} title="Modo del agente">
+            <Icon name={agentName === "plan" ? "checklist" : "hubot"} />
+            <span>{agentName}</span>
           </button>
-        )}
-        {!includeActiveFile && (
-          <button
-            type="button"
-            className="composer-icon"
-            title="Volver a incluir el archivo activo"
-            onClick={() => useAgent.setState({ includeActiveFile: true })}
-          >
-            <Icon name="eye" />
+          <button type="button" className="composer-pill" onClick={() => void chooseModel()} title="Elegir modelo">
+            <Icon name="sparkle" />
+            <span className="composer-pill-text">{modelName}</span>
+            <Icon name="chevron-down" />
           </button>
-        )}
-        <button type="button" className="composer-icon" title="Mencionar archivo (@)" onClick={() => {
-          const el = ref.current
-          const caret = el?.selectionStart ?? text.length
-          const next = `${text.slice(0, caret)}${caret > 0 && !/\s$/.test(text.slice(0, caret)) ? " " : ""}@${text.slice(caret)}`
-          updateText(next, next.length - text.slice(caret).length)
-          el?.focus()
-        }}>
-          <Icon name="mention" />
-        </button>
-        <button type="button" className="composer-icon" title="Adjuntar imagen" onClick={() => fileInput.current?.click()}>
-          <Icon name="attach" />
-        </button>
-        <span className="composer-spacer" />
-        {usage && <ContextRing usage={usage} />}
-        {!compact && (
-          <span className="composer-hint">
-            {busy ? (
-              <>
-                <Kbd>Enter</Kbd> en cola · <Kbd>Ctrl+Enter</Kbd> enviar ya · <Kbd>Esc</Kbd> detener
-              </>
-            ) : (
-              <>
-                <Kbd>Enter</Kbd> enviar · <Kbd>Shift+Enter</Kbd> línea
-              </>
-            )}
-          </span>
-        )}
-        {busy && (
-          <button type="button" className="composer-send stop" title="Detener (Esc)" onClick={() => void abortSession(sessionId)}>
-            <Icon name="debug-stop" />
+          {modelVariants && modelVariants.length > 0 && (
+            <button
+              type="button"
+              className={`composer-pill${variant ? " set" : ""}`}
+              onClick={() => void chooseVariant()}
+              title="Esfuerzo de razonamiento"
+            >
+              <Icon name="lightbulb" />
+              <span>{variantLabel(variant)}</span>
+            </button>
+          )}
+          {!includeActiveFile && (
+            <button
+              type="button"
+              className="composer-icon"
+              title="Volver a incluir el archivo activo"
+              onClick={() => useAgent.setState({ includeActiveFile: true })}
+            >
+              <Icon name="eye" />
+            </button>
+          )}
+          <button type="button" className="composer-icon" title="Mencionar archivo (@)" onClick={() => {
+            const el = ref.current
+            const caret = el?.selectionStart ?? text.length
+            const next = `${text.slice(0, caret)}${caret > 0 && !/\s$/.test(text.slice(0, caret)) ? " " : ""}@${text.slice(caret)}`
+            updateText(next, next.length - text.slice(caret).length)
+            el?.focus()
+          }}>
+            <Icon name="mention" />
           </button>
-        )}
-        {(!busy || text.trim() || context.length > 0) && (
-          <button
-            type="button"
-            className={`composer-send${busy ? " queue" : ""}`}
-            title={busy ? "Dejar en cola (Enter) · Ctrl+Enter para enviarlo ya" : "Enviar (Enter)"}
-            disabled={sending || !!modelsError || !models.some((m) => m.providerID === model.providerID && m.modelID === model.modelID) || (!text.trim() && context.length === 0)}
-            onClick={(e) => void submit(e.ctrlKey || e.metaKey)}
-          >
-            <Icon name={sending ? "loading" : busy ? "list-ordered" : "send"} spin={sending} />
+          <button type="button" className="composer-icon" title="Adjuntar imagen" onClick={() => fileInput.current?.click()}>
+            <Icon name="attach" />
           </button>
-        )}
+        </div>
+        <div className="composer-actions">
+          {usage && <ContextRing usage={usage} />}
+          {!compact && (
+            <span className="composer-hint">
+              {busy ? (
+                <>
+                  <Kbd>Enter</Kbd> en cola · <Kbd>Ctrl+Enter</Kbd> enviar ya · <Kbd>Esc</Kbd> detener
+                </>
+              ) : (
+                <>
+                  <Kbd>Enter</Kbd> enviar · <Kbd>Shift+Enter</Kbd> línea
+                </>
+              )}
+            </span>
+          )}
+          {busy && (
+            <button type="button" className="composer-send stop" title="Detener (Esc)" onClick={() => void abortSession(sessionId)}>
+              <Icon name="debug-stop" />
+            </button>
+          )}
+          {(!busy || text.trim() || context.length > 0) && (
+            <button
+              type="button"
+              className={`composer-send${busy ? " queue" : ""}`}
+              title={busy ? "Dejar en cola (Enter) · Ctrl+Enter para enviarlo ya" : "Enviar (Enter)"}
+              disabled={sending || !!modelsError || !models.some((m) => m.providerID === model.providerID && m.modelID === model.modelID) || (!text.trim() && context.length === 0)}
+              onClick={(e) => void submit(e.ctrlKey || e.metaKey)}
+            >
+              <Icon name={sending ? "loading" : busy ? "list-ordered" : "send"} spin={sending} />
+            </button>
+          )}
+        </div>
       </div>
     </div>
   )

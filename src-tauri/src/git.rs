@@ -480,7 +480,7 @@ fn checkout_sync(worktree: &str, branch: &str, create: bool, from: Option<String
     Ok(())
 }
 
-fn subrepos_sync(worktree: &str) -> Result<Vec<String>, String> {
+pub(crate) fn subrepos_sync(worktree: &str) -> Result<Vec<String>, String> {
     let root = Path::new(worktree).to_path_buf();
     if !root.is_dir() {
         return Err(format!("la carpeta no existe: {}", worktree));

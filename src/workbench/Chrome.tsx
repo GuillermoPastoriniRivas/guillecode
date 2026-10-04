@@ -29,7 +29,7 @@ import {
 } from "../state/usage"
 import { CHATGPT } from "../state/accounts"
 import { useGit } from "../state/git"
-import { featureTitle, findFeature, isAppRunning, pickFeature, runApp, stopApp, useFeatures } from "../state/features"
+import { contextSettings, featureTitle, findFeature, isAppRunning, pickFeature, runApp, stopApp, useFeatures } from "../state/features"
 import { useTerminals } from "../state/terminals"
 import { useDocs, docKey } from "../editor/documents"
 import { useEditors, openEditor } from "../state/editors"
@@ -464,6 +464,7 @@ export function StatusBar() {
   const activeRoot = useProject((s) => s.root)
   const feature = findFeature(activeRoot, featureList)
   const appRunning = isAppRunning(runTerminalId, terminals)
+  const runCommand = contextSettings(featureList, activeRoot)?.run ?? null
 
   const attentionMenu = (el: HTMLElement) =>
     openMenuAt(el, [
@@ -510,7 +511,7 @@ export function StatusBar() {
           <StatusItem
             icon={appRunning ? "debug-stop" : "play"}
             label={appRunning ? "app corriendo" : "correr app"}
-            title={appRunning ? "Detener la app (cierra su terminal y libera los puertos)" : featureList.settings.run ? `Correr: ${featureList.settings.run}` : "Elegir cómo se corre la app y correrla"}
+            title={appRunning ? "Detener la app (cierra su terminal y libera los puertos)" : runCommand ? `Correr: ${runCommand}` : "Elegir cómo se corre la app y correrla"}
             tone={appRunning ? "busy" : undefined}
             onClick={() => void (appRunning ? stopApp() : runApp())}
           />

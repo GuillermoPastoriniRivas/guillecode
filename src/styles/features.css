@@ -677,3 +677,49 @@
   font-size: 11px;
   flex-shrink: 0;
 }
+
+span.feature-chevron {
+  display: inline-block;
+  width: 12px;
+}
+.feature-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+}
+.feature-repo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+  padding: 2px 6px 2px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.feature-repo:hover {
+  background: var(--bg-hover);
+}
+.feature-repo-name {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: var(--fg);
+}
+.feature-repo-branch {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-dim);
+}
+.feature-repo:hover .feature-actions {
+  display: flex;
+}
+.feature-repo:hover .feature-indicators {
+  display: none;
+}
+.feature-row.nested {
+  margin-left: 14px;
+}

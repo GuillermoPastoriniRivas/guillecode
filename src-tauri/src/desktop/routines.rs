@@ -116,6 +116,7 @@ mod tests {
             activity: std::sync::Mutex::new(std::collections::VecDeque::new()),
             skills: Some(std::path::PathBuf::from("skills")),
             browser_injected: false,
+            subagent: false,
         };
         let config = super::super::agent_config(&state);
         assert_eq!(config["mcp"]["routines"]["url"], "http://127.0.0.1:12345/mcp/routines");

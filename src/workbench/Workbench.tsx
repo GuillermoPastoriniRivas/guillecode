@@ -9,7 +9,7 @@ import { initAttention } from "../state/attention"
 import { startUsagePolling } from "../state/usage"
 import { startRoutines } from "../state/routines"
 import { startOutputCapture } from "../state/output"
-import { ensureShells } from "../state/terminals"
+import { ensureShells, startAgentTerminals } from "../state/terminals"
 import { bindRoot } from "../state/workspace"
 import { initFeatures } from "../state/features"
 import { registerBuiltinCommands } from "../commands/builtin"
@@ -71,6 +71,7 @@ function boot() {
     bindRoot(root)
     initFeatures()
     void ensureShells()
+    startAgentTerminals()
   })
   if (isTauri) {
     void getCurrentWindow().onCloseRequested(async (event) => {

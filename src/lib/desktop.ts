@@ -20,6 +20,8 @@ export type DesktopStatus = {
   paused: boolean
   browser: boolean
   browserActive: boolean
+  subagent: boolean
+  subagentActive: boolean
   browserConfigured: boolean
   bridge: BridgeStatus
   blocked: string[]
@@ -28,7 +30,7 @@ export type DesktopStatus = {
   available: boolean
 }
 
-export type DesktopPatch = Partial<{ enabled: boolean; paused: boolean; browser: boolean; browserToken: string; blocked: string[] }>
+export type DesktopPatch = Partial<{ enabled: boolean; paused: boolean; browser: boolean; browserToken: string; blocked: string[]; subagent: boolean }>
 
 export const PLAYWRIGHT_EXTENSION_URL = "https://chromewebstore.google.com/detail/playwright-extension/mmlmfjhmonkocbjadbfplnigmagldckm"
 
