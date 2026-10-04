@@ -5,17 +5,12 @@ export type TermEvent = { kind: "data"; data: string } | { kind: "exit"; code: n
 
 export const terminalShells = () => call<ShellInfo[]>("terminal_shells")
 
-export function terminalSpawn(
-  id: string,
-  cwd: string,
-  shell: string | null,
-  cols: number,
-  rows: number,
-  onEvent: (e: TermEvent) => void,
-): Promise<void> {
+export type TermSpawnOptions = { id: string; cwd: string; shell: string | null; cols: number; rows: number; title: string | null; agent: boolean }
+
+export function terminalSpawn(args: TermSpawnOptions, onEvent: (e: TermEvent) => void): Promise<void> {
   const channel = new Channel<TermEvent>()
   channel.onmessage = onEvent
-  return call<void>("terminal_spawn", { args: { id, cwd, shell, cols, rows }, onEvent: channel })
+  return call<void>("terminal_spawn", { args, onEvent: channel })
 }
 
 export const terminalWrite = (id: string, data: string) => call<void>("terminal_write", { id, data })

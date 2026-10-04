@@ -14,7 +14,7 @@ import {
 } from "../lib/term"
 import { basename, samePath } from "../lib/paths"
 import { loadJson, saveJson } from "../lib/persist"
-import { errorMessage } from "../lib/tauri"
+import { errorMessage, onWindowEvent } from "../lib/tauri"
 import { useLayout } from "./layout"
 import { useProject } from "./project"
 import { notify } from "./toasts"
@@ -27,7 +27,10 @@ export type TerminalInfo = {
   title: string | null
   exited: boolean
   exitCode: number | null
+  agent: boolean
 }
+
+type AgentOpen = { id: string; cwd: string; title: string | null; shell: string | null }
 
 type TerminalsState = {
   terminals: TerminalInfo[]
@@ -59,7 +62,9 @@ type Instance = {
 }
 
 const instances = new Map<string, Instance>()
+const quiet = new Set<string>()
 let counter = 1
+let agentListening = false
 
 const THEME = {
   background: "#0d1117",
@@ -116,14 +121,16 @@ function patchInfo(id: string, patch: Partial<TerminalInfo>) {
   useTerminals.setState((s) => ({ terminals: s.terminals.map((t) => (t.id === id ? { ...t, ...patch } : t)) }))
 }
 
-export function createTerminal(opts: { shell?: string | null; cwd?: string; show?: boolean; title?: string } = {}): string {
+export function createTerminal(
+  opts: { id?: string; shell?: string | null; cwd?: string; show?: boolean; title?: string; agent?: boolean; focus?: boolean } = {},
+): string {
   const root = useProject.getState().root
   const cwd = opts.cwd ?? root
   if (!cwd) {
     notify.warning("Abrí un proyecto para usar la terminal")
     return ""
   }
-  const id = `term-${Date.now()}-${counter}`
+  const id = opts.id ?? `term-${Date.now()}-${counter}`
   const shell = opts.shell ?? useTerminals.getState().defaultShell
   const term = new Terminal({
     cursorBlink: true,
@@ -147,9 +154,12 @@ export function createTerminal(opts: { shell?: string | null; cwd?: string; show
     title: opts.title ?? null,
     exited: false,
     exitCode: null,
+    agent: opts.agent ?? false,
   }
   counter += 1
-  const ready = terminalSpawn(id, cwd, shell, term.cols, term.rows, (event) => {
+  if (opts.focus === false) quiet.add(id)
+  const spawn = { id, cwd, shell, cols: term.cols, rows: term.rows, title: info.title, agent: info.agent }
+  const ready = terminalSpawn(spawn, (event) => {
     if (event.kind === "data") term.write(event.data)
     else {
       term.write(`\r\n\x1b[2m[proceso terminado${event.code !== null ? ` · código ${event.code}` : ""}]\x1b[0m\r\n`)
@@ -203,9 +213,35 @@ export function focusTerminal(id: string | null): void {
   instances.get(id)?.term.focus()
 }
 
+export function shouldAutoFocus(id: string): boolean {
+  return !quiet.has(id)
+}
+
+function revealTerminal(id: string): void {
+  if (!instances.has(id)) return
+  setActiveTerminal(id)
+  quiet.add(id)
+  useLayout.getState().showPanel("terminal")
+}
+
+async function openAgentTerminal(e: AgentOpen): Promise<void> {
+  await ensureShells()
+  if (instances.has(e.id)) return revealTerminal(e.id)
+  createTerminal({ id: e.id, cwd: e.cwd, shell: e.shell, title: e.title ?? "agente", agent: true, focus: false })
+}
+
+export function startAgentTerminals(): void {
+  if (agentListening) return
+  agentListening = true
+  onWindowEvent<AgentOpen>("terminal://agent-open", (e) => void openAgentTerminal(e))
+  onWindowEvent<{ id: string }>("terminal://agent-show", (e) => revealTerminal(e.id))
+  onWindowEvent<{ id: string }>("terminal://agent-closed", (e) => void killTerminal(e.id))
+}
+
 export async function killTerminal(id: string): Promise<void> {
   const inst = instances.get(id)
   instances.delete(id)
+  quiet.delete(id)
   await terminalKill(id).catch(() => undefined)
   inst?.term.dispose()
   useTerminals.setState((s) => {
@@ -216,6 +252,7 @@ export async function killTerminal(id: string): Promise<void> {
 }
 
 export function setActiveTerminal(id: string): void {
+  quiet.delete(id)
   useTerminals.setState({ activeId: id })
 }
 

@@ -1,5 +1,4 @@
 use serde::Serialize;
-use std::collections::HashMap;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -398,7 +397,7 @@ pub fn run() {
             remote::start(app.handle());
             live::start(app.handle());
             hub::setup(app.handle())?;
-            app.manage(term::TermState { terms: Mutex::new(HashMap::new()) });
+            app.manage(term::TermState::new());
             app.manage(watch::WatchState::default());
             if !std::env::args().any(|a| a == hub::HIDDEN_ARG) {
                 windows::restore(app.handle());

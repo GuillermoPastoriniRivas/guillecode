@@ -6,6 +6,7 @@ import {
   createTerminal,
   ensureShells,
   focusTerminal,
+  shouldAutoFocus,
   terminalTitle,
   killTerminal,
   setActiveTerminal,
@@ -23,7 +24,7 @@ function TerminalSurface({ id }: { id: string }) {
     const el = ref.current
     if (!el) return
     const detach = attachTerminal(id, el)
-    requestAnimationFrame(() => focusTerminal(id))
+    if (shouldAutoFocus(id)) requestAnimationFrame(() => focusTerminal(id))
     return detach
   }, [id])
   return <div ref={ref} className="terminal-surface" />
@@ -78,9 +79,9 @@ function TerminalsPanel() {
               key={t.id}
               className={`terminal-item${t.id === activeId ? " active" : ""}${t.exited ? " exited" : ""}`}
               onClick={() => setActiveTerminal(t.id)}
-              title={t.cwd}
+              title={t.agent ? `Abierta por el agente · ${t.cwd}` : t.cwd}
             >
-              <Icon name="terminal" />
+              <Icon name={t.agent ? "hubot" : "terminal"} />
               <span>{terminalTitle(t, shells)}</span>
               <button
                 type="button"
