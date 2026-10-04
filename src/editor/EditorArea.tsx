@@ -34,6 +34,7 @@ import { RoutineEditor } from "./RoutineEditor"
 import { RemoteEditor } from "./RemoteEditor"
 import { DesktopEditor } from "./DesktopEditor"
 import { AccountsEditor } from "./AccountsEditor"
+import { FeatureCreateEditor, FeatureIntegrateEditor } from "./FeatureEditor"
 import { SessionPane } from "../agent/AgentPanel"
 import { openContextMenu, openMenuAt, type MenuItem } from "../components/ContextMenu"
 import { Sash } from "../components/Sash"
@@ -68,6 +69,10 @@ function tabIcon(input: EditorInput) {
       return <Icon name="vm" className="tab-icon" />
     case "accounts":
       return <Icon name="account" className="tab-icon" />
+    case "featureCreate":
+      return <Icon name="git-branch-create" className="tab-icon git" />
+    case "featureIntegrate":
+      return <Icon name="git-merge" className="tab-icon git" />
     case "welcome":
       return <Icon name="home" className="tab-icon" />
   }
@@ -271,7 +276,7 @@ function EditorContent({ tab }: { tab: Tab }) {
     case "diff":
       return <GitDiffEditor key={tab.id} repo={input.repo} path={input.path} staged={input.staged} tabId={tab.id} />
     case "commitFile":
-      return <CommitFileEditor key={tab.id} repo={input.repo} hash={input.hash} parent={input.parent} path={input.path} orig={input.orig} />
+      return <CommitFileEditor key={tab.id} repo={input.repo} hash={input.hash} parent={input.parent} path={input.path} orig={input.orig} label={input.label} />
     case "commit":
       return <CommitEditor key={tab.id} repo={input.repo} hash={input.hash} />
     case "review":
@@ -298,6 +303,10 @@ function EditorContent({ tab }: { tab: Tab }) {
       return <DesktopEditor />
     case "accounts":
       return <AccountsEditor />
+    case "featureCreate":
+      return <FeatureCreateEditor />
+    case "featureIntegrate":
+      return <FeatureIntegrateEditor key={tab.id} path={input.path} />
     case "welcome":
       return <WelcomeEditor />
     default:

@@ -1,10 +1,8 @@
 import { useEffect, useRef, useState } from "react"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 import { useLayout, type ViewId } from "../state/layout"
-import { initProject, useProject, pickProject } from "../state/project"
-import { initGit } from "../state/git"
-import { initExplorer } from "../state/explorer"
-import { persistEditors, restoreEditors } from "../state/editors"
+import { initProject, openProject, useProject, pickProject } from "../state/project"
+import { basename } from "../lib/paths"
 import { bindAgentProject, loadAgentMeta, startEventStream, useAgent } from "../state/agent"
 import { AccountsEditor } from "../editor/AccountsEditor"
 import { initAttention } from "../state/attention"
@@ -12,13 +10,15 @@ import { startUsagePolling } from "../state/usage"
 import { startRoutines } from "../state/routines"
 import { startOutputCapture } from "../state/output"
 import { ensureShells } from "../state/terminals"
-import { getFileIndex } from "../state/fileIndex"
+import { bindRoot } from "../state/workspace"
+import { initFeatures } from "../state/features"
 import { registerBuiltinCommands } from "../commands/builtin"
 import { installKeybindings } from "../commands/registry"
-import { isTauri, onEvent } from "../lib/tauri"
-import { closeToTray, hideToTray, hubAvailable, requestQuit } from "../state/hub"
+import { isTauri, onWindowEvent } from "../lib/tauri"
+import { isMainWindow } from "../lib/windows"
+import { startWindowTitle } from "../state/windowTitle"
+import { closeThisWindow, closeToTray, hideToTray, hubAvailable, listenWindowClose, requestQuit } from "../state/hub"
 import { useZoom } from "../state/zoom"
-import { startSync } from "./sync"
 import { ActivityBar, StatusBar, TitleBar } from "./Chrome"
 import { Panel } from "./Panel"
 import { EditorArea } from "../editor/EditorArea"
@@ -68,21 +68,23 @@ function boot() {
     startUsagePolling()
     startRoutines()
     if (!root) return
-    restoreEditors(root)
-    persistEditors(root)
-    void initGit(root)
-    void initExplorer(root)
-    startSync(root)
+    bindRoot(root)
+    initFeatures()
     void ensureShells()
-    setTimeout(() => void getFileIndex(root), 1500)
   })
   if (isTauri) {
     void getCurrentWindow().onCloseRequested(async (event) => {
       event.preventDefault()
+      if (!isMainWindow()) {
+        await closeThisWindow()
+        return
+      }
       if (closeToTray() && (await hubAvailable())) await hideToTray()
       else await requestQuit()
     })
-    onEvent("hub://quit", () => void requestQuit())
+    if (isMainWindow()) onWindowEvent("hub://quit", () => void requestQuit())
+    listenWindowClose()
+    startWindowTitle()
   }
 }
 
@@ -98,6 +100,7 @@ function SideBar() {
 
 function NoProject() {
   const error = useProject((s) => s.error)
+  const recent = useProject((s) => s.recent)
   const [accounts, setAccounts] = useState(false)
   if (accounts) return <div className="doc-page"><button type="button" className="btn" onClick={() => setAccounts(false)}><Icon name="arrow-left" /> Volver</button><AccountsEditor /></div>
   return (
@@ -110,6 +113,18 @@ function NoProject() {
         <Icon name="folder-opened" /> Abrir carpeta
       </button>
       <button type="button" className="btn" onClick={() => setAccounts(true)}><Icon name="account" /> Cuentas de IA</button>
+      {recent.length > 0 && (
+        <div className="no-project-recent">
+          <span className="no-project-recent-title">Recientes</span>
+          {recent.slice(0, 8).map((p) => (
+            <button key={p} type="button" className="no-project-recent-item" title={p} onClick={() => void openProject(p)}>
+              <Icon name="root-folder" />
+              <span className="no-project-recent-name">{basename(p)}</span>
+              <span className="no-project-recent-path">{p}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

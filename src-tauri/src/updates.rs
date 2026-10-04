@@ -104,7 +104,12 @@ fn preflight(app: &AppHandle) -> Result<(), String> {
     let server = crate::ensure_server(app)?;
     let mut projects: HashSet<String> = crate::recent_project_list(app).into_iter().collect();
     projects.insert(server.worktree.clone());
+    for p in crate::windows::all_projects(app) { projects.insert(p); }
     for r in crate::routines::views(app) { projects.insert(r.routine.project); }
+    let bases: Vec<String> = projects.iter().cloned().collect();
+    for base in bases {
+        for (root, _) in crate::features::feature_roots(app, &base) { projects.insert(root); }
+    }
     for project in projects {
         let client = crate::oc::Opencode::new(&server, &project);
         let statuses = client.get("/session/status")?;

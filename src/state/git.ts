@@ -21,6 +21,7 @@ export type RepoState = {
 
 type GitStore = {
   repos: string[]
+  extraRepos: string[]
   activeRepo: string | null
   byRepo: Record<string, RepoState>
   decorations: Record<string, Decoration>
@@ -33,6 +34,7 @@ type GitStore = {
 
 export const useGit = create<GitStore>(() => ({
   repos: [],
+  extraRepos: [],
   activeRepo: null,
   byRepo: {},
   decorations: {},
@@ -78,25 +80,30 @@ export function decorationIn(
 }
 
 let projectRoot: string | null = null
+let generation = 0
 
 export async function initGit(root: string): Promise<void> {
   projectRoot = root
+  const gen = ++generation
   try {
     const repos = await gitSubrepos(root)
+    if (gen !== generation) return
     const activeRepo = repos.find((r) => key(r) === key(root)) ?? repos[0] ?? null
     useGit.setState({ repos, activeRepo })
-    await Promise.all(repos.map((r) => refreshRepo(r)))
+    await refreshAllRepos()
   } catch {
-    useGit.setState({ repos: [], activeRepo: null })
+    if (gen === generation) useGit.setState({ repos: [], activeRepo: null })
   }
 }
 
 export async function refreshRepo(repo: string): Promise<void> {
+  const gen = generation
   useGit.setState((s) => ({
     byRepo: { ...s.byRepo, [repo]: { ...(s.byRepo[repo] ?? { status: null, error: null, loadedAt: 0 }), loading: true } },
   }))
   try {
     const status = await gitStatus(repo)
+    if (gen !== generation) return
     useGit.setState((s) => {
       const byRepo = { ...s.byRepo, [repo]: { status, error: null, loading: false, loadedAt: Date.now() } }
       return { byRepo, ...rebuildDecorations(byRepo), revision: s.revision + 1 }
@@ -108,8 +115,29 @@ export async function refreshRepo(repo: string): Promise<void> {
   }
 }
 
+function trackedRepos(): string[] {
+  const { repos, extraRepos } = useGit.getState()
+  return [...repos, ...extraRepos.filter((r) => !repos.some((x) => key(x) === key(r)))]
+}
+
 export function refreshAllRepos(): Promise<void> {
-  return Promise.all(useGit.getState().repos.map((r) => refreshRepo(r))).then(() => undefined)
+  return Promise.all(trackedRepos().map((r) => refreshRepo(r))).then(() => undefined)
+}
+
+export function watchRepo(repo: string): void {
+  const s = useGit.getState()
+  if (!s.extraRepos.some((r) => key(r) === key(repo))) useGit.setState({ extraRepos: [...s.extraRepos, repo] })
+  void refreshRepo(repo)
+}
+
+export function unwatchRepo(repo: string): void {
+  useGit.setState((s) => {
+    const extraRepos = s.extraRepos.filter((r) => key(r) !== key(repo))
+    if (s.repos.some((r) => key(r) === key(repo))) return { extraRepos }
+    const byRepo = { ...s.byRepo }
+    delete byRepo[repo]
+    return { extraRepos, byRepo, ...rebuildDecorations(byRepo) }
+  })
 }
 
 export const scheduleGitRefresh = debounce(() => {
@@ -166,4 +194,20 @@ async function runGitAction<T>(label: string, work: () => Promise<T>, success?: 
 
 export function currentProjectRoot(): string | null {
   return projectRoot
+}
+
+export function resetGit(): void {
+  projectRoot = null
+  generation += 1
+  useGit.setState((s) => ({
+    repos: [],
+    activeRepo: null,
+    byRepo: {},
+    decorations: {},
+    dirtyFolders: {},
+    untrackedDirs: [],
+    busy: null,
+    revision: s.revision + 1,
+    headRevision: s.headRevision + 1,
+  }))
 }

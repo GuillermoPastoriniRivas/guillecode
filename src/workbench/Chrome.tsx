@@ -1,5 +1,13 @@
 import { useLayout, type ViewId } from "../state/layout"
-import { useProject, openProject, pickProject } from "../state/project"
+import {
+  useProject,
+  openProject,
+  openInNewWindow,
+  pickProject,
+  pickProjectInNewWindow,
+  pickRecentInNewWindow,
+  pickWindow,
+} from "../state/project"
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { useAgent, sessionStatus, toggleFavoriteModel } from "../state/agent"
@@ -21,6 +29,8 @@ import {
 } from "../state/usage"
 import { CHATGPT } from "../state/accounts"
 import { useGit } from "../state/git"
+import { featureTitle, findFeature, isAppRunning, pickFeature, runApp, stopApp, useFeatures } from "../state/features"
+import { useTerminals } from "../state/terminals"
 import { useDocs, docKey } from "../editor/documents"
 import { useEditors, openEditor } from "../state/editors"
 import { recentlyActive, useDesktopStatus } from "../lib/desktop"
@@ -50,7 +60,7 @@ const VIEWS: Array<{ id: ViewId; icon: string; title: string; keys: string }> = 
 export function ActivityBar() {
   const active = useLayout((s) => s.activeView)
   const visible = useLayout((s) => s.sidebarVisible)
-  const changes = useGit((s) => Object.values(s.byRepo).reduce((n, r) => n + (r.status?.entries.length ?? 0), 0))
+  const changes = useGit((s) => s.repos.reduce((n, r) => n + (s.byRepo[r]?.status?.entries.length ?? 0), 0))
   const busy = useAgent((s) => Object.values(s.statuses).filter((x) => x.type === "busy").length)
   const attention = useAgent((s) => s.permissions.length + s.questions.length)
   return (
@@ -78,8 +88,29 @@ export function ActivityBar() {
   )
 }
 
-export function TitleBar() {
+function FeatureChip() {
+  const list = useFeatures((s) => s.list)
   const root = useProject((s) => s.root)
+  const feature = findFeature(root, list)
+  if (!list?.git || !feature) return null
+  const isolated = feature.kind !== "main"
+  return (
+    <button
+      type="button"
+      className={`title-feature${isolated ? " isolated" : ""}`}
+      onClick={() => void pickFeature()}
+      title={`${isolated ? "Feature aislada en su propia carpeta" : "Copia principal del proyecto"}: ${feature.root}\nClic para cambiar de feature`}
+    >
+      <Icon name={isolated ? "worktree" : "home"} />
+      <span className="title-feature-name">{featureTitle(feature)}</span>
+      {feature.branch && <span className="title-feature-branch">{feature.branch}</span>}
+      <Icon name="chevron-down" />
+    </button>
+  )
+}
+
+export function TitleBar() {
+  const root = useProject((s) => s.project ?? s.root)
   const recent = useProject((s) => s.recent)
   const sidebar = useLayout((s) => s.sidebarVisible)
   const panel = useLayout((s) => s.panelVisible)
@@ -89,11 +120,17 @@ export function TitleBar() {
   const projectMenu = (el: HTMLElement) =>
     openMenuAt(el, [
       { label: "Abrir carpeta…", icon: "folder-opened", keys: "ctrl+o", run: () => void pickProject() },
+      { label: "Abrir carpeta en una ventana nueva…", icon: "empty-window", run: () => void pickProjectInNewWindow() },
+      { label: "Nueva ventana", icon: "empty-window", keys: "ctrl+shift+n", run: () => void openInNewWindow() },
+      { label: "Ir a otra ventana…", icon: "multiple-windows", run: () => void pickWindow() },
       ...(recent.filter((p) => p !== root).length > 0 ? [{ separator: true as const }] : []),
       ...recent
         .filter((p) => p !== root)
         .slice(0, 8)
         .map((p) => ({ label: basename(p), icon: "root-folder", run: () => void openProject(p) })),
+      ...(recent.filter((p) => p !== root).length > 0
+        ? [{ label: "Abrir un reciente en una ventana nueva…", icon: "empty-window", run: () => void pickRecentInNewWindow() }]
+        : []),
     ])
 
   const layoutMenu = (el: HTMLElement) =>
@@ -113,11 +150,14 @@ export function TitleBar() {
 
   return (
     <header className="title-bar">
-      <button type="button" className="title-brand" onClick={(e) => projectMenu(e.currentTarget)} title={root ?? "Abrir carpeta"}>
-        <Logo size={22} className="brand-logo" />
-        <span className="title-project">{projectName(root)}</span>
-        <Icon name="chevron-down" />
-      </button>
+      <div className="title-left">
+        <button type="button" className="title-brand" onClick={(e) => projectMenu(e.currentTarget)} title={root ?? "Abrir carpeta"}>
+          <Logo size={22} className="brand-logo" />
+          <span className="title-project">{projectName(root)}</span>
+          <Icon name="chevron-down" />
+        </button>
+        <FeatureChip />
+      </div>
       <button type="button" className="command-center" onClick={() => showQuickOpen()}>
         <Icon name="search" />
         <span>Buscar archivos, comandos (&gt;), sesiones (#)</span>
@@ -418,6 +458,12 @@ export function StatusBar() {
   const alerting = useAttention((s) => s.alerting)
   const silenced = useAttention((s) => s.silenced)
   const zoom = useZoom((s) => s.level)
+  const featureList = useFeatures((s) => s.list)
+  const runTerminalId = useFeatures((s) => s.runTerminalId)
+  const terminals = useTerminals((s) => s.terminals)
+  const activeRoot = useProject((s) => s.root)
+  const feature = findFeature(activeRoot, featureList)
+  const appRunning = isAppRunning(runTerminalId, terminals)
 
   const attentionMenu = (el: HTMLElement) =>
     openMenuAt(el, [
@@ -439,6 +485,15 @@ export function StatusBar() {
     <footer className="status-bar">
       <div className="status-left">
         <StatusItem icon="remote" label={connected ? "opencode" : "desconectado"} title={connected ? "Conectado al servidor de opencode" : "Reconectando con opencode…"} tone={connected ? "remote" : "remote offline"} />
+        {feature && featureList && featureList.features.length > 1 && (
+          <StatusItem
+            icon={feature.kind === "main" ? "home" : "worktree"}
+            label={featureTitle(feature)}
+            title="Feature activa (clic para cambiar)"
+            tone={feature.kind === "main" ? undefined : "feature"}
+            onClick={() => void pickFeature()}
+          />
+        )}
         {status && repo && (
           <>
             <StatusItem icon="git-branch" label={status.detached ? "HEAD" : status.branch} title="Cambiar de rama" onClick={() => void pickBranch(repo)} />
@@ -450,6 +505,15 @@ export function StatusBar() {
               onClick={() => void executeCommand("git.sync")}
             />
           </>
+        )}
+        {featureList?.git && (
+          <StatusItem
+            icon={appRunning ? "debug-stop" : "play"}
+            label={appRunning ? "app corriendo" : "correr app"}
+            title={appRunning ? "Detener la app (cierra su terminal y libera los puertos)" : featureList.settings.run ? `Correr: ${featureList.settings.run}` : "Elegir cómo se corre la app y correrla"}
+            tone={appRunning ? "busy" : undefined}
+            onClick={() => void (appRunning ? stopApp() : runApp())}
+          />
         )}
         {outputErrors > 0 && (
           <StatusItem icon="error" label={String(outputErrors)} title="Errores de git/gh: ver salida" tone="error" onClick={() => useLayout.getState().showPanel("output")} />

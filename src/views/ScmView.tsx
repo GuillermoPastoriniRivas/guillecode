@@ -1,8 +1,6 @@
 import { useMemo, useState } from "react"
 import { create } from "zustand"
 import {
-  decorationLetter,
-  decorationOf,
   gitBranches,
   gitCheckout,
   gitCommit,
@@ -10,32 +8,29 @@ import {
   gitFetch,
   gitPull,
   gitPush,
-  gitStage,
   gitStageAll,
   gitStash,
-  gitUnstage,
   gitUnstageAll,
   hasStaged,
   hasUnstaged,
   isConflict,
   isUntracked,
-  type StatusEntry,
 } from "../lib/git"
 import { generateCommitMessage } from "../lib/ai"
-import { basename, dirname, joinPath } from "../lib/paths"
+import { gitMergeAbort, gitMergeContinue } from "../lib/features"
+import { basename } from "../lib/paths"
 import { errorMessage } from "../lib/tauri"
 import { bumpHead, gitAction, refreshAllRepos, setActiveRepo, useGit } from "../state/git"
-import { openEditor, openFile } from "../state/editors"
+import { openEditor } from "../state/editors"
 import { openAiReview } from "../state/aiReview"
+import { refreshFeatures, useFeatures } from "../state/features"
+import { FeaturesSection } from "./FeaturesSection"
+import { StatusRow } from "./StatusRow"
 import { pickOne, promptInput } from "../state/quickinput"
 import { notify } from "../state/toasts"
-import { addContext, focusComposer } from "../state/agent"
-import { useLayout } from "../state/layout"
-import { reloadDocument } from "../editor/documents"
-import { revealInExplorer } from "../state/explorer"
-import { openContextMenu, openMenuAt } from "../components/ContextMenu"
+import { openMenuAt } from "../components/ContextMenu"
 import { confirmAction } from "../components/Dialog"
-import { EmptyState, FileIcon, Icon, IconButton, Section, Spinner } from "../components/ui"
+import { EmptyState, Icon, IconButton, Section, Spinner } from "../components/ui"
 
 const useCommitDraft = create<{ messages: Record<string, string> }>(() => ({ messages: {} }))
 
@@ -78,88 +73,6 @@ export async function pickBranch(repo: string): Promise<void> {
   await gitAction("No se pudo cambiar de rama", () => gitCheckout(repo, choice.id), `Ahora en ${choice.id}`)
 }
 
-function StatusRow({
-  repo,
-  entry,
-  staged,
-}: {
-  repo: string
-  entry: StatusEntry
-  staged: boolean
-}) {
-  const decoration = decorationOf(entry)
-  const isDir = entry.path.endsWith("/")
-  const cleanPath = isDir ? entry.path.slice(0, -1) : entry.path
-  const abs = joinPath(repo, cleanPath)
-  const untracked = isUntracked(entry)
-  const deleted = (staged ? entry.index : entry.worktree) === "D"
-  const open = () => {
-    if (isDir) {
-      useLayout.getState().showView("explorer", false)
-      void revealInExplorer(abs)
-    } else openEditor({ kind: "diff", repo, path: entry.path, staged }, { preview: true })
-  }
-
-  const discard = async () => {
-    const ok = await confirmAction(
-      untracked ? `¿Borrar ${basename(entry.path)}?` : `¿Descartar los cambios de ${basename(entry.path)}?`,
-      untracked ? "Es un archivo nuevo sin trackear: va a la papelera." : "Se pierden los cambios sin stage de este archivo.",
-      untracked ? "Borrar" : "Descartar",
-      true,
-    )
-    if (!ok) return
-    await gitAction("No se pudo descartar", () => gitDiscard(repo, untracked ? [] : [entry.path], untracked ? [entry.path] : []))
-    await reloadDocument(abs, { force: true })
-  }
-
-  const menu = (e: React.MouseEvent) =>
-    openContextMenu(e, [
-      { label: isDir ? "Mostrar en el explorador" : "Ver cambios", icon: isDir ? "files" : "diff", run: open },
-      { label: "Abrir archivo", icon: "go-to-file", disabled: deleted || isDir, run: () => openFile(abs) },
-      {
-        label: "Preguntarle al agente por este cambio",
-        icon: "sparkle",
-        run: () => {
-          addContext({ kind: "file", path: abs })
-          useLayout.getState().toggleAgent(true)
-          focusComposer(`Revisá los cambios sin commitear de ${entry.path} (usá git diff) y decime si ves algún problema.`)
-        },
-      },
-      { separator: true },
-      staged
-        ? { label: "Sacar del stage", icon: "remove", run: () => void gitAction("No se pudo sacar del stage", () => gitUnstage(repo, [entry.path])) }
-        : { label: "Pasar al stage", icon: "add", run: () => void gitAction("No se pudo pasar al stage", () => gitStage(repo, [entry.path])) },
-      ...(!staged ? [{ label: "Descartar cambios", icon: "discard", danger: true, run: () => void discard() }] : []),
-    ])
-
-  return (
-    <div
-      className={`scm-row git-${decoration}`}
-      onClick={open}
-      onDoubleClick={() => !deleted && !isDir && openFile(abs)}
-      onContextMenu={menu}
-      title={`${entry.path}${entry.orig ? ` (antes ${entry.orig})` : ""}`}
-    >
-      {isDir ? <Icon name="folder" className="tree-folder-icon" /> : <FileIcon path={entry.path} />}
-      <span className={`scm-name${deleted ? " deleted" : ""}`}>
-        {basename(cleanPath)}
-        {isDir ? "/" : ""}
-      </span>
-      <span className="scm-dir">{dirname(cleanPath) === cleanPath ? "" : dirname(cleanPath)}</span>
-      <span className="scm-actions" onClick={(e) => e.stopPropagation()}>
-        {!deleted && !isDir && <IconButton icon="go-to-file" title="Abrir archivo" onClick={() => openFile(abs)} />}
-        {!staged && <IconButton icon="discard" title="Descartar cambios" onClick={() => void discard()} />}
-        {staged ? (
-          <IconButton icon="remove" title="Sacar del stage" onClick={() => void gitAction("No se pudo sacar del stage", () => gitUnstage(repo, [entry.path]))} />
-        ) : (
-          <IconButton icon="add" title="Pasar al stage" onClick={() => void gitAction("No se pudo pasar al stage", () => gitStage(repo, [entry.path]))} />
-        )}
-      </span>
-      <span className="scm-letter">{decorationLetter(decoration)}</span>
-    </div>
-  )
-}
-
 export function ScmView() {
   const repos = useGit((s) => s.repos)
   const activeRepo = useGit((s) => s.activeRepo)
@@ -168,6 +81,7 @@ export function ScmView() {
   const message = useCommitDraft((s) => (activeRepo ? (s.messages[activeRepo] ?? "") : ""))
   const [generating, setGenerating] = useState(false)
   const [open, setOpen] = useState({ conflicts: true, staged: true, changes: true })
+  const featuresGit = useFeatures((s) => !!s.list?.git)
 
   const status = repoState?.status ?? null
   const groups = useMemo(() => {
@@ -185,9 +99,15 @@ export function ScmView() {
         <div className="view-header">
           <span className="view-title">Control de código</span>
         </div>
-        <EmptyState icon="source-control" title="La carpeta no es un repositorio git">
-          Inicializá un repo con <code>git init</code> desde la terminal para ver los cambios acá.
-        </EmptyState>
+        {featuresGit ? (
+          <div className="view-note">
+            <Spinner size={12} /> Leyendo el repositorio…
+          </div>
+        ) : (
+          <EmptyState icon="source-control" title="La carpeta no es un repositorio git">
+            Inicializá un repo con <code>git init</code> desde la terminal para ver los cambios acá.
+          </EmptyState>
+        )}
       </div>
     )
 
@@ -270,6 +190,22 @@ export function ScmView() {
       { label: "Crear pull request", icon: "git-pull-request-create", run: () => openEditor({ kind: "prCreate", repo }) },
     ])
 
+  const continueMerge = async () => {
+    const head = await gitAction("No se pudo continuar el merge", () => gitMergeContinue(repo), "Merge completado")
+    if (head) void refreshFeatures()
+  }
+  const abortMerge = async () => {
+    const ok = await confirmAction(
+      "Abortar el merge",
+      "Se descarta el merge en curso y los archivos vuelven a como estaban antes. Los cambios de las ramas no se pierden.",
+      "Abortar merge",
+      true,
+    )
+    if (!ok) return
+    await gitAction("No se pudo abortar el merge", () => gitMergeAbort(repo), "Merge abortado")
+    void refreshFeatures()
+  }
+
   const stageAll = () => void gitAction("No se pudo pasar al stage", () => gitStageAll(repo))
   const unstageAll = () => void gitAction("No se pudo sacar del stage", () => gitUnstageAll(repo))
   const discardAll = async () => {
@@ -303,6 +239,7 @@ export function ScmView() {
           <IconButton icon="ellipsis" title="Más acciones" onClick={(e) => moreMenu(e.currentTarget)} />
         </span>
       </div>
+      <FeaturesSection />
       {repos.length > 1 && (
         <div className="scm-repos">
           {repos.map((r) => (
@@ -334,6 +271,26 @@ export function ScmView() {
               </>
             )}
           </button>
+        </div>
+      )}
+      {status?.merging && (
+        <div className="scm-merge-banner">
+          <div className="scm-merge-text">
+            <Icon name="git-merge" />
+            <span>
+              {groups.conflicts.length > 0
+                ? `Merge en curso: ${groups.conflicts.length} archivo(s) con conflicto. Editalos, quitá los marcadores <<<<<<< y pasalos al stage.`
+                : "Merge en curso sin conflictos pendientes. Continuá para crear el commit del merge."}
+            </span>
+          </div>
+          <div className="scm-merge-actions">
+            <button type="button" className="btn btn-sm" disabled={!!busy} onClick={() => void abortMerge()}>
+              Abortar
+            </button>
+            <button type="button" className="btn btn-sm btn-primary" disabled={!!busy || groups.conflicts.length > 0} onClick={() => void continueMerge()}>
+              <Icon name="check" /> Continuar merge
+            </button>
+          </div>
         </div>
       )}
       <div className="scm-commit">

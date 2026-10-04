@@ -35,51 +35,82 @@ async function resolveConnection(): Promise<Connection> {
 }
 
 let connectionPromise: Promise<Connection> | null = null
-let clientPromise: Promise<OpencodeClient> | null = null
+const clients = new Map<string, Promise<OpencodeClient>>()
+let activeDirectory: string | null = null
+const sessionDirectories = new Map<string, string>()
 
 export function connection(): Promise<Connection> {
   connectionPromise ??= resolveConnection()
   return connectionPromise
 }
 
-function realClient(): Promise<OpencodeClient> {
-  clientPromise ??= connection().then((c) =>
-    createOpencodeClient({ baseUrl: c.baseUrl, headers: c.headers, directory: c.worktree || undefined }),
-  )
-  return clientPromise
+export function setActiveDirectory(directory: string | null): void {
+  activeDirectory = directory || null
+}
+
+export async function currentDirectory(): Promise<string> {
+  if (activeDirectory) return activeDirectory
+  return (await connection()).worktree
+}
+
+export function rememberSessionDirectory(sessionID: string, directory: string | undefined | null): void {
+  if (sessionID && directory) sessionDirectories.set(sessionID, directory)
+}
+
+export function sessionDirectory(sessionID: string | null | undefined): string | null {
+  return sessionID ? (sessionDirectories.get(sessionID) ?? null) : null
+}
+
+function clientFor(directory: string): Promise<OpencodeClient> {
+  const key = directory.toLowerCase()
+  let found = clients.get(key)
+  if (!found) {
+    found = connection().then((c) =>
+      createOpencodeClient({ baseUrl: c.baseUrl, headers: c.headers, directory: directory || undefined }),
+    )
+    clients.set(key, found)
+  }
+  return found
 }
 
 export function resetConnection(): void {
   connectionPromise = null
-  clientPromise = null
+  clients.clear()
 }
 
-function lazyNode(resolveSelf: () => Promise<unknown>, resolveParent: () => Promise<unknown>, prop: PropertyKey): unknown {
+type CallOptions = { path?: { id?: string }; query?: { directory?: string } } | undefined
+
+async function directoryForCall(options: CallOptions): Promise<string> {
+  const explicit = options?.query?.directory
+  if (explicit) return explicit
+  return sessionDirectory(options?.path?.id) ?? (await currentDirectory())
+}
+
+function lazyPath(path: PropertyKey[]): unknown {
   const children = new Map<PropertyKey, unknown>()
   return new Proxy(function () {}, {
     get(_target, p) {
       if (p === "then" || p === "catch" || p === "finally" || typeof p === "symbol") return undefined
-      if (!children.has(p)) {
-        children.set(
-          p,
-          lazyNode(
-            () => resolveSelf().then((parent) => (parent as Record<PropertyKey, unknown>)[p]),
-            resolveSelf,
-            p,
-          ),
-        )
-      }
+      if (!children.has(p)) children.set(p, lazyPath([...path, p]))
       return children.get(p)
     },
     apply(_target, _thisArg, args) {
-      return resolveParent().then((parent) =>
-        (parent as Record<PropertyKey, (...a: unknown[]) => unknown>)[prop](...args),
-      )
+      return directoryForCall(args[0] as CallOptions)
+        .then(clientFor)
+        .then((root) => {
+          let parent = root as unknown as Record<PropertyKey, unknown>
+          for (const segment of path.slice(0, -1)) parent = parent[segment] as Record<PropertyKey, unknown>
+          return (parent[path[path.length - 1]] as (...a: unknown[]) => unknown).apply(parent, args)
+        })
     },
   })
 }
 
-export const client: OpencodeClient = lazyNode(realClient, realClient, "__root__") as OpencodeClient
+export const client: OpencodeClient = lazyPath([]) as OpencodeClient
+
+export function clientForDirectory(directory: string): Promise<OpencodeClient> {
+  return clientFor(directory)
+}
 
 export class ApiError extends Error {
   status: number
@@ -89,15 +120,24 @@ export class ApiError extends Error {
   }
 }
 
-export async function api<T>(method: string, path: string, body?: unknown, query?: Record<string, string>): Promise<T> {
+const SESSION_PATH = /^\/session\/([^/?]+)/
+
+export async function api<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  query?: Record<string, string>,
+  opts: { directory?: string } = {},
+): Promise<T> {
   const c = await connection()
-  const params = { ...(c.worktree && method === "GET" ? { directory: c.worktree } : {}), ...query }
+  const directory = opts.directory ?? sessionDirectory(path.match(SESSION_PATH)?.[1]) ?? (await currentDirectory())
+  const params = { ...(directory && method === "GET" ? { directory } : {}), ...query }
   const qs = Object.keys(params).length ? `?${new URLSearchParams(params).toString()}` : ""
   const res = await fetch(`${c.baseUrl}${path}${qs}`, {
     method,
     headers: {
       ...c.headers,
-      ...(c.worktree ? { "x-opencode-directory": encodeURIComponent(c.worktree) } : {}),
+      ...(directory ? { "x-opencode-directory": encodeURIComponent(directory) } : {}),
       ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,

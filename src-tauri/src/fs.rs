@@ -21,6 +21,29 @@ pub struct FsEntry {
     pub is_dir: bool,
     pub heavy: bool,
     pub size: u64,
+    pub repo: Option<String>,
+}
+
+fn git_dir_of(dir: &Path) -> Option<PathBuf> {
+    let dot_git = dir.join(".git");
+    if dot_git.is_dir() {
+        return Some(dot_git);
+    }
+    let text = std::fs::read_to_string(&dot_git).ok()?;
+    let target = text.lines().find_map(|l| l.strip_prefix("gitdir:"))?.trim();
+    let path = PathBuf::from(target);
+    Some(if path.is_absolute() { path } else { dir.join(path) })
+}
+
+pub(crate) fn repo_branch(dir: &Path) -> Option<String> {
+    let git_dir = git_dir_of(dir)?;
+    let head = std::fs::read_to_string(git_dir.join("HEAD")).unwrap_or_default();
+    let head = head.trim();
+    Some(match head.strip_prefix("ref: refs/heads/") {
+        Some(branch) => branch.to_string(),
+        None if head.len() >= 7 => format!("HEAD {}", &head[..7]),
+        None => String::new(),
+    })
 }
 
 fn mtime_ms(meta: &std::fs::Metadata) -> u64 {
@@ -48,12 +71,15 @@ fn read_dir_sync(dir: &str) -> Result<Vec<FsEntry>, String> {
         let path = entry.path();
         let is_dir = path.is_dir();
         let size = if is_dir { 0 } else { entry.metadata().map(|m| m.len()).unwrap_or(0) };
+        let heavy = is_dir && HEAVY_DIRS.contains(&name.as_str());
+        let repo = if is_dir && !heavy { repo_branch(&path) } else { None };
         out.push(FsEntry {
-            heavy: is_dir && HEAVY_DIRS.contains(&name.as_str()),
+            heavy,
             name,
             path: path.to_string_lossy().into_owned(),
             is_dir,
             size,
+            repo,
         });
     }
     out.sort_by(|a, b| match (a.is_dir, b.is_dir) {
@@ -277,4 +303,39 @@ pub async fn fs_delete(paths: Vec<String>) -> Result<(), String> {
 #[tauri::command]
 pub async fn fs_list_files(root: String) -> Result<Vec<String>, String> {
     blocking(move || list_files_sync(&root)).await
+}
+
+#[cfg(test)]
+mod repo_tests {
+    use super::repo_branch;
+    use std::path::PathBuf;
+
+    fn temp() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("guillecode-fs-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn detects_repos_and_reads_their_branch() {
+        let base = temp();
+        let normal = base.join("normal");
+        std::fs::create_dir_all(normal.join(".git")).unwrap();
+        std::fs::write(normal.join(".git").join("HEAD"), "ref: refs/heads/feature/login\n").unwrap();
+
+        let real_git = base.join("gitdirs").join("wt");
+        std::fs::create_dir_all(&real_git).unwrap();
+        std::fs::write(real_git.join("HEAD"), "3f2a9c1d0e8b7a6f5e4d3c2b1a0f9e8d7c6b5a49\n").unwrap();
+        let worktree = base.join("worktree");
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::write(worktree.join(".git"), format!("gitdir: {}\n", real_git.display())).unwrap();
+
+        let plain = base.join("plain");
+        std::fs::create_dir_all(&plain).unwrap();
+
+        assert_eq!(repo_branch(&normal).as_deref(), Some("feature/login"));
+        assert_eq!(repo_branch(&worktree).as_deref(), Some("HEAD 3f2a9c1"));
+        assert_eq!(repo_branch(&plain), None);
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }

@@ -1,5 +1,6 @@
 import { invoke, Channel } from "@tauri-apps/api/core"
 import { listen, type UnlistenFn } from "@tauri-apps/api/event"
+import { getCurrentWindow } from "@tauri-apps/api/window"
 
 export const isTauri = typeof (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ !== "undefined"
 
@@ -26,10 +27,18 @@ export async function call<T>(command: string, args?: Record<string, unknown>): 
 }
 
 export function onEvent<T>(name: string, handler: (payload: T) => void): () => void {
+  return subscribe(name, handler, null)
+}
+
+export function onWindowEvent<T>(name: string, handler: (payload: T) => void): () => void {
+  return subscribe(name, handler, isTauri ? getCurrentWindow().label : null)
+}
+
+function subscribe<T>(name: string, handler: (payload: T) => void, label: string | null): () => void {
   if (!isTauri) return () => undefined
   let disposed = false
   let unlisten: UnlistenFn | null = null
-  listen<T>(name, (e) => handler(e.payload)).then((fn) => {
+  listen<T>(name, (e) => handler(e.payload), label ? { target: label } : undefined).then((fn) => {
     if (disposed) fn()
     else unlisten = fn
   })

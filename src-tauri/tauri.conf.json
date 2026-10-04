@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "guillecode",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "identifier": "com.guillecode.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -56,8 +56,12 @@
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRCNjAxMjRFQTE5N0EzMDIKUldRQ281ZWhUaEpnUzJ0ZnFoSy9od0dtbFdxTzM4QnROaWFFLzJvM29uUE1TTW9RR2pJcE1sdHoK",
-      "endpoints": ["https://github.com/GuillermoPastoriniRivas/guillecode/releases/latest/download/latest.json"],
-      "windows": { "installMode": "passive" }
+      "endpoints": [
+        "https://github.com/GuillermoPastoriniRivas/guillecode/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

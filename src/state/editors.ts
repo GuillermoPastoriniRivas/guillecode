@@ -7,7 +7,7 @@ export type EditorInput =
   | { kind: "file"; path: string }
   | { kind: "diff"; repo: string; path: string; staged: boolean }
   | { kind: "commit"; repo: string; hash: string }
-  | { kind: "commitFile"; repo: string; hash: string; parent: string; path: string; orig: string | null }
+  | { kind: "commitFile"; repo: string; hash: string; parent: string; path: string; orig: string | null; label?: string }
   | { kind: "review"; sessionId: string }
   | { kind: "pr"; repo: string; number: number }
   | { kind: "prCreate"; repo: string }
@@ -18,6 +18,8 @@ export type EditorInput =
   | { kind: "remote" }
   | { kind: "desktop" }
   | { kind: "accounts" }
+  | { kind: "featureCreate" }
+  | { kind: "featureIntegrate"; path: string }
   | { kind: "welcome" }
 
 export type Tab = { id: string; input: EditorInput; preview: boolean }
@@ -48,7 +50,7 @@ export function tabId(input: EditorInput): string {
     case "commit":
       return `commit:${input.hash}`
     case "commitFile":
-      return `commitFile:${input.hash}:${input.path}`
+      return `commitFile:${input.parent}:${input.hash}:${input.path}`
     case "review":
       return `review:${input.sessionId}`
     case "pr":
@@ -69,6 +71,10 @@ export function tabId(input: EditorInput): string {
       return "accounts"
     case "aiReview":
       return `aiReview:${input.scope}:${normalizePath(input.repo).toLowerCase()}:${input.number ?? ""}`
+    case "featureCreate":
+      return "featureCreate"
+    case "featureIntegrate":
+      return `featureIntegrate:${normalizePath(input.path).toLowerCase()}`
     case "welcome":
       return "welcome"
   }
@@ -83,7 +89,7 @@ export function inputTitle(input: EditorInput): string {
     case "commit":
       return `Commit ${input.hash.slice(0, 7)}`
     case "commitFile":
-      return `${basename(input.path)} @ ${input.hash.slice(0, 7)}`
+      return input.label ? `${basename(input.path)} · ${input.label}` : `${basename(input.path)} @ ${input.hash.slice(0, 7)}`
     case "review":
       return "Revisión de cambios"
     case "pr":
@@ -104,6 +110,10 @@ export function inputTitle(input: EditorInput): string {
       return "Cuentas de IA"
     case "aiReview":
       return input.scope === "pr" ? `Revisión IA · PR #${input.number}` : "Revisión IA · cambios"
+    case "featureCreate":
+      return "Nueva feature"
+    case "featureIntegrate":
+      return `Integrar ${basename(input.path)}`
     case "welcome":
       return "Bienvenida"
   }
@@ -342,4 +352,9 @@ export function persistEditors(project: string): () => void {
       activeGroup: Math.max(0, s.groups.findIndex((g) => g.id === s.activeGroupId)),
     })
   })
+}
+
+export function resetEditors(): void {
+  const group = firstGroup()
+  useEditors.setState({ groups: [group], activeGroupId: group.id, reveal: null })
 }

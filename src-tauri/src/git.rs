@@ -9,7 +9,7 @@ const MAX_STATUS_ENTRIES: usize = 5000;
 const MAX_CONTEXT_BYTES: usize = 60_000;
 const MAX_MEDIA_BYTES: usize = 20 * 1024 * 1024;
 
-fn git(worktree: &str, args: &[&str]) -> Result<String, String> {
+pub(crate) fn git(worktree: &str, args: &[&str]) -> Result<String, String> {
     let mut full: Vec<&str> = vec!["-c", "core.quotepath=false", "-c", "color.ui=false"];
     full.extend_from_slice(args);
     Run::new("git", worktree, &full)
@@ -17,7 +17,7 @@ fn git(worktree: &str, args: &[&str]) -> Result<String, String> {
         .exec()
 }
 
-fn git_quiet(worktree: &str, args: &[&str]) -> Result<String, String> {
+pub(crate) fn git_quiet(worktree: &str, args: &[&str]) -> Result<String, String> {
     let mut full: Vec<&str> = vec!["-c", "core.quotepath=false", "-c", "color.ui=false"];
     full.extend_from_slice(args);
     Run::new("git", worktree, &full).quiet().exec()
@@ -63,6 +63,13 @@ pub struct GitStatus {
     pub staged_removed: u64,
     pub unstaged_added: u64,
     pub unstaged_removed: u64,
+    pub merging: bool,
+}
+
+pub(crate) fn merge_in_progress(worktree: &str) -> bool {
+    git_quiet(worktree, &["rev-parse", "--absolute-git-dir"])
+        .map(|dir| Path::new(dir.trim()).join("MERGE_HEAD").is_file())
+        .unwrap_or(false)
 }
 
 fn parse_branch_header(header: &str, status: &mut GitStatus) {
@@ -161,7 +168,7 @@ fn count_untracked_lines(worktree: &str, paths: &[String]) -> u64 {
     total
 }
 
-fn status_sync(worktree: &str) -> Result<GitStatus, String> {
+pub(crate) fn status_sync(worktree: &str) -> Result<GitStatus, String> {
     let out = git_quiet(
         worktree,
         &["status", "--porcelain=v1", "-z", "-b", "--untracked-files=normal"],
@@ -215,6 +222,7 @@ fn status_sync(worktree: &str) -> Result<GitStatus, String> {
     if !untracked.is_empty() {
         status.unstaged_added += count_untracked_lines(worktree, &untracked);
     }
+    status.merging = merge_in_progress(worktree);
     Ok(status)
 }
 
@@ -234,7 +242,7 @@ pub struct Commit {
     pub subject: String,
 }
 
-fn parse_commits(out: &str) -> Vec<Commit> {
+pub(crate) fn parse_commits(out: &str) -> Vec<Commit> {
     out.split('\x1e')
         .filter_map(|record| {
             let record = record.trim_start_matches('\n');
@@ -263,7 +271,7 @@ fn parse_commits(out: &str) -> Vec<Commit> {
         .collect()
 }
 
-const COMMIT_FORMAT: &str = "--pretty=format:%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1e";
+pub(crate) const COMMIT_FORMAT: &str = "--pretty=format:%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1e";
 
 fn log_sync(worktree: &str, limit: u32, skip: u32, all: bool, file: Option<String>) -> Result<Vec<Commit>, String> {
     let limit = limit.clamp(1, 2000).to_string();
@@ -314,8 +322,13 @@ fn commit_detail_sync(worktree: &str, hash: &str) -> Result<CommitDetail, String
         .next()
         .ok_or("commit no encontrado")?;
     let parent = commit.parents.first().cloned().unwrap_or_else(|| EMPTY_TREE.to_string());
-    let names = git_quiet(worktree, &["diff", "-M", "--name-status", &parent, hash])?;
-    let nums = git_quiet(worktree, &["diff", "-M", "--numstat", &parent, hash])?;
+    let files = range_files(worktree, &parent, hash)?;
+    Ok(CommitDetail { commit, body: body.trim().to_string(), parent, files })
+}
+
+pub(crate) fn range_files(worktree: &str, from: &str, to: &str) -> Result<Vec<CommitFile>, String> {
+    let names = git_quiet(worktree, &["diff", "-M", "--name-status", from, to, "--"])?;
+    let nums = git_quiet(worktree, &["diff", "-M", "--numstat", from, to, "--"])?;
     let mut counts: std::collections::HashMap<String, (i64, i64)> = std::collections::HashMap::new();
     for line in nums.lines() {
         let mut f = line.splitn(3, '\t');
@@ -354,7 +367,7 @@ fn commit_detail_sync(worktree: &str, hash: &str) -> Result<CommitDetail, String
             })
         })
         .collect();
-    Ok(CommitDetail { commit, body: body.trim().to_string(), parent, files })
+    Ok(files)
 }
 
 fn show_file_sync(worktree: &str, rev: &str, file: &str) -> Result<String, String> {
@@ -717,7 +730,7 @@ fn blame_sync(worktree: &str, file: &str, contents: Option<String>) -> Result<Ve
     Ok(lines)
 }
 
-fn default_branch_sync(worktree: &str) -> Result<String, String> {
+pub(crate) fn default_branch_sync(worktree: &str) -> Result<String, String> {
     if let Ok(out) = git_quiet(worktree, &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]) {
         let b = out.trim();
         if !b.is_empty() {
@@ -780,10 +793,10 @@ fn changes_context_sync(worktree: &str) -> Result<ChangesContext, String> {
 fn range_context_sync(worktree: &str, base: &str) -> Result<DiffContext, String> {
     let range_dots = format!("{}...HEAD", base);
     let range = format!("{}..HEAD", base);
-    let stat = git_quiet(worktree, &["diff", "--stat", &range_dots])?;
-    let log = git_quiet(worktree, &["log", "--pretty=format:- %s%n%b", &range])?;
+    let stat = git_quiet(worktree, &["diff", "--stat", &range_dots, "--"])?;
+    let log = git_quiet(worktree, &["log", "--pretty=format:- %s%n%b", &range, "--"])?;
     let (diff, truncated) = truncate_utf8(
-        git_quiet(worktree, &["diff", "--no-ext-diff", "-U2", &range_dots])?,
+        git_quiet(worktree, &["diff", "--no-ext-diff", "-U2", &range_dots, "--"])?,
         MAX_CONTEXT_BYTES,
     );
     Ok(DiffContext { stat, log, diff, truncated })
@@ -933,4 +946,39 @@ pub async fn git_range_context(worktree: String, base: String) -> Result<DiffCon
 #[tauri::command]
 pub async fn git_changes_context(worktree: String) -> Result<ChangesContext, String> {
     blocking(move || changes_context_sync(&worktree)).await
+}
+
+fn merge_abort_sync(worktree: &str) -> Result<(), String> {
+    if !merge_in_progress(worktree) {
+        return Err("no hay un merge en curso".to_string());
+    }
+    git(worktree, &["merge", "--abort"])?;
+    Ok(())
+}
+
+fn merge_continue_sync(worktree: &str) -> Result<String, String> {
+    if !merge_in_progress(worktree) {
+        return Err("no hay un merge en curso".to_string());
+    }
+    let pending = git_quiet(worktree, &["diff", "--name-only", "--diff-filter=U"])?;
+    let pending: Vec<&str> = pending.lines().filter(|l| !l.trim().is_empty()).collect();
+    if !pending.is_empty() {
+        return Err(format!(
+            "todavía hay {} archivo(s) con conflicto: {}. Resolvelos y pasalos al stage",
+            pending.len(),
+            pending.iter().take(5).cloned().collect::<Vec<_>>().join(", ")
+        ));
+    }
+    git(worktree, &["commit", "--no-edit"])?;
+    Ok(git_quiet(worktree, &["rev-parse", "HEAD"])?.trim().to_string())
+}
+
+#[tauri::command]
+pub async fn git_merge_abort(worktree: String) -> Result<(), String> {
+    blocking(move || merge_abort_sync(&worktree)).await
+}
+
+#[tauri::command]
+pub async fn git_merge_continue(worktree: String) -> Result<String, String> {
+    blocking(move || merge_continue_sync(&worktree)).await
 }

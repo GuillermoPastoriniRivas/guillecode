@@ -72,6 +72,7 @@ export type PcWindow = { id: string; title: string; process: string; foreground:
 export type HubInfo = {
   current: string
   projects: string[]
+  labels?: Record<string, string>
   routines: Routine[]
   errors?: Record<string, string>
   prefs?: DesktopPrefs | null
@@ -267,8 +268,19 @@ export function connectLive(session: string | null, onEvent: (e: LiveEvent) => v
   }
 }
 
+const projectLabels = new Map<string, string>()
+
+function labelKey(path: string): string {
+  return path.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase()
+}
+
+export function setProjectLabels(labels: Record<string, string> | undefined): void {
+  projectLabels.clear()
+  for (const [path, label] of Object.entries(labels ?? {})) projectLabels.set(labelKey(path), label)
+}
+
 export function projectName(path: string): string {
-  return path.split(/[\\/]/).filter(Boolean).pop() ?? path
+  return projectLabels.get(labelKey(path)) ?? path.split(/[\\/]/).filter(Boolean).pop() ?? path
 }
 
 export function samePath(a: string | undefined, b: string | undefined): boolean {

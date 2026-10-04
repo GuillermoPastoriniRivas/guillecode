@@ -202,12 +202,14 @@ export function CommitFileEditor({
   parent,
   path,
   orig,
+  label,
 }: {
   repo: string
   hash: string
   parent: string
   path: string
   orig: string | null
+  label?: string
 }) {
   const [data, setData] = useState<{ a: string; b: string } | null>(null)
   const [image, setImage] = useState<{ before: string | null; after: string | null } | null>(null)
@@ -233,7 +235,7 @@ export function CommitFileEditor({
     <>
       <FileIcon path={path} />
       <span className="diff-title">{path}</span>
-      <span className="diff-kind">commit {hash.slice(0, 7)}</span>
+      <span className="diff-kind">{label ?? `commit ${hash.slice(0, 7)}`}</span>
       <button type="button" className="btn btn-xs" onClick={() => openFile(joinPath(repo, path))}>
         <Icon name="go-to-file" /> Abrir versión actual
       </button>

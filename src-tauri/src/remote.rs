@@ -1,6 +1,6 @@
 use crate::oc::basic_auth;
 use crate::proc::hide_console;
-use crate::{app_data_file, desktop, ensure_server, live, machine, push, recent_project_list, routines, usage, voice};
+use crate::{app_data_file, desktop, ensure_server, features, live, machine, push, recent_project_list, routines, usage, voice};
 use qrcode::render::svg;
 use qrcode::QrCode;
 use serde::{Deserialize, Serialize};
@@ -261,13 +261,25 @@ fn hub_api(app: &AppHandle, mut req: Request, url: &str, path: &str) {
     }
     if method == "GET" && path == "/hub/info" {
         let current = ensure_server(app).map(|c| c.worktree).unwrap_or_default();
-        let mut projects = vec![current.clone()];
-        for p in recent_project_list(app) {
-            if !projects.iter().any(|q| q.eq_ignore_ascii_case(&p)) {
-                projects.push(p);
+        let norm = |s: &str| s.replace('\\', "/").trim_end_matches('/').to_lowercase();
+        let mut projects: Vec<String> = Vec::new();
+        let mut labels = serde_json::Map::new();
+        let mut bases = crate::windows::all_projects(app);
+        bases.extend(recent_project_list(app));
+        for base in bases.into_iter().filter(|p| !p.is_empty()) {
+            if projects.iter().any(|q| norm(q) == norm(&base)) {
+                continue;
+            }
+            let name = base.replace('\\', "/").trim_end_matches('/').rsplit('/').next().unwrap_or_default().to_string();
+            projects.push(base.clone());
+            for (root, label) in features::feature_roots(app, &base) {
+                if projects.iter().any(|q| norm(q) == norm(&root)) {
+                    continue;
+                }
+                labels.insert(root.clone(), json!(format!("{} · {}", name, label)));
+                projects.push(root);
             }
         }
-        projects.retain(|p| !p.is_empty());
         let prefs = app.state::<RemoteState>().prefs.lock().unwrap().clone();
         return respond_json(
             req,
@@ -275,6 +287,7 @@ fn hub_api(app: &AppHandle, mut req: Request, url: &str, path: &str) {
             json!({
                 "current": current,
                 "projects": projects,
+                "labels": labels,
                 "routines": routines::views(app),
                 "errors": live::errors(app),
                 "prefs": prefs,

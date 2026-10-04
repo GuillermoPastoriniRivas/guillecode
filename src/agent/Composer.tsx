@@ -69,9 +69,11 @@ function contextLabel(item: ContextItem, root: string | null): string {
 const RING_RADIUS = 6.5
 const RING_LENGTH = 2 * Math.PI * RING_RADIUS
 
-function contextTone(ratio: number): string {
-  if (ratio >= 0.95) return "danger"
-  if (ratio >= 0.8) return "warn"
+const CONTEXT_TOKENS_WARN = 250_000
+
+function contextTone(usage: ContextUsage): string {
+  if (usage.ratio >= 0.95) return "danger"
+  if (usage.ratio >= 0.8 || usage.used >= CONTEXT_TOKENS_WARN) return "warn"
   return ""
 }
 
@@ -79,8 +81,8 @@ function ContextRing({ usage }: { usage: ContextUsage }) {
   const filled = Math.min(1, usage.ratio)
   return (
     <span
-      className={`context-ring ${contextTone(usage.ratio)}`}
-      title={`Contexto usado: ${formatTokens(usage.used)} de ${formatTokens(usage.limit)} tokens (${percent(usage.ratio)})`}
+      className={`context-ring ${contextTone(usage)}`}
+      title={`Contexto usado: ${formatTokens(usage.used)} de ${formatTokens(usage.limit)} tokens (${percent(usage.ratio)})${usage.used >= CONTEXT_TOKENS_WARN ? " · pasaste los 250.000 tokens" : ""}`}
     >
       <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden>
         <circle className="context-ring-track" cx="8" cy="8" r={RING_RADIUS} />

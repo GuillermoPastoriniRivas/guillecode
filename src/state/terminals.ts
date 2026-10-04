@@ -12,7 +12,7 @@ import {
   terminalWrite,
   type ShellInfo,
 } from "../lib/term"
-import { basename } from "../lib/paths"
+import { basename, samePath } from "../lib/paths"
 import { loadJson, saveJson } from "../lib/persist"
 import { errorMessage } from "../lib/tauri"
 import { useLayout } from "./layout"
@@ -23,6 +23,8 @@ export type TerminalInfo = {
   id: string
   shell: string | null
   cwd: string
+  root: string | null
+  title: string | null
   exited: boolean
   exitCode: number | null
 }
@@ -86,6 +88,7 @@ const THEME = {
 let shellsLoading: Promise<void> | null = null
 
 export function terminalTitle(info: TerminalInfo, shells: ShellInfo[]): string {
+  if (info.title) return `${info.title} · ${basename(info.cwd)}`
   const shell = shells.find((s) => s.id === info.shell) ?? shells[0]
   return `${shell?.name ?? "Terminal"} · ${basename(info.cwd)}`
 }
@@ -113,7 +116,7 @@ function patchInfo(id: string, patch: Partial<TerminalInfo>) {
   useTerminals.setState((s) => ({ terminals: s.terminals.map((t) => (t.id === id ? { ...t, ...patch } : t)) }))
 }
 
-export function createTerminal(opts: { shell?: string | null; cwd?: string; show?: boolean } = {}): string {
+export function createTerminal(opts: { shell?: string | null; cwd?: string; show?: boolean; title?: string } = {}): string {
   const root = useProject.getState().root
   const cwd = opts.cwd ?? root
   if (!cwd) {
@@ -140,6 +143,8 @@ export function createTerminal(opts: { shell?: string | null; cwd?: string; show
     id,
     shell,
     cwd,
+    root,
+    title: opts.title ?? null,
     exited: false,
     exitCode: null,
   }
@@ -214,18 +219,40 @@ export function setActiveTerminal(id: string): void {
   useTerminals.setState({ activeId: id })
 }
 
-export async function runInTerminal(command: string, opts: { newTerminal?: boolean; cwd?: string } = {}): Promise<void> {
+export async function runInTerminal(
+  command: string,
+  opts: { newTerminal?: boolean; cwd?: string; title?: string } = {},
+): Promise<string | null> {
   const s = useTerminals.getState()
-  let id = opts.newTerminal ? null : (s.terminals.find((t) => t.id === s.activeId && !t.exited)?.id ?? null)
-  if (!id) id = createTerminal({ cwd: opts.cwd })
-  if (!id) return
+  const root = useProject.getState().root
+  const reusable = s.terminals.find(
+    (t) =>
+      t.id === s.activeId &&
+      !t.exited &&
+      !t.title &&
+      (!opts.cwd || samePath(t.cwd, opts.cwd)) &&
+      (!root || !t.root || samePath(t.root, root)),
+  )
+  let id = opts.newTerminal ? null : (reusable?.id ?? null)
+  if (!id) id = createTerminal({ cwd: opts.cwd, title: opts.title })
+  if (!id) return null
   useLayout.getState().showPanel("terminal")
   setActiveTerminal(id)
   const inst = instances.get(id)
-  if (!inst) return
+  if (!inst) return id
   await inst.ready
   await terminalWrite(id, command.replace(/\r?\n/g, "\r") + "\r").catch((e) => notify.error("No se pudo escribir en la terminal", errorMessage(e)))
   focusTerminal(id)
+  return id
+}
+
+export function liveTerminals(): TerminalInfo[] {
+  return useTerminals.getState().terminals.filter((t) => !t.exited)
+}
+
+export async function closeAllTerminals(): Promise<void> {
+  await Promise.all([...instances.keys()].map((id) => killTerminal(id)))
+  useTerminals.setState({ terminals: [], activeId: null })
 }
 
 export function clearTerminal(id: string | null): void {

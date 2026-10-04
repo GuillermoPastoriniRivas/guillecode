@@ -1,7 +1,14 @@
 import { registerCommands, type Command } from "./registry"
 import { useLayout } from "../state/layout"
 import { showQuickOpen } from "../state/quickinput"
-import { pickProject, useProject } from "../state/project"
+import {
+  openInNewWindow,
+  pickProject,
+  pickProjectInNewWindow,
+  pickRecentInNewWindow,
+  pickWindow,
+  useProject,
+} from "../state/project"
 import { activeTab, cycleTab, moveTabToNextGroup, openEditor } from "../state/editors"
 import { newSession, cycleSessionTab, useAgent, abortSession, focusComposer } from "../state/agent"
 import { gitAction, refreshAllRepos, bumpHead, useGit } from "../state/git"
@@ -21,6 +28,18 @@ import { wrapCompartment, wrapExtension } from "../editor/cm/setup"
 import { relativePath } from "../lib/paths"
 import { useZoom } from "../state/zoom"
 import { showUpdates, checkUpdates } from "../state/updates"
+import {
+  activeFeature,
+  configureRunCommand,
+  openPullRequest,
+  pickFeature,
+  removeFeature,
+  runApp,
+  stopApp,
+  switchToFeature,
+  updateFromBase,
+  useFeatures,
+} from "../state/features"
 
 let wrapOn = false
 let blameOn = true
@@ -39,8 +58,41 @@ async function saveActive() {
   if (tab?.input.kind === "file") await saveDocument(tab.input.path)
 }
 
+function withActiveFeature(fn: (f: NonNullable<ReturnType<typeof activeFeature>>) => void): void {
+  const f = activeFeature()
+  if (!f) {
+    notify.info("No hay una feature activa", "Las features necesitan un proyecto con git")
+    return
+  }
+  fn(f)
+}
+
+function withIsolatedFeature(fn: (f: NonNullable<ReturnType<typeof activeFeature>>) => void): void {
+  withActiveFeature((f) => {
+    if (f.kind === "main") notify.info("Estás en la copia principal", "Abrí una feature para usar esta acción")
+    else fn(f)
+  })
+}
+
 export function registerBuiltinCommands(): void {
   const cmds: Command[] = [
+    { id: "window.new", title: "Nueva ventana", category: "Ventana", icon: "empty-window", keys: ["ctrl+shift+n"], global: true, run: () => void openInNewWindow() },
+    { id: "window.openFolder", title: "Abrir carpeta en una ventana nueva…", category: "Ventana", icon: "empty-window", run: () => void pickProjectInNewWindow() },
+    { id: "window.openRecent", title: "Abrir un proyecto reciente en una ventana nueva…", category: "Ventana", icon: "root-folder", run: () => void pickRecentInNewWindow() },
+    { id: "window.switch", title: "Ir a otra ventana…", category: "Ventana", icon: "multiple-windows", global: true, run: () => void pickWindow() },
+    { id: "feature.new", title: "Nueva feature…", category: "Feature", icon: "git-branch-create", global: true, run: () => openEditor({ kind: "featureCreate" }) },
+    { id: "feature.switch", title: "Cambiar de feature…", category: "Feature", icon: "worktree", keys: ["ctrl+alt+w"], global: true, run: () => void pickFeature() },
+    { id: "feature.run", title: "Correr la app de esta feature", category: "Feature", icon: "play", keys: ["ctrl+f5"], global: true, run: () => void runApp() },
+    { id: "feature.stop", title: "Detener la app", category: "Feature", icon: "debug-stop", keys: ["shift+f5"], global: true, run: () => void stopApp() },
+    { id: "feature.runConfig", title: "Configurar cómo se corre la app…", category: "Feature", icon: "settings-gear", run: () => void configureRunCommand() },
+    { id: "feature.integrate", title: "Integrar esta feature…", category: "Feature", icon: "git-merge", run: () => withIsolatedFeature((f) => openEditor({ kind: "featureIntegrate", path: f.path })) },
+    { id: "feature.updateFromBase", title: "Traer la rama base a esta feature", category: "Feature", icon: "git-pull-request-go-to-changes", run: () => withIsolatedFeature((f) => void updateFromBase(f)) },
+    { id: "feature.pr", title: "Crear pull request de esta feature", category: "Feature", icon: "git-pull-request-create", run: () => withIsolatedFeature((f) => void openPullRequest(f)) },
+    { id: "feature.main", title: "Volver a la copia principal", category: "Feature", icon: "home", run: () => {
+      const main = useFeatures.getState().list?.features.find((f) => f.kind === "main")
+      if (main) void switchToFeature(main)
+    } },
+    { id: "feature.remove", title: "Eliminar esta feature…", category: "Feature", icon: "trash", run: () => withIsolatedFeature((f) => void removeFeature(f)) },
     { id: "app.updates", title: "Buscar actualizaciones de GuilleCode", category: "Aplicación", icon: "cloud-download", global: true, run: () => { showUpdates(); void checkUpdates() } },
     { id: "workbench.quickOpen", title: "Ir a archivo…", category: "Ver", icon: "go-to-file", keys: ["ctrl+p", "ctrl+e"], global: true, run: () => showQuickOpen() },
     { id: "workbench.commandPalette", title: "Mostrar todos los comandos", category: "Ver", icon: "symbol-event", keys: ["ctrl+shift+p", "f1"], global: true, run: () => showQuickOpen(">") },

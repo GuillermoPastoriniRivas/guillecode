@@ -1,17 +1,19 @@
-import { call, onEvent } from "../lib/tauri"
-import { normalizePath } from "../lib/paths"
+import { call, onWindowEvent } from "../lib/tauri"
+import { normalizePath, samePath } from "../lib/paths"
 import { debounce } from "../lib/persist"
 import { refreshForPaths } from "../state/explorer"
 import { markIndexStale } from "../state/fileIndex"
 import { bumpHead, scheduleGitRefresh } from "../state/git"
 import { handleExternalChange, refreshAllGitDecorations } from "../editor/documents"
 import {
+  foreignDirectory,
   selectSession,
   subscribeAgentFileEdits,
   subscribeBranchChanges,
   subscribeSessionFinished,
   useAgent,
 } from "../state/agent"
+import { featureTitle, findFeature } from "../state/features"
 import { useToasts } from "../state/toasts"
 import { openEditor } from "../state/editors"
 import { useLayout } from "../state/layout"
@@ -22,7 +24,8 @@ const refreshDecorationsSoon = debounce(() => refreshAllGitDecorations(), 600)
 
 export function startSync(root: string): () => void {
   void call("watch_start", { root }).catch(() => undefined)
-  const offFs = onEvent<FsChanged>("fs://changed", (e) => {
+  const offFs = onWindowEvent<FsChanged>("fs://changed", (e) => {
+    if (!samePath(e.root, root)) return
     const paths = e.paths.map(normalizePath)
     if (paths.length > 0) {
       refreshForPaths(paths)
@@ -47,7 +50,17 @@ export function startSync(root: string): () => void {
     scheduleGitRefresh()
     const agent = useAgent.getState()
     const session = agent.sessions.find((s) => s.id === sessionID)
-    if (!session) return
+    if (!session) {
+      const other = agent.allSessions.find((s) => s.id === sessionID)
+      if (!other || other.parentID || !foreignDirectory(sessionID)) return
+      const feature = findFeature(normalizePath(other.directory))
+      useToasts.getState().push({
+        kind: "success",
+        title: `El agente terminó en ${feature ? featureTitle(feature) : "otra feature"}: ${other.title || "sesión"}`,
+        actions: [{ label: "Abrir", primary: true, run: () => selectSession(sessionID) }],
+      })
+      return
+    }
     const visible = useLayout.getState().agentVisible && agent.activeSessionId === sessionID && document.hasFocus()
     if (visible) return
     useToasts.getState().push({
@@ -70,6 +83,6 @@ export function startSync(root: string): () => void {
     offEdits()
     offBranch()
     offFinished()
-    void call("watch_stop").catch(() => undefined)
+    void call("watch_stop", { root }).catch(() => undefined)
   }
 }

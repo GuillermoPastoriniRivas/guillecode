@@ -10,8 +10,8 @@ import {
   toggleDir,
   useExplorer,
 } from "../state/explorer"
-import { decorationIn, useGit } from "../state/git"
-import { useProject, pickProject } from "../state/project"
+import { decorationIn, setActiveRepo, useGit } from "../state/git"
+import { useProject, pickProject, openInNewWindow } from "../state/project"
 import { openEditor, openFile, useEditors } from "../state/editors"
 import { addContext, focusComposer, useAgent } from "../state/agent"
 import { useLayout } from "../state/layout"
@@ -115,6 +115,22 @@ function entryMenu(e: React.MouseEvent, entry: FsEntry, root: string) {
       { separator: true },
     )
   }
+  if (entry.repo !== null) {
+    const known = useGit.getState().repos.some((r) => k(r) === k(entry.path))
+    items.push(
+      {
+        label: "Ver sus cambios en Control de código",
+        icon: "source-control",
+        disabled: !known,
+        run: () => {
+          setActiveRepo(useGit.getState().repos.find((r) => k(r) === k(entry.path)) ?? entry.path)
+          useLayout.getState().showView("scm", false)
+        },
+      },
+      { label: "Abrir este repositorio en una ventana nueva", icon: "empty-window", run: () => void openInNewWindow(entry.path) },
+      { separator: true },
+    )
+  }
   items.push(
     { label: "Nuevo archivo…", icon: "new-file", run: () => startCreate(parent, "file") },
     { label: "Nueva carpeta…", icon: "new-folder", run: () => startCreate(parent, "folder") },
@@ -185,7 +201,7 @@ const TreeRow = memo(function TreeRow({
 }) {
   return (
     <div
-      className={`tree-row${selected ? " selected" : ""}${entry.heavy ? " heavy" : ""}${decoration ? ` git-${decoration}` : ""}`}
+      className={`tree-row${selected ? " selected" : ""}${entry.heavy ? " heavy" : ""}${entry.repo !== null ? " repo" : ""}${decoration ? ` git-${decoration}` : ""}`}
       style={{ paddingLeft: 8 + depth * INDENT }}
       data-path={entry.path}
       draggable
@@ -205,15 +221,23 @@ const TreeRow = memo(function TreeRow({
         selectEntry(entry.path)
         entryMenu(e, entry, root)
       }}
-      title={relativePath(root, entry.path)}
+      title={entry.repo !== null ? `${relativePath(root, entry.path)}\nRepositorio git${entry.repo ? ` · ${entry.repo}` : ""}` : relativePath(root, entry.path)}
     >
       <span className="tree-twistie">{entry.isDir && <Icon name={expanded ? "chevron-down" : "chevron-right"} />}</span>
-      {entry.isDir ? (
+      {entry.repo !== null ? (
+        <Icon name="repo" className="tree-repo-icon" />
+      ) : entry.isDir ? (
         <Icon name={expanded ? "folder-opened" : "folder"} className="tree-folder-icon" />
       ) : (
         <FileIcon path={entry.name} />
       )}
       <span className="tree-label">{entry.name}</span>
+      {entry.repo && (
+        <span className="tree-repo-branch">
+          <Icon name="git-branch" />
+          <span>{entry.repo}</span>
+        </span>
+      )}
       {touched && <Icon name="sparkle" className="tree-agent" title="Lo tocó el agente en esta sesión" />}
       {entry.isDir ? folderDirty && <span className="tree-dot" /> : decoration && <span className="tree-deco">{decorationLetter(decoration as never)}</span>}
     </div>
@@ -222,6 +246,11 @@ const TreeRow = memo(function TreeRow({
 
 export function ExplorerView() {
   const root = useProject((s) => s.root)
+  const rootBranch = useGit((s) => {
+    if (!root) return null
+    const repo = s.repos.find((r) => k(r) === k(root))
+    return repo ? (s.byRepo[repo]?.status?.branch ?? null) : null
+  })
   const { children, expanded, selected, renaming, creating, revealNonce } = useExplorer()
   const decorations = useGit((s) => s.decorations)
   const dirtyFolders = useGit((s) => s.dirtyFolders)
@@ -316,6 +345,13 @@ export function ExplorerView() {
     <div className="view explorer-view">
       <div className="view-header">
         <span className="view-title">{basename(root)}</span>
+        {rootBranch && (
+          <span className="explorer-root-repo" title={`La carpeta abierta es un repositorio git · rama ${rootBranch}`}>
+            <Icon name="repo" />
+            <Icon name="git-branch" />
+            {rootBranch}
+          </span>
+        )}
         <span className="view-actions">
           <IconButton icon="new-file" title="Nuevo archivo" onClick={() => startCreate(selected && !selected.includes(".") ? selected : root, "file")} />
           <IconButton icon="new-folder" title="Nueva carpeta" onClick={() => startCreate(root, "folder")} />
