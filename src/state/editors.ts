@@ -18,7 +18,7 @@ export type EditorInput =
   | { kind: "remote" }
   | { kind: "desktop" }
   | { kind: "accounts" }
-  | { kind: "featureCreate" }
+  | { kind: "featureCreate"; repo?: string }
   | { kind: "featureIntegrate"; path: string }
   | { kind: "welcome" }
 
@@ -72,7 +72,7 @@ export function tabId(input: EditorInput): string {
     case "aiReview":
       return `aiReview:${input.scope}:${normalizePath(input.repo).toLowerCase()}:${input.number ?? ""}`
     case "featureCreate":
-      return "featureCreate"
+      return input.repo ? `featureCreate:${normalizePath(input.repo).toLowerCase()}` : "featureCreate"
     case "featureIntegrate":
       return `featureIntegrate:${normalizePath(input.path).toLowerCase()}`
     case "welcome":
@@ -111,7 +111,7 @@ export function inputTitle(input: EditorInput): string {
     case "aiReview":
       return input.scope === "pr" ? `Revisión IA · PR #${input.number}` : "Revisión IA · cambios"
     case "featureCreate":
-      return "Nueva feature"
+      return input.repo ? `Nueva feature · ${basename(input.repo)}` : "Nueva feature"
     case "featureIntegrate":
       return `Integrar ${basename(input.path)}`
     case "welcome":

@@ -12,6 +12,8 @@ export type Feature = {
   id: string | null
   path: string
   root: string
+  repo: string
+  group: string | null
   label: string
   kind: FeatureKind
   branch: string | null
@@ -32,13 +34,29 @@ export type Feature = {
 
 export type ProjectSettings = { run: string | null; setup: string | null; copy: string[] }
 
+export type RepoGroup = {
+  path: string
+  main: string
+  name: string
+  branch: string | null
+  head: string | null
+  detached: boolean
+  defaultBase: string | null
+  worktreesDir: string
+  settings: ProjectSettings
+  changes: Changes | null
+  merging: boolean
+}
+
 export type FeatureList = {
   git: boolean
+  multi: boolean
   project: string
   repo: string
   defaultBase: string | null
   worktreesDir: string
   features: Feature[]
+  repos: RepoGroup[]
   settings: ProjectSettings
 }
 
@@ -82,7 +100,11 @@ export type MergePreview = {
 export type MergeResult = { status: "merged" | "conflicts" | "up_to_date"; head: string | null; checkout: string | null; conflicts: string[] }
 
 function normalizeFeature(f: Feature): Feature {
-  return { ...f, path: normalizePath(f.path), root: normalizePath(f.root) }
+  return { ...f, path: normalizePath(f.path), root: normalizePath(f.root), repo: f.repo ? normalizePath(f.repo) : f.repo }
+}
+
+function normalizeGroup(g: RepoGroup): RepoGroup {
+  return { ...g, path: normalizePath(g.path), main: normalizePath(g.main), worktreesDir: normalizePath(g.worktreesDir) }
 }
 
 export async function featuresList(project: string): Promise<FeatureList> {
@@ -93,6 +115,7 @@ export async function featuresList(project: string): Promise<FeatureList> {
     repo: list.repo ? normalizePath(list.repo) : list.repo,
     worktreesDir: list.worktreesDir ? normalizePath(list.worktreesDir) : list.worktreesDir,
     features: list.features.map(normalizeFeature),
+    repos: list.repos.map(normalizeGroup),
   }
 }
 

@@ -304,7 +304,7 @@ function EditorContent({ tab }: { tab: Tab }) {
     case "accounts":
       return <AccountsEditor />
     case "featureCreate":
-      return <FeatureCreateEditor />
+      return <FeatureCreateEditor key={tab.id} repo={input.repo ?? null} />
     case "featureIntegrate":
       return <FeatureIntegrateEditor key={tab.id} path={input.path} />
     case "welcome":

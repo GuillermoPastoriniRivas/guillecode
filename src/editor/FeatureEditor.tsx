@@ -16,10 +16,11 @@ import { timeAgo } from "../lib/time"
 import { useProject } from "../state/project"
 import {
   createFeature,
-
   featureTitle,
+  findGroup,
   handleMergeResult,
   hasUnsavedIn,
+  openFeatureCreate,
   openPullRequest,
   refreshFeatures,
   removeFeature,
@@ -50,10 +51,12 @@ function useLocalBranches(repo: string | null): Branch[] {
   return branches
 }
 
-export function FeatureCreateEditor() {
+export function FeatureCreateEditor({ repo }: { repo: string | null }) {
   const project = useProject((s) => s.project)
   const list = useFeatures((s) => s.list)
-  const branches = useLocalBranches(list?.repo || project)
+  const scope = repo || list?.project || project
+  const group = findGroup(scope, list)
+  const branches = useLocalBranches(group?.main || list?.repo || project)
   const [label, setLabel] = useState("")
   const [branch, setBranch] = useState("")
   const [branchTouched, setBranchTouched] = useState(false)
@@ -61,46 +64,49 @@ export function FeatureCreateEditor() {
   const [existing, setExisting] = useState(false)
   const [candidates, setCandidates] = useState<CopyCandidate[] | null>(null)
   const [copy, setCopy] = useState<string[]>([])
-  const [setup, setSetup] = useState(() => useFeatures.getState().list?.settings.setup ?? "")
+  const [setup, setSetup] = useState(() => findGroup(scope, useFeatures.getState().list)?.settings.setup ?? "")
   const [open, setOpen] = useState(true)
   const [prompt, setPrompt] = useState("")
   const [creating, setCreating] = useState(false)
 
   useEffect(() => {
-    if (!project) return
+    if (!scope) return
     let alive = true
-    featuresCopyCandidates(project)
+    featuresCopyCandidates(scope)
       .then((found) => {
         if (!alive) return
         setCandidates(found)
-        const saved = useFeatures.getState().list?.settings.copy ?? []
+        const saved = findGroup(scope, useFeatures.getState().list)?.settings.copy ?? []
         const initial = saved.length > 0 ? saved.filter((p) => found.some((c) => c.path === p)) : found.filter((c) => c.suggested).map((c) => c.path)
         setCopy(initial)
       })
       .catch(() => alive && setCandidates([]))
-    if (!useFeatures.getState().list?.settings.setup)
-      void suggestSetupCommand(project).then((s) => {
+    if (!findGroup(scope, useFeatures.getState().list)?.settings.setup)
+      void suggestSetupCommand(scope).then((s) => {
         if (alive && s) setSetup((current) => current || s)
       })
     return () => {
       alive = false
     }
-  }, [project])
+  }, [scope])
 
   const locals = useMemo(() => branches.filter((b) => !b.remote), [branches])
-  const defaultBase = list?.defaultBase ?? locals.find((b) => b.current)?.name ?? ""
+  const defaultBase = group?.defaultBase ?? locals.find((b) => b.current)?.name ?? ""
   const effectiveBase = base || defaultBase
   const effectiveBranch = branchTouched ? branch : label.trim() ? `feature/${slugify(label)}` : ""
-  const openElsewhere = list?.features.find((f) => f.branch === effectiveBranch)
+  const openElsewhere = list?.features.find((f) => f.branch === effectiveBranch && !!scope && samePath(f.repo || "", scope))
+  const openInMain = !!list?.multi && !!effectiveBranch && group?.branch === effectiveBranch
   const branchExists = locals.some((b) => b.name === effectiveBranch)
-  const folder = list?.worktreesDir && label.trim() ? joinPath(list.worktreesDir, slugify(label)) : ""
+  const folder = group?.worktreesDir && label.trim() ? joinPath(group.worktreesDir, slugify(label)) : ""
   const branchError = !effectiveBranch
     ? null
     : /\s|\.\.|[~^:?*[\\]|^-|\/$|\.lock$/.test(effectiveBranch)
       ? "Nombre inválido para git"
       : openElsewhere
         ? `Esa rama ya está abierta en «${featureTitle(openElsewhere)}»`
-        : null
+        : openInMain
+          ? `Esa rama ya está abierta en la copia principal de ${group?.name}`
+          : null
 
   const baseOptions = [
     ...locals.map((b) => ({ value: b.name, label: b.name, description: b.current ? "actual en la principal" : b.subject, icon: "git-branch" })),
@@ -110,12 +116,13 @@ export function FeatureCreateEditor() {
   ]
 
   const canCreate =
-    !!project && !!label.trim() && !!effectiveBranch && !branchError && (!branchExists || existing) && (existing || !!effectiveBase) && !creating
+    !!scope && !!group && !!label.trim() && !!effectiveBranch && !branchError && (!branchExists || existing) && (existing || !!effectiveBase) && !creating
 
   const submit = async () => {
     if (!canCreate) return
     setCreating(true)
     const created = await createFeature({
+      repo: scope,
       label: label.trim(),
       branch: effectiveBranch,
       base: effectiveBase,
@@ -126,13 +133,32 @@ export function FeatureCreateEditor() {
       prompt: open ? prompt : "",
     })
     setCreating(false)
-    if (created) removeTabs((t) => t.id === tabId({ kind: "featureCreate" }))
+    if (created) removeTabs((t) => t.id === tabId({ kind: "featureCreate", repo: repo ?? undefined }))
   }
 
   if (list && !list.git)
     return (
       <div className="doc-page">
-        <div className="editor-message center">Las features necesitan que la carpeta del proyecto sea un repositorio git.</div>
+        <div className="editor-message center">Las features necesitan un repositorio git, o una carpeta que tenga repos adentro.</div>
+      </div>
+    )
+
+  if (list?.multi && !group)
+    return (
+      <div className="doc-page">
+        <div className="editor-message center">
+          <span>Elegí en qué repositorio va la feature.</span>
+          <button
+            type="button"
+            className="btn btn-sm btn-primary"
+            onClick={() => {
+              removeTabs((t) => t.id === tabId({ kind: "featureCreate", repo: repo ?? undefined }))
+              void openFeatureCreate()
+            }}
+          >
+            <Icon name="repo" /> Elegir repositorio
+          </button>
+        </div>
       </div>
     )
 
@@ -144,6 +170,11 @@ export function FeatureCreateEditor() {
         </div>
         <h1>{label.trim() || "Nueva feature"}</h1>
         <div className="doc-meta">
+          {list?.multi && group && (
+            <span>
+              <Icon name="repo" /> {group.name}
+            </span>
+          )}
           <span>Una carpeta propia (worktree) con su rama, sus conversaciones y su terminal. La copia principal no se toca.</span>
         </div>
         <div className="doc-actions">
@@ -283,15 +314,16 @@ export function FeatureIntegrateEditor({ path }: { path: string }) {
   const [done, setDone] = useState<string | null>(null)
   const [nonce, setNonce] = useState(0)
 
-  const effectiveTarget = target || feature?.base?.replace(/^origin\//, "") || list?.defaultBase || ""
+  const scope = feature?.repo || project
+  const effectiveTarget = target || feature?.base?.replace(/^origin\//, "") || findGroup(scope, list)?.defaultBase || ""
   const sourcePath = feature && !feature.missing ? feature.path : null
-  const requestKey = project && sourcePath && effectiveTarget ? `${sourcePath}|${effectiveTarget}|${feature?.head ?? ""}|${nonce}` : null
+  const requestKey = scope && sourcePath && effectiveTarget ? `${sourcePath}|${effectiveTarget}|${feature?.head ?? ""}|${nonce}` : null
   const loading = requestKey !== null && loadedKey !== requestKey
 
   useEffect(() => {
-    if (!requestKey || !project || !sourcePath) return
+    if (!requestKey || !scope || !sourcePath) return
     let alive = true
-    featuresMergePreview(project, sourcePath, effectiveTarget)
+    featuresMergePreview(scope, sourcePath, effectiveTarget)
       .then((p) => {
         if (!alive) return
         setPreview(p)
@@ -306,7 +338,7 @@ export function FeatureIntegrateEditor({ path }: { path: string }) {
     return () => {
       alive = false
     }
-  }, [requestKey, project, sourcePath, effectiveTarget])
+  }, [requestKey, scope, sourcePath, effectiveTarget])
 
   if (!feature)
     return (
@@ -315,7 +347,13 @@ export function FeatureIntegrateEditor({ path }: { path: string }) {
       </div>
     )
 
-  const targetFeature = preview?.targetCheckout ? list?.features.find((f) => samePath(f.path, preview.targetCheckout!)) : undefined
+  const targetGroup = preview?.targetCheckout ? findGroup(preview.targetCheckout, list) : null
+  const targetFeature = preview?.targetCheckout
+    ? (list?.features.find((f) => samePath(f.path, preview.targetCheckout!)) ??
+      (list?.multi && targetGroup ? list.features.find((f) => f.kind === "main") : undefined))
+    : undefined
+  const targetLabel = (fallback: string) =>
+    list?.multi && targetGroup ? `${targetGroup.name} · principal` : targetFeature ? featureTitle(targetFeature) : fallback
   const busyIn = (f: Feature | undefined) =>
     !!f && allSessions.some((s) => s.directory && samePath(s.directory, f.root) && statuses[s.id] && statuses[s.id].type !== "idle")
 
@@ -338,19 +376,19 @@ export function FeatureIntegrateEditor({ path }: { path: string }) {
     if (targetTracked > 0)
       blockers.push({
         tone: "error",
-        text: `${preview.target} está abierta en «${targetFeature ? featureTitle(targetFeature) : preview.targetCheckout}» con ${targetTracked} archivo(s) sin commitear. Commitealos o guardalos en stash.`,
+        text: `${preview.target} está abierta en «${targetLabel(preview.targetCheckout ?? "")}» con ${targetTracked} archivo(s) sin commitear. Commitealos o guardalos en stash.`,
       })
     if (targetFeature && hasUnsavedIn(targetFeature))
-      blockers.push({ tone: "error", text: `Hay archivos sin guardar en «${featureTitle(targetFeature)}». Guardalos antes de integrar.` })
+      blockers.push({ tone: "error", text: `Hay archivos sin guardar en «${targetLabel(featureTitle(targetFeature))}». Guardalos antes de integrar.` })
     if (busyIn(targetFeature))
-      blockers.push({ tone: "error", text: `Hay agentes trabajando en «${targetFeature ? featureTitle(targetFeature) : preview.target}». Esperá a que terminen.` })
+      blockers.push({ tone: "error", text: `Hay agentes trabajando en «${targetLabel(preview.target)}». Esperá a que terminen.` })
     if (busyIn(feature)) blockers.push({ tone: "warn", text: "Hay agentes trabajando en esta feature: se integra lo que ya está commiteado." })
     if (preview.conflicts.length > 0)
       blockers.push(
         preview.targetCheckout
           ? {
               tone: "warn",
-              text: `Hay conflictos en ${preview.conflicts.length} archivo(s). Si integrás, el merge queda en curso en «${targetFeature ? featureTitle(targetFeature) : preview.targetCheckout}» para que los resuelvas. También podés traer ${preview.target} a la feature y resolverlos acá.`,
+              text: `Hay conflictos en ${preview.conflicts.length} archivo(s). Si integrás, el merge queda en curso en «${targetLabel(preview.targetCheckout ?? "")}» para que los resuelvas. También podés traer ${preview.target} a la feature y resolverlos acá.`,
               action: { label: `Traer ${preview.target} a la feature`, run: () => void updateFromBase(feature) },
             }
           : {
@@ -364,11 +402,11 @@ export function FeatureIntegrateEditor({ path }: { path: string }) {
   const defaultMessage = preview ? `Integrar ${featureTitle(feature)} (${preview.source}) en ${preview.target}` : ""
 
   const integrate = async () => {
-    if (!project || !preview || blocked || preview.upToDate) return
+    if (!scope || !preview || blocked || preview.upToDate) return
     setMerging(true)
     try {
       const result = await featuresMerge({
-        project,
+        project: scope,
         sourcePath: feature.path,
         target: preview.target,
         expectedSource: preview.sourceHead,
@@ -434,7 +472,7 @@ export function FeatureIntegrateEditor({ path }: { path: string }) {
             <span className="feature-where">
               {preview?.targetCheckout ? (
                 <>
-                  <Icon name={targetFeature?.kind === "main" ? "home" : "git-branch"} /> en la copia «{targetFeature ? featureTitle(targetFeature) : preview.targetCheckout}», que queda actualizada
+                  <Icon name={targetFeature?.kind === "main" ? "home" : "git-branch"} /> en la copia «{targetLabel(preview.targetCheckout)}», que queda actualizada
                 </>
               ) : preview ? (
                 <>

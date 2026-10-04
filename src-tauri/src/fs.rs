@@ -236,7 +236,7 @@ fn list_files_sync(root: &str) -> Result<Vec<String>, String> {
         .parents(true)
         .filter_entry(|e| {
             let name = e.file_name().to_string_lossy();
-            name != ".git" && !(e.file_type().map(|t| t.is_dir()).unwrap_or(false) && HEAVY_DIRS.contains(&name.as_ref()))
+            name != ".git" && !(e.file_type().map(|t| t.is_dir()).unwrap_or(false) && (HEAVY_DIRS.contains(&name.as_ref()) || name == crate::features::WORKTREES_DIR))
         })
         .build();
     let mut files = Vec::new();
