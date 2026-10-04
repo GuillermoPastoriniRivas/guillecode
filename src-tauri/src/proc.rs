@@ -12,6 +12,10 @@ pub fn install(app: AppHandle) {
     let _ = APP.set(app);
 }
 
+pub fn app() -> Option<&'static AppHandle> {
+    APP.get()
+}
+
 #[derive(Serialize, Clone)]
 struct ProcLog {
     tool: String,
