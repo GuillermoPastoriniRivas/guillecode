@@ -2,16 +2,17 @@ use crate::app_data_file;
 use crate::git::{git, git_quiet, merge_in_progress, parse_commits, range_files, Commit, CommitFile, COMMIT_FORMAT};
 use crate::proc::{blocking, hide_console};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter};
 
 static LOCK: Mutex<()> = Mutex::new(());
+static EXCLUDED: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 
 const REGISTRY: &str = "features.json";
-const WORKTREES_DIR: &str = ".guillecode-worktrees";
+pub(crate) const WORKTREES_DIR: &str = ".worktrees";
 const GENERATED: &[&str] = &[
     "node_modules", "target", "dist", "build", ".next", ".turbo", "coverage", "__pycache__", ".venv", "venv",
     ".gradle", ".cache", "out", "vendor", ".pytest_cache", ".mypy_cache", "bin", "obj",
@@ -69,6 +70,8 @@ pub struct FeatureInfo {
     pub id: Option<String>,
     pub path: String,
     pub root: String,
+    pub repo: String,
+    pub group: Option<String>,
     pub label: String,
     pub kind: String,
     pub branch: Option<String>,
@@ -89,13 +92,31 @@ pub struct FeatureInfo {
 
 #[derive(Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
+pub struct RepoGroup {
+    pub path: String,
+    pub main: String,
+    pub name: String,
+    pub branch: Option<String>,
+    pub head: Option<String>,
+    pub detached: bool,
+    pub default_base: Option<String>,
+    pub worktrees_dir: String,
+    pub settings: ProjectSettings,
+    pub changes: Option<Changes>,
+    pub merging: bool,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct FeatureList {
     pub git: bool,
+    pub multi: bool,
     pub project: String,
     pub repo: String,
     pub default_base: Option<String>,
     pub worktrees_dir: String,
     pub features: Vec<FeatureInfo>,
+    pub repos: Vec<RepoGroup>,
     pub settings: ProjectSettings,
 }
 
@@ -324,9 +345,37 @@ fn default_base(main: &str) -> Option<String> {
 }
 
 fn worktrees_dir(main: &str) -> String {
-    let main = clean(main);
-    let parent = Path::new(&main).parent().map(|p| clean(&p.to_string_lossy())).unwrap_or_else(|| main.clone());
-    join(&join(&parent, WORKTREES_DIR), &basename(&main))
+    join(main, WORKTREES_DIR)
+}
+
+fn is_worktrees_entry(rel: &str) -> bool {
+    let rel = rel.trim_end_matches('/');
+    rel == WORKTREES_DIR || rel.starts_with(&format!("{}/", WORKTREES_DIR))
+}
+
+fn ensure_excluded(main: &str) {
+    let k = key(main);
+    if EXCLUDED.lock().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|s| s.contains(&k)) {
+        return;
+    }
+    let pattern = format!("/{}/", WORKTREES_DIR);
+    let ignored = matches!(git_raw(main, &["check-ignore", "-q", &format!("{}/", WORKTREES_DIR)]), Ok((0, _, _)));
+    if !ignored {
+        let Some(rel) = probe(main, &["rev-parse", "--git-path", "info/exclude"]) else { return };
+        let rel = rel.trim();
+        let file = if Path::new(rel).is_absolute() { PathBuf::from(rel) } else { Path::new(main).join(rel) };
+        let current = std::fs::read_to_string(&file).unwrap_or_default();
+        if !current.lines().any(|l| l.trim() == pattern) {
+            if let Some(parent) = file.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let sep = if current.is_empty() || current.ends_with('\n') { "" } else { "\n" };
+            if std::fs::write(&file, format!("{}{}{}\n", current, sep, pattern)).is_err() {
+                return;
+            }
+        }
+    }
+    EXCLUDED.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashSet::new).insert(k);
 }
 
 fn changes_of(path: &str) -> Option<Changes> {
@@ -371,29 +420,23 @@ fn settings_of(reg: &Registry, project: &str) -> ProjectSettings {
     reg.projects.get(&key(project)).cloned().unwrap_or_default()
 }
 
-fn build_list(app: &AppHandle, project: &str) -> Result<FeatureList, String> {
-    let reg = load(app);
-    let Some(ctx) = repo_ctx(project)? else {
-        return Ok(FeatureList {
-            git: false,
-            project: clean(project),
-            settings: settings_of(&reg, project),
-            ..Default::default()
-        });
-    };
-    let canonical = join(&ctx.main, &ctx.rel);
-    let default = default_base(&ctx.main);
+fn collect(reg: &Registry, ctx: &RepoCtx, scope: &str, group: Option<&str>, default: &Option<String>, with_main: bool) -> Vec<FeatureInfo> {
     let entries: Vec<&Entry> = reg.features.iter().filter(|e| same(&e.repo, &ctx.main)).collect();
     let mut features: Vec<FeatureInfo> = Vec::new();
     for w in ctx.worktrees.iter().filter(|w| !w.bare) {
-        let entry = entries.iter().find(|e| same(&e.path, &w.path));
         let main = same(&w.path, &ctx.main);
+        if main && !with_main {
+            continue;
+        }
+        let entry = entries.iter().find(|e| same(&e.path, &w.path));
         let kind = if main { "main" } else if entry.is_some() { "managed" } else { "external" };
         let missing = w.prunable.is_some() || !Path::new(&w.path).is_dir();
         features.push(FeatureInfo {
             id: entry.map(|e| e.id.clone()),
             path: w.path.clone(),
             root: join(&w.path, &ctx.rel),
+            repo: scope.to_string(),
+            group: group.map(str::to_string),
             label: entry.map(|e| e.label.clone()).filter(|l| !l.is_empty()).unwrap_or_else(|| {
                 if main { "Principal".to_string() } else { basename(&w.path) }
             }),
@@ -417,6 +460,8 @@ fn build_list(app: &AppHandle, project: &str) -> Result<FeatureList, String> {
             id: Some(e.id.clone()),
             path: clean(&e.path),
             root: join(&e.path, &ctx.rel),
+            repo: scope.to_string(),
+            group: group.map(str::to_string),
             label: e.label.clone(),
             kind: "managed".to_string(),
             branch: e.branch.clone(),
@@ -428,8 +473,12 @@ fn build_list(app: &AppHandle, project: &str) -> Result<FeatureList, String> {
             ..Default::default()
         });
     }
+    features
+}
+
+fn fill_live(features: &mut [FeatureInfo], groups: &mut [RepoGroup]) {
     std::thread::scope(|scope| {
-        let handles: Vec<_> = features
+        let feature_handles: Vec<_> = features
             .iter()
             .enumerate()
             .filter(|(_, f)| !f.missing)
@@ -444,7 +493,15 @@ fn build_list(app: &AppHandle, project: &str) -> Result<FeatureList, String> {
                 })
             })
             .collect();
-        for h in handles {
+        let group_handles: Vec<_> = groups
+            .iter()
+            .enumerate()
+            .map(|(i, g)| {
+                let path = g.main.clone();
+                scope.spawn(move || (i, changes_of(&path), merge_in_progress(&path)))
+            })
+            .collect();
+        for h in feature_handles {
             if let Ok((i, changes, merging, counts)) = h.join() {
                 let f = &mut features[i];
                 f.changes = changes;
@@ -455,24 +512,135 @@ fn build_list(app: &AppHandle, project: &str) -> Result<FeatureList, String> {
                 }
             }
         }
+        for h in group_handles {
+            if let Ok((i, changes, merging)) = h.join() {
+                groups[i].changes = changes;
+                groups[i].merging = merging;
+            }
+        }
     });
-    Ok(FeatureList {
+}
+
+fn sub_repos(project: &str) -> Vec<(String, RepoCtx)> {
+    let paths = crate::git::subrepos_sync(project).unwrap_or_default();
+    let found: Vec<RepoCtx> = std::thread::scope(|scope| {
+        let handles: Vec<_> = paths.iter().map(|p| scope.spawn(move || repo_ctx(p).ok().flatten())).collect();
+        handles.into_iter().filter_map(|h| h.join().ok().flatten()).collect()
+    });
+    let mut out: Vec<(String, RepoCtx)> = Vec::new();
+    for ctx in found {
+        if out.iter().any(|(_, c)| same(&c.main, &ctx.main)) {
+            continue;
+        }
+        let rel = relative(&ctx.main, project);
+        let name = if rel.is_empty() { basename(&ctx.main) } else { rel };
+        out.push((name, RepoCtx { rel: String::new(), ..ctx }));
+    }
+    out.sort_by_key(|(name, _)| name.to_lowercase());
+    out
+}
+
+fn single_list(reg: &Registry, ctx: RepoCtx) -> FeatureList {
+    let canonical = join(&ctx.main, &ctx.rel);
+    if exists(&worktrees_dir(&ctx.main)) {
+        ensure_excluded(&ctx.main);
+    }
+    let default = default_base(&ctx.main);
+    let mut features = collect(reg, &ctx, &canonical, None, &default, true);
+    fill_live(&mut features, &mut []);
+    let settings = settings_of(reg, &canonical);
+    let main = features.iter().find(|f| f.kind == "main");
+    let group = RepoGroup {
+        path: canonical.clone(),
+        main: ctx.main.clone(),
+        name: basename(&canonical),
+        branch: main.and_then(|f| f.branch.clone()),
+        head: main.and_then(|f| f.head.clone()),
+        detached: main.map(|f| f.detached).unwrap_or(false),
+        default_base: default.clone(),
+        worktrees_dir: worktrees_dir(&ctx.main),
+        settings: settings.clone(),
+        changes: main.and_then(|f| f.changes.clone()),
+        merging: main.map(|f| f.merging).unwrap_or(false),
+    };
+    FeatureList {
         git: true,
-        project: canonical.clone(),
+        multi: false,
+        project: canonical,
         repo: ctx.main.clone(),
         default_base: default,
         worktrees_dir: worktrees_dir(&ctx.main),
         features,
-        settings: settings_of(&reg, &canonical),
+        repos: vec![group],
+        settings,
+    }
+}
+
+fn multi_list(reg: &Registry, project: &str) -> FeatureList {
+    let project = clean(project);
+    let settings = settings_of(reg, &project);
+    let repos = sub_repos(&project);
+    if repos.is_empty() {
+        return FeatureList { git: false, project, settings, ..Default::default() };
+    }
+    let defaults: Vec<Option<String>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = repos
+            .iter()
+            .map(|(_, ctx)| {
+                scope.spawn(move || {
+                    if exists(&worktrees_dir(&ctx.main)) {
+                        ensure_excluded(&ctx.main);
+                    }
+                    default_base(&ctx.main)
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().ok().flatten()).collect()
+    });
+    let mut features: Vec<FeatureInfo> = Vec::new();
+    let mut groups: Vec<RepoGroup> = Vec::new();
+    for ((name, ctx), default) in repos.iter().zip(defaults) {
+        features.extend(collect(reg, ctx, &ctx.main, Some(name), &default, false));
+        let main = ctx.worktrees.iter().find(|w| same(&w.path, &ctx.main));
+        groups.push(RepoGroup {
+            path: ctx.main.clone(),
+            main: ctx.main.clone(),
+            name: name.clone(),
+            branch: main.and_then(|w| w.branch.clone()),
+            head: main.and_then(|w| w.head.clone()),
+            detached: main.map(|w| w.detached).unwrap_or(false),
+            default_base: default,
+            worktrees_dir: worktrees_dir(&ctx.main),
+            settings: settings_of(reg, &ctx.main),
+            ..Default::default()
+        });
+    }
+    fill_live(&mut features, &mut groups);
+    features.insert(
+        0,
+        FeatureInfo {
+            path: project.clone(),
+            root: project.clone(),
+            label: "Principal".to_string(),
+            kind: "main".to_string(),
+            ..Default::default()
+        },
+    );
+    FeatureList { git: true, multi: true, project, features, repos: groups, settings, ..Default::default() }
+}
+
+fn build_list(app: &AppHandle, project: &str) -> Result<FeatureList, String> {
+    let reg = load(app);
+    Ok(match repo_ctx(project)? {
+        Some(ctx) => single_list(&reg, ctx),
+        None => multi_list(&reg, project),
     })
 }
 
 static ROOTS_CACHE: Mutex<Option<HashMap<String, (std::time::Instant, Vec<(String, String)>)>>> = Mutex::new(None);
 const ROOTS_TTL: std::time::Duration = std::time::Duration::from_secs(20);
 
-fn light_roots(app: &AppHandle, project: &str) -> Vec<(String, String)> {
-    let Ok(Some(ctx)) = repo_ctx(project) else { return Vec::new() };
-    let reg = load(app);
+fn roots_of(reg: &Registry, ctx: &RepoCtx, group: Option<&str>) -> Vec<(String, String)> {
     ctx.worktrees
         .iter()
         .filter(|w| !w.bare && w.prunable.is_none() && !same(&w.path, &ctx.main) && Path::new(&w.path).is_dir())
@@ -482,9 +650,22 @@ fn light_roots(app: &AppHandle, project: &str) -> Vec<(String, String)> {
                 return None;
             }
             let label = entry.map(|e| e.label.clone()).filter(|l| !l.is_empty()).unwrap_or_else(|| basename(&w.path));
+            let label = match group {
+                Some(g) => format!("{} · {}", g, label),
+                None => label,
+            };
             Some((join(&w.path, &ctx.rel), label))
         })
         .collect()
+}
+
+fn light_roots(app: &AppHandle, project: &str) -> Vec<(String, String)> {
+    let reg = load(app);
+    match repo_ctx(project) {
+        Ok(Some(ctx)) => roots_of(&reg, &ctx, None),
+        Ok(None) => sub_repos(project).iter().flat_map(|(name, ctx)| roots_of(&reg, ctx, Some(name))).collect(),
+        Err(_) => Vec::new(),
+    }
 }
 
 pub fn feature_roots(app: &AppHandle, project: &str) -> Vec<(String, String)> {
@@ -646,6 +827,7 @@ fn create_sync(app: &AppHandle, args: CreateArgs) -> Result<CreateResult, String
         .ok_or_else(|| format!("no encontré la rama o commit {}", base))?;
     let container = worktrees_dir(&ctx.main);
     std::fs::create_dir_all(&container).map_err(|e| format!("no se pudo crear {}: {}", container, e))?;
+    ensure_excluded(&ctx.main);
     let slug = slugify(&label);
     let mut dir = join(&container, &slug);
     let mut n = 2;
@@ -688,6 +870,7 @@ fn create_sync(app: &AppHandle, args: CreateArgs) -> Result<CreateResult, String
             id: Some(entry.id),
             path: dir.clone(),
             root: join(&dir, &ctx.rel),
+            repo: canonical.clone(),
             label,
             kind: "managed".to_string(),
             branch: Some(branch),
@@ -816,7 +999,7 @@ fn candidates_sync(project: &str) -> Result<Vec<CopyCandidate>, String> {
     let ctx = require_ctx(project)?;
     let mut out = Vec::new();
     for rel in ignored_entries(&ctx.main) {
-        if is_generated(&rel) || rel.starts_with(WORKTREES_DIR) {
+        if is_generated(&rel) || is_worktrees_entry(&rel) {
             continue;
         }
         let dir = rel.ends_with('/');
@@ -1313,7 +1496,72 @@ mod tests {
         assert_eq!(relative("c:\\Repo\\apps\\web", "C:/repo"), "apps/web");
         assert_eq!(relative("C:/repo", "C:/repo/"), "");
         assert_eq!(join("C:/wt/demo", "apps/web"), "C:/wt/demo/apps/web");
-        assert_eq!(worktrees_dir("C:/code/guillecode"), "C:/code/.guillecode-worktrees/guillecode");
+        assert_eq!(worktrees_dir("C:/code/guillecode"), "C:/code/guillecode/.worktrees");
+        assert!(is_worktrees_entry(".worktrees/"));
+        assert!(is_worktrees_entry(".worktrees/login/.env"));
+        assert!(!is_worktrees_entry(".worktrees-viejos/"));
+    }
+
+    fn init_repo(path: &str) {
+        std::fs::create_dir_all(path).unwrap();
+        for args in [vec!["init", "-q", "-b", "main"], vec!["config", "user.email", "t@t"], vec!["config", "user.name", "t"]] {
+            git_raw(path, &args).unwrap();
+        }
+        std::fs::write(join(path, "a.txt"), "uno\n").unwrap();
+        git_raw(path, &["add", "."]).unwrap();
+        git_raw(path, &["commit", "-qm", "init"]).unwrap();
+    }
+
+    #[test]
+    fn worktrees_inside_the_repo_are_excluded_from_its_status() {
+        let dir = tempdir::Dir::new();
+        let main = join(&dir.path, "repo");
+        init_repo(&main);
+        git_raw(&main, &["worktree", "add", "-q", "-b", "feature/a", &join(&worktrees_dir(&main), "a")]).unwrap();
+        assert_eq!(changes_of(&main).unwrap().untracked, 1);
+        ensure_excluded(&main);
+        assert_eq!(changes_of(&main).unwrap().untracked, 0);
+        let exclude = std::fs::read_to_string(join(&main, ".git/info/exclude")).unwrap();
+        assert_eq!(exclude.lines().filter(|l| l.trim() == "/.worktrees/").count(), 1);
+        assert!(ignored_entries(&main).iter().all(|r| is_worktrees_entry(r)));
+    }
+
+    #[test]
+    fn folder_with_several_repos_lists_each_repo_and_its_worktrees() {
+        let dir = tempdir::Dir::new();
+        let back = join(&dir.path, "v2backend");
+        let gql = join(&dir.path, "v2GQL");
+        init_repo(&back);
+        init_repo(&gql);
+        let release = join(&worktrees_dir(&gql), "gql-release");
+        git_raw(&gql, &["worktree", "add", "-q", "-b", "codex/gql-release", &release]).unwrap();
+        std::fs::write(join(&gql, "b.txt"), "x\n").unwrap();
+
+        let list = multi_list(&Registry::default(), &dir.path);
+        assert!(list.git && list.multi);
+        assert_eq!(list.repos.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), vec!["v2backend", "v2GQL"]);
+        assert_eq!(list.repos[1].branch.as_deref(), Some("main"));
+        assert_eq!(list.repos[1].changes.as_ref().map(|c| c.untracked), Some(1));
+        assert_eq!(list.repos[1].worktrees_dir, worktrees_dir(&gql));
+        assert_eq!(list.features.len(), 2);
+        assert_eq!((list.features[0].kind.as_str(), key(&list.features[0].root)), ("main", key(&dir.path)));
+        let f = &list.features[1];
+        assert_eq!((f.kind.as_str(), f.group.as_deref(), f.branch.as_deref()), ("external", Some("v2GQL"), Some("codex/gql-release")));
+        assert_eq!(key(&f.repo), key(&gql));
+        assert_eq!(key(&f.root), key(&release));
+        assert_eq!(f.base.as_deref(), Some("main"));
+
+        let roots: Vec<String> = sub_repos(&dir.path).iter().flat_map(|(name, ctx)| roots_of(&Registry::default(), ctx, Some(name))).map(|(_, l)| l).collect();
+        assert_eq!(roots, vec!["v2GQL · gql-release".to_string()]);
+        assert_eq!(key(&require_ctx(&f.repo).unwrap().main), key(&gql));
+    }
+
+    #[test]
+    fn folder_without_repos_has_no_features() {
+        let dir = tempdir::Dir::new();
+        std::fs::create_dir_all(join(&dir.path, "docs")).unwrap();
+        let list = multi_list(&Registry::default(), &dir.path);
+        assert!(!list.git && !list.multi && list.features.is_empty());
     }
 
     fn repo_with_feature() -> (tempdir::Dir, String, String) {

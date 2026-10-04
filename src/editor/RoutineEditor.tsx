@@ -23,7 +23,7 @@ import { Markdown } from "../agent/Markdown"
 import { Icon, Spinner } from "../components/ui"
 import { Segmented, Select, Stepper, TimePicker, Toggle } from "../components/fields"
 import { modelKey, rememberSessionDirectory } from "../lib/opencode"
-import { findFeature, useFeatures } from "../state/features"
+import { featureTitle, findFeature, useFeatures } from "../state/features"
 import { basename, samePath } from "../lib/paths"
 import { clockTime, formatDateTime } from "../lib/time"
 
@@ -190,7 +190,7 @@ function RoutineForm({ routine }: { routine: Routine | null }) {
   const projectLabel = (p: string) => {
     const feature = findFeature(p, featureList)
     if (!feature) return basename(p)
-    return feature.kind === "main" ? `${basename(p)} · principal` : `${basename(featureList?.project ?? p)} · ${feature.label}`
+    return feature.kind === "main" ? `${basename(p)} · principal` : `${basename(featureList?.project ?? p)} · ${featureTitle(feature)}`
   }
 
   const modelInfo = draft.model ? models.find((m) => m.providerID === draft.model!.providerID && m.modelID === draft.model!.modelID) : undefined
