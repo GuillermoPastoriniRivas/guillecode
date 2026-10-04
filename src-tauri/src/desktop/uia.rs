@@ -1,15 +1,16 @@
 use super::win::{self, Rect};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::panic::AssertUnwindSafe;
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::Mutex;
 use std::time::Duration;
-use uiautomation::core::UICacheRequest;
+use uiautomation::core::{UICacheRequest, UICondition};
 use uiautomation::patterns::{
     UIExpandCollapsePattern, UIInvokePattern, UILegacyIAccessiblePattern, UIScrollItemPattern, UIScrollPattern, UISelectionItemPattern, UITextPattern, UITogglePattern, UIValuePattern,
     UIWindowPattern,
 };
-use uiautomation::types::{ExpandCollapseState, Handle, ScrollAmount, TreeScope, UIProperty};
+use uiautomation::types::{ExpandCollapseState, Handle, PropertyConditionFlags, ScrollAmount, TreeScope, UIProperty};
+use uiautomation::variants::Variant;
 use uiautomation::{UIAutomation, UIElement};
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 
@@ -59,6 +60,7 @@ unsafe impl<T> Send for Remote<T> {}
 fn spawn_worker() -> Sender<Job> {
     let (tx, rx) = mpsc::channel::<Job>();
     let _ = std::thread::Builder::new().name("guillecode-uia".into()).spawn(move || {
+        win::physical_thread();
         let mut uia = match Uia::new() {
             Ok(u) => u,
             Err(e) => {
@@ -127,6 +129,90 @@ pub struct Entry {
     pub window: isize,
     pub role: String,
     pub name: String,
+    rid: Option<String>,
+    tick: u64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Line {
+    pub reference: String,
+    pub indent: usize,
+    pub text: String,
+    pub label: String,
+    pub parent: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Tree {
+    pub lines: Vec<Line>,
+    pub truncated: bool,
+    pub hidden: usize,
+    pub max: usize,
+}
+
+impl Tree {
+    pub fn render(&self, limit: usize) -> String {
+        let mut text = self.lines.iter().take(limit).map(|l| format!("{}- {}", "  ".repeat(l.indent), l.text)).collect::<Vec<_>>().join("\n");
+        if self.truncated || self.lines.len() > limit {
+            text.push_str(&format!("\n… recortado en {} elementos. Para ver una parte, pedí snapshot con root=<ref de un contenedor> o usá find.", limit.min(self.max)));
+        }
+        if self.hidden > 0 {
+            text.push_str(&format!("\n({} elementos fuera de vista omitidos: usá scroll para verlos.)", self.hidden));
+        }
+        text
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Delta {
+    Same,
+    Many,
+    Few(String),
+}
+
+pub enum Change {
+    Full(Tree),
+    Delta(Delta, Tree),
+}
+
+pub fn compare(old: &Tree, new: &Tree) -> Delta {
+    let before: HashMap<&str, &Line> = old.lines.iter().map(|l| (l.reference.as_str(), l)).collect();
+    let current: HashMap<&str, &Line> = new.lines.iter().map(|l| (l.reference.as_str(), l)).collect();
+    let mut levels: HashMap<&str, usize> = HashMap::new();
+    let mut out: Vec<String> = Vec::new();
+    for line in &new.lines {
+        let r = line.reference.as_str();
+        match before.get(r) {
+            None => {
+                let parent = line.parent.as_deref();
+                let level = parent.and_then(|p| levels.get(p)).map(|l| l + 1).unwrap_or(0);
+                levels.insert(r, level);
+                let mut text = format!("{}+ {}", "  ".repeat(level), line.text);
+                if level == 0 {
+                    if let Some(p) = parent.and_then(|p| current.get(p)) {
+                        text.push_str(&format!("  ← dentro de {}", p.label));
+                    }
+                }
+                out.push(text);
+            }
+            Some(previous) if previous.text != line.text => out.push(format!("~ {}", line.text)),
+            Some(_) => {}
+        }
+    }
+    if !old.truncated && !new.truncated {
+        for line in &old.lines {
+            if !current.contains_key(line.reference.as_str()) {
+                out.push(format!("- {}", line.label));
+            }
+        }
+    }
+    if out.is_empty() {
+        return Delta::Same;
+    }
+    if out.len() > (new.lines.len() / 2).max(40) {
+        return Delta::Many;
+    }
+    Delta::Few(out.join("\n"))
 }
 
 pub struct Activated {
@@ -152,7 +238,7 @@ struct Node {
 }
 
 struct Walk {
-    lines: Vec<String>,
+    lines: Vec<Line>,
     count: usize,
     max: usize,
     depth: usize,
@@ -166,8 +252,11 @@ pub struct Uia {
     children: UICacheRequest,
     single: UICacheRequest,
     refs: HashMap<String, Entry>,
-    order: VecDeque<String>,
+    by_runtime: HashMap<String, String>,
+    used: HashSet<String>,
+    last: HashMap<isize, Tree>,
     next: u64,
+    tick: u64,
 }
 
 fn clean(text: &str, max: usize) -> String {
@@ -243,8 +332,17 @@ fn read_node(el: &UIElement) -> Node {
     }
 }
 
-fn describe(node: &Node, reference: &str, indent: usize) -> String {
-    let mut line = format!("{}- {}", "  ".repeat(indent), node.role);
+fn label_of(node: &Node, reference: &str) -> String {
+    let mut line = node.role.clone();
+    if !node.name.is_empty() {
+        line.push_str(&format!(" \"{}\"", quoted(&clean(&node.name, 60))));
+    }
+    line.push_str(&format!(" [{}]", reference));
+    line
+}
+
+fn describe(node: &Node, reference: &str) -> String {
+    let mut line = node.role.clone();
     if !node.name.is_empty() {
         line.push_str(&format!(" \"{}\"", quoted(&node.name)));
     }
@@ -303,20 +401,57 @@ impl Uia {
         children.set_tree_scope(TreeScope::Children).map_err(err)?;
         children.set_tree_filter(control).map_err(err)?;
         single.set_tree_scope(TreeScope::Element).map_err(err)?;
-        Ok(Uia { auto, children, single, refs: HashMap::new(), order: VecDeque::new(), next: 0 })
+        Ok(Uia { auto, children, single, refs: HashMap::new(), by_runtime: HashMap::new(), used: HashSet::new(), last: HashMap::new(), next: 0, tick: 0 })
     }
 
     fn remember(&mut self, el: UIElement, window: isize, node: &Node) -> String {
-        self.next += 1;
-        let id = format!("e{}", self.next);
-        self.refs.insert(id.clone(), Entry { el, window, role: node.role.clone(), name: node.name.clone() });
-        self.order.push_back(id.clone());
-        while self.order.len() > MAX_REFS {
-            if let Some(old) = self.order.pop_front() {
-                self.refs.remove(&old);
+        self.tick += 1;
+        let rid = el.get_runtime_id().ok().filter(|v| !v.is_empty()).map(|v| v.iter().map(|n| n.to_string()).collect::<Vec<_>>().join("."));
+        if let Some(existing) = rid.as_ref().and_then(|k| self.by_runtime.get(k)).cloned() {
+            if !self.used.contains(&existing) {
+                if let Some(entry) = self.refs.get_mut(&existing) {
+                    if entry.window == window {
+                        entry.el = el;
+                        entry.role = node.role.clone();
+                        entry.name = node.name.clone();
+                        entry.tick = self.tick;
+                        self.used.insert(existing.clone());
+                        return existing;
+                    }
+                }
             }
         }
+        self.next += 1;
+        let id = format!("e{}", self.next);
+        if let Some(key) = &rid {
+            self.by_runtime.insert(key.clone(), id.clone());
+        }
+        self.refs.insert(id.clone(), Entry { el, window, role: node.role.clone(), name: node.name.clone(), rid, tick: self.tick });
+        self.used.insert(id.clone());
+        self.evict();
         id
+    }
+
+    fn evict(&mut self) {
+        if self.refs.len() <= MAX_REFS {
+            return;
+        }
+        let mut ages: Vec<(u64, String)> = self.refs.iter().map(|(k, e)| (e.tick, k.clone())).collect();
+        ages.sort();
+        let drop = self.refs.len() - MAX_REFS * 9 / 10;
+        for (_, key) in ages.into_iter().take(drop) {
+            if let Some(entry) = self.refs.remove(&key) {
+                if let Some(rid) = entry.rid {
+                    if self.by_runtime.get(&rid) == Some(&key) {
+                        self.by_runtime.remove(&rid);
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn role(&self, reference: &str) -> Option<String> {
+        self.entry(reference).ok().map(|e| e.role.clone())
     }
 
     pub fn entry(&self, reference: &str) -> Result<&Entry, String> {
@@ -332,7 +467,8 @@ impl Uia {
         (!text.is_empty()).then(|| clean(text, DOCUMENT_PREVIEW as usize))
     }
 
-    fn walk(&mut self, el: &UIElement, window: isize, depth: usize, indent: usize, parent_name: &str, ctx: &mut Walk) {
+    fn walk(&mut self, el: &UIElement, window: isize, depth: usize, indent: usize, parent: (&str, Option<&str>), ctx: &mut Walk) {
+        let (parent_name, parent_ref) = parent;
         if ctx.count >= ctx.max {
             ctx.truncated = true;
             return;
@@ -350,11 +486,19 @@ impl Uia {
         let structural = STRUCTURAL.contains(&node.role.as_str());
         let emit = !redundant_text && (node.actionable || !anonymous) && !(structural && anonymous && !node.actionable);
         let mut next_indent = indent;
+        let mut own: Option<String> = None;
         if emit {
             let reference = self.remember(el.clone(), window, &node);
-            ctx.lines.push(describe(&node, &reference, indent));
+            ctx.lines.push(Line {
+                reference: reference.clone(),
+                indent,
+                text: describe(&node, &reference),
+                label: label_of(&node, &reference),
+                parent: parent_ref.map(|p| p.to_string()),
+            });
             ctx.count += 1;
             next_indent = indent + 1;
+            own = Some(reference);
         }
         if depth >= ctx.depth || LEAVES.contains(&node.role.as_str()) || node.password {
             return;
@@ -362,21 +506,23 @@ impl Uia {
         let Ok(expanded) = el.build_updated_cache(&self.children) else { return };
         let Ok(kids) = expanded.get_cached_children() else { return };
         let name = if emit { node.name.clone() } else { parent_name.to_string() };
+        let reference = own.or_else(|| parent_ref.map(|p| p.to_string()));
         for kid in kids {
-            self.walk(&kid, window, depth + 1, next_indent, &name, ctx);
+            self.walk(&kid, window, depth + 1, next_indent, (&name, reference.as_deref()), ctx);
             if ctx.truncated {
                 return;
             }
         }
     }
 
-    pub fn snapshot(&mut self, window: isize, root: Option<&str>, max: usize, depth: usize) -> Result<(String, usize), String> {
+    pub fn snapshot(&mut self, window: isize, root: Option<&str>, max: usize, depth: usize) -> Result<Tree, String> {
         let info = win::window(window);
         let start = match root {
             Some(r) => self.entry(r)?.el.clone(),
             None => self.auto.element_from_handle(Handle::from(window)).map_err(err)?,
         };
         let start = start.build_updated_cache(&self.single).map_err(err)?;
+        self.used.clear();
         let mut ctx = Walk {
             lines: Vec::new(),
             count: 0,
@@ -387,16 +533,16 @@ impl Uia {
             hidden: 0,
         };
         if root.is_some() {
-            self.walk(&start, window, 0, 0, "", &mut ctx);
+            self.walk(&start, window, 0, 0, ("", None), &mut ctx);
         } else {
             let node = read_node(&start);
             let reference = self.remember(start.clone(), window, &node);
-            ctx.lines.push(describe(&node, &reference, 0));
+            ctx.lines.push(Line { reference: reference.clone(), indent: 0, text: describe(&node, &reference), label: label_of(&node, &reference), parent: None });
             ctx.count += 1;
             if let Ok(expanded) = start.build_updated_cache(&self.children) {
                 if let Ok(kids) = expanded.get_cached_children() {
                     for kid in kids {
-                        self.walk(&kid, window, 1, 1, &node.name, &mut ctx);
+                        self.walk(&kid, window, 1, 1, (&node.name, Some(&reference)), &mut ctx);
                         if ctx.truncated {
                             break;
                         }
@@ -404,14 +550,74 @@ impl Uia {
                 }
             }
         }
-        let mut text = ctx.lines.join("\n");
-        if ctx.truncated {
-            text.push_str(&format!("\n… recortado en {} elementos. Para ver una parte, pedí snapshot con root=<ref de un contenedor>.", ctx.max));
+        let tree = Tree { lines: ctx.lines, truncated: ctx.truncated, hidden: ctx.hidden, max };
+        if root.is_none() {
+            self.last.insert(window, tree.clone());
         }
-        if ctx.hidden > 0 {
-            text.push_str(&format!("\n({} elementos fuera de vista omitidos: usá scroll para verlos.)", ctx.hidden));
+        Ok(tree)
+    }
+
+    pub fn changes(&mut self, window: isize, max: usize, depth: usize) -> Result<Change, String> {
+        let previous = self.last.get(&window).cloned();
+        let tree = self.snapshot(window, None, max, depth)?;
+        Ok(match previous {
+            Some(old) => Change::Delta(compare(&old, &tree), tree),
+            None => Change::Full(tree),
+        })
+    }
+
+    fn search_condition(&self, text: &str) -> Result<UICondition, String> {
+        let control = self.auto.get_control_view_condition().map_err(err)?;
+        if text.trim().is_empty() {
+            return Ok(control);
         }
-        Ok((text, ctx.count))
+        let flags = Some(PropertyConditionFlags::All);
+        let by = |p: UIProperty| self.auto.create_property_condition(p, Variant::from(text.trim()), flags).map_err(err);
+        let any = self.auto.create_or_condition(by(UIProperty::Name)?, by(UIProperty::AutomationId)?).map_err(err)?;
+        let any = self.auto.create_or_condition(any, by(UIProperty::ValueValue)?).map_err(err)?;
+        self.auto.create_and_condition(control, any).map_err(err)
+    }
+
+    pub fn find(&mut self, window: isize, text: &str, role: &str, max: usize) -> Result<(Vec<String>, usize), String> {
+        let root = self.auto.element_from_handle(Handle::from(window)).map_err(err)?;
+        let condition = self.search_condition(text)?;
+        let found = root.find_all_build_cache(TreeScope::Descendants, &condition, &self.single).map_err(err)?;
+        let wanted = role.trim().to_lowercase();
+        let walker = self.auto.get_control_view_walker().ok();
+        self.used.clear();
+        let mut lines = Vec::new();
+        let mut total = 0;
+        for el in found {
+            let node = read_node(&el);
+            if !wanted.is_empty() && node.role != wanted {
+                continue;
+            }
+            total += 1;
+            if lines.len() >= max {
+                continue;
+            }
+            let reference = self.remember(el.clone(), window, &node);
+            let mut line = describe(&node, &reference);
+            if let Some(parent) = walker.as_ref().and_then(|w| w.get_parent(&el).ok()) {
+                let name = parent.get_name().unwrap_or_default();
+                if !name.trim().is_empty() {
+                    let kind = parent.get_control_type().map(|c| format!("{:?}", c).to_lowercase()).unwrap_or_default();
+                    line.push_str(&format!("  ← en {} \"{}\"", kind, quoted(&clean(&name, 60))));
+                }
+            }
+            lines.push(line);
+        }
+        Ok((lines, total))
+    }
+
+    pub fn present(&mut self, window: isize, text: &str) -> Result<Option<String>, String> {
+        let root = self.auto.element_from_handle(Handle::from(window)).map_err(err)?;
+        let condition = self.search_condition(text)?;
+        let Ok(el) = root.find_first_build_cache(TreeScope::Descendants, &condition, &self.single) else { return Ok(None) };
+        let node = read_node(&el);
+        self.used.clear();
+        let reference = self.remember(el, window, &node);
+        Ok(Some(describe(&node, &reference)))
     }
 
     pub fn activate(&mut self, reference: &str) -> Result<Option<Activated>, String> {
@@ -650,5 +856,56 @@ impl Uia {
 
     pub fn label(&self, reference: &str) -> String {
         self.entry(reference).map(|e| if e.name.is_empty() { e.role.clone() } else { format!("{} «{}»", e.role, e.name) }).unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn line(reference: &str, text: &str, parent: Option<&str>) -> Line {
+        Line { reference: reference.into(), indent: 0, text: format!("{} [{}]", text, reference), label: format!("{} [{}]", text, reference), parent: parent.map(|p| p.into()) }
+    }
+
+    fn tree(lines: Vec<Line>) -> Tree {
+        Tree { lines, truncated: false, hidden: 0, max: 350 }
+    }
+
+    #[test]
+    fn same_tree_reports_no_changes() {
+        let a = tree(vec![line("e1", "window \"Bloc\"", None), line("e2", "button \"Guardar\"", Some("e1"))]);
+        assert_eq!(compare(&a, &a.clone()), Delta::Same);
+    }
+
+    #[test]
+    fn diff_lists_added_changed_and_removed_with_context() {
+        let old = tree(vec![line("e1", "window \"Bloc\"", None), line("e2", "edit \"Texto\" value=\"\"", Some("e1")), line("e3", "button \"Cancelar\"", Some("e1"))]);
+        let new = tree(vec![
+            line("e1", "window \"Bloc\"", None),
+            line("e2", "edit \"Texto\" value=\"hola\"", Some("e1")),
+            line("e9", "dialog \"Guardar como\"", Some("e1")),
+            line("e10", "button \"Aceptar\"", Some("e9")),
+        ]);
+        let Delta::Few(text) = compare(&old, &new) else { panic!("se esperaba un diff chico") };
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines[0], "~ edit \"Texto\" value=\"hola\" [e2]");
+        assert_eq!(lines[1], "+ dialog \"Guardar como\" [e9]  ← dentro de window \"Bloc\" [e1]");
+        assert_eq!(lines[2], "  + button \"Aceptar\" [e10]");
+        assert_eq!(lines[3], "- button \"Cancelar\" [e3]");
+    }
+
+    #[test]
+    fn truncated_trees_do_not_report_removals() {
+        let old = tree(vec![line("e1", "window", None), line("e2", "button \"A\"", Some("e1"))]);
+        let mut new = tree(vec![line("e1", "window", None)]);
+        new.truncated = true;
+        assert_eq!(compare(&old, &new), Delta::Same);
+    }
+
+    #[test]
+    fn large_changes_fall_back_to_the_full_tree() {
+        let old = tree((0..60).map(|i| line(&format!("e{}", i), "button", None)).collect());
+        let new = tree((100..160).map(|i| line(&format!("e{}", i), "button", None)).collect());
+        assert_eq!(compare(&old, &new), Delta::Many);
     }
 }

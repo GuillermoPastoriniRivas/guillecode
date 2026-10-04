@@ -1,5 +1,5 @@
 mod capture;
-mod clipboard;
+pub(crate) mod clipboard;
 mod gpu;
 mod h264;
 mod input;
@@ -88,7 +88,7 @@ fn area(target: Option<&str>) -> Result<Area, String> {
         }
         let id = target.strip_prefix('w').and_then(|s| s.parse().ok()).ok_or("Ventana inválida")?;
         let w = win::window(id).ok_or("Esa ventana ya no existe")?;
-        if let Some(reason) = super::blocked_reason(&w) { return Err(reason); }
+        if let Some(reason) = super::listed_reason(&w) { return Err(reason); }
         if w.minimized { return Err("La ventana está minimizada".into()); }
         w.rect
     } else {
@@ -281,7 +281,7 @@ fn checked_window(raw: isize) -> Result<(), String> {
         unsafe { GetWindowThreadProcessId(win::hwnd(root), Some(&mut pid)); }
         win::WinInfo { hwnd: root, title: String::new(), class: String::new(), pid, process: win::process_name(pid), rect: win::bounds(root), minimized: false, foreground: false }
     });
-    if let Some(reason) = super::blocked_reason(&w) { return Err(reason); }
+    if let Some(reason) = super::listed_reason(&w) { return Err(reason); }
     Ok(())
 }
 
