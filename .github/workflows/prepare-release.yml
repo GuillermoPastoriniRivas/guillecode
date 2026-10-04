@@ -45,8 +45,9 @@ jobs:
           node scripts/release.mjs check
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $env:GC_RELEASE_NOTES | Set-Content -Encoding utf8 release-notes.txt
-          gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/v$env:GC_RELEASE_VERSION" --silent 2>$null
-          if ($LASTEXITCODE -eq 0) { throw 'Esta versión ya existe; nunca se reemplazan sus artefactos.' }
+          $tags = gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" --jq '.[].tag_name'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($tags -contains "v$env:GC_RELEASE_VERSION") { throw 'Esta versión ya existe; nunca se reemplazan sus artefactos.' }
           exit 0
       - name: Descargar motor fijado y verificar SHA256
         run: npm run release:engine

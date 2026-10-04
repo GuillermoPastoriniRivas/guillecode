@@ -111,9 +111,10 @@ function prepare(version, notesFile) {
 function publish(version, confirmed = false) {
   validVersion(version)
   if (!confirmed) throw new Error("Confirmá la prueba de actualización con --tested antes de publicar")
-  const release = JSON.parse(run("gh", ["api", `repos/${config.repository}/releases/tags/v${version}`]))
-  if (!release.draft || release.prerelease) throw new Error("Solo se puede promover un borrador estable")
   const releases = JSON.parse(run("gh", ["api", `repos/${config.repository}/releases?per_page=100`]))
+  const release = releases.find((r) => r.tag_name === `v${version}`)
+  if (!release) throw new Error(`No hay un borrador v${version} para publicar`)
+  if (!release.draft || release.prerelease) throw new Error("Solo se puede promover un borrador estable")
   for (const r of releases.filter((r) => !r.draft && !r.prerelease)) {
     if (compareVersions(version, r.tag_name.replace(/^v/, "")) <= 0) throw new Error("La versión debe ser mayor que todas las estables publicadas")
   }
