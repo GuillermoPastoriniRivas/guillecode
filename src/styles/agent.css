@@ -901,6 +901,8 @@
 }
 
 .composer {
+  container-type: inline-size;
+  min-width: 0;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -944,11 +946,30 @@
 }
 .composer-footer {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.composer-options {
+  display: flex;
+  flex: 1 1 260px;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
+  min-width: 0;
+}
+.composer-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
 }
 .composer-pill {
   display: inline-flex;
+  flex: 0 0 auto;
+  min-width: 0;
   align-items: center;
   gap: 4px;
   height: 22px;
@@ -957,16 +978,19 @@
   font-size: 11.5px;
   color: var(--fg-dim);
   background: var(--bg-hover);
-  max-width: 180px;
+  max-width: min(180px, 100%);
+  white-space: nowrap;
 }
 .composer-pill:hover {
   color: var(--fg);
   background: var(--bg-active);
 }
 .composer-pill .codicon {
+  flex-shrink: 0;
   font-size: 12px;
 }
-.composer-pill-text {
+.composer-pill > span:not(.codicon) {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -976,6 +1000,7 @@
 }
 .composer-icon {
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: center;
   width: 24px;
@@ -990,9 +1015,6 @@
 .composer-icon .codicon {
   font-size: 14px;
 }
-.composer-spacer {
-  flex: 1;
-}
 .composer-hint {
   font-size: 10.5px;
   color: var(--fg-faint);
@@ -1006,7 +1028,13 @@
 .composer.compact .composer-hint {
   display: none;
 }
+@container (max-width: 760px) {
+  .composer-hint {
+    display: none;
+  }
+}
 .composer-send {
+  flex-shrink: 0;
   width: 30px;
   height: 30px;
   display: grid;
