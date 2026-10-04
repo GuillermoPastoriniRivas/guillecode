@@ -21,6 +21,7 @@ export type GitStatus = {
   staged_removed: number
   unstaged_added: number
   unstaged_removed: number
+  merging: boolean
 }
 
 export type Commit = {

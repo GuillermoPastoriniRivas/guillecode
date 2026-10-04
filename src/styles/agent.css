@@ -1548,6 +1548,7 @@
 }
 .context-ring.warn {
   color: var(--warn);
+  font-weight: 600;
 }
 .context-ring.warn .context-ring-fill {
   stroke: var(--warn);

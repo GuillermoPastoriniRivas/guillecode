@@ -1,4 +1,5 @@
 import { create } from "zustand"
+import { isMainWindow } from "../lib/windows"
 import { getVersion } from "@tauri-apps/api/app"
 import { ask } from "../components/Dialog"
 import { dirtyPaths, saveAll } from "../editor/documents"
@@ -94,7 +95,7 @@ export function startUpdates(): void {
   void getVersion().then((version) => useUpdates.setState({ version })).catch(() => {})
   onEvent<{ downloaded: number; total: number | null }>("update://progress", (p) => useUpdates.setState(p))
   // Development builds never announce updates automatically.
-  if (import.meta.env.DEV) return
+  if (import.meta.env.DEV || !isMainWindow()) return
   setTimeout(() => void checkUpdates(), 10_000)
   setInterval(() => void checkUpdates(), 4 * 60 * 60_000)
   window.addEventListener("focus", () => {

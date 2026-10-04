@@ -1,6 +1,9 @@
 import { useMemo, useState } from "react"
 import type { Session } from "@opencode-ai/sdk"
-import { deleteSession, newSession, renameSession, selectSession, useAgent } from "../state/agent"
+import { deleteSession, newSession, renameSession, selectSession, sessionInRoot, useAgent } from "../state/agent"
+import { useProject } from "../state/project"
+import { featureTitle, findFeature, useFeatures } from "../state/features"
+import { normalizePath } from "../lib/paths"
 import { openEditor } from "../state/editors"
 import { useLayout } from "../state/layout"
 import { promptInput } from "../state/quickinput"
@@ -144,7 +147,40 @@ export function AgentsView() {
             </div>
           )
         })}
+        <OtherFeatureSessions />
       </div>
+    </div>
+  )
+}
+
+function OtherFeatureSessions() {
+  const root = useProject((s) => s.root)
+  const all = useAgent((s) => s.allSessions)
+  const statuses = useAgent((s) => s.statuses)
+  const permissions = useAgent((s) => s.permissions)
+  const questions = useAgent((s) => s.questions)
+  const list = useFeatures((s) => s.list)
+  const active = all.filter((s) => {
+    if (s.parentID || sessionInRoot(s, root)) return false
+    const busy = statuses[s.id] && statuses[s.id].type !== "idle"
+    const waiting = permissions.some((p) => p.sessionID === s.id) || questions.some((q) => q.sessionID === s.id)
+    return busy || waiting
+  })
+  if (active.length === 0) return null
+  return (
+    <div className="session-others">
+      <div className="session-others-title">Trabajando en otras features</div>
+      {active.map((s) => {
+        const feature = findFeature(s.directory ? normalizePath(s.directory) : null, list)
+        return (
+          <div key={s.id} className="session-other">
+            <span className="session-other-feature">
+              <Icon name={feature?.kind === "main" ? "home" : "worktree"} /> {feature ? featureTitle(feature) : "otra carpeta"}
+            </span>
+            <SessionRow session={s} depth={0} childCount={0} />
+          </div>
+        )
+      })}
     </div>
   )
 }

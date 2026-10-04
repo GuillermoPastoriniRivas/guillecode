@@ -9,6 +9,7 @@ use tauri_plugin_shell::ShellExt;
 
 pub mod accounts;
 pub mod desktop;
+pub mod features;
 pub mod fs;
 pub mod gh;
 pub mod git;
@@ -26,8 +27,10 @@ pub mod usage;
 pub mod updates;
 pub mod voice;
 pub mod watch;
+pub mod windows;
 
 const MAX_RECENT_PROJECTS: usize = 12;
+const MAIN_PROJECT_FILE: &str = "main_project.txt";
 
 #[derive(Serialize, Clone, Default)]
 pub struct ServerConfig {
@@ -60,24 +63,32 @@ fn current_project(app: &tauri::AppHandle) -> String {
     let state = app.state::<ServerState>();
     let mut project = state.project.lock().unwrap();
     if project.is_none() {
-        *project = Some(load_saved_worktree(app));
+        let saved = load_saved_worktree(app);
+        if !saved.is_empty() {
+            remember_main_project(app, &saved);
+        }
+        *project = Some(saved);
     }
     project.clone().unwrap_or_default()
 }
 
 #[tauri::command]
-async fn server_config(app: tauri::AppHandle) -> Result<ServerConfig, String> {
-    ensure_server(&app)
+async fn server_config(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Result<ServerConfig, String> {
+    let mut config = ensure_server(&app)?;
+    config.worktree = windows::project_of(&app, window.label());
+    Ok(config)
 }
 
 #[tauri::command]
-async fn set_server_worktree(app: tauri::AppHandle, path: String) -> Result<ServerConfig, String> {
+async fn set_server_worktree(app: tauri::AppHandle, window: tauri::WebviewWindow, path: String) -> Result<ServerConfig, String> {
     if !Path::new(&path).is_dir() {
         return Err(format!("la carpeta no existe: {}", path));
     }
     remember_project(&app, &path);
-    *app.state::<ServerState>().project.lock().unwrap() = Some(path);
-    ensure_server(&app)
+    windows::set_project(&app, window.label(), &path);
+    let mut config = ensure_server(&app)?;
+    config.worktree = path;
+    Ok(config)
 }
 
 pub(crate) fn recent_project_list(app: &tauri::AppHandle) -> Vec<String> {
@@ -181,10 +192,17 @@ fn remember_project(app: &tauri::AppHandle, path: &str) {
 }
 
 fn load_saved_worktree(app: &tauri::AppHandle) -> String {
-    load_recent(app)
-        .into_iter()
-        .find(|p| Path::new(p).is_dir())
-        .unwrap_or_default()
+    let main = app_data_file(app, MAIN_PROJECT_FILE)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|p| !p.is_empty() && Path::new(p).is_dir());
+    main.unwrap_or_else(|| load_recent(app).into_iter().find(|p| Path::new(p).is_dir()).unwrap_or_default())
+}
+
+pub(crate) fn remember_main_project(app: &tauri::AppHandle, path: &str) {
+    if let Some(file) = app_data_file(app, MAIN_PROJECT_FILE) {
+        let _ = std::fs::write(file, path);
+    }
 }
 
 fn fallback_cwd(app: &tauri::AppHandle) -> String {
@@ -215,6 +233,7 @@ fn resolve_sidecar_path() -> Result<PathBuf, String> {
 }
 
 fn shutdown(app: &tauri::AppHandle) {
+    windows::mark_exiting(app);
     if let Some(child) = app.state::<ServerState>().child.lock().unwrap().take() {
         #[cfg(windows)]
         {
@@ -227,7 +246,7 @@ fn shutdown(app: &tauri::AppHandle) {
         let _ = child.kill();
     }
     term::kill_all(app);
-    app.state::<watch::WatchState>().current.lock().unwrap().take();
+    watch::stop_all(app);
     desktop::shutdown();
     machine::keep_awake(false);
 }
@@ -296,6 +315,19 @@ pub fn run() {
             git::git_staged_context,
             git::git_range_context,
             git::git_changes_context,
+            git::git_merge_abort,
+            git::git_merge_continue,
+            features::features_list,
+            features::features_create,
+            features::features_update,
+            features::features_set_settings,
+            features::features_copy_candidates,
+            features::features_remove_check,
+            features::features_remove,
+            features::features_merge_preview,
+            features::features_merge,
+            features::features_update_from_base,
+            features::features_diff,
             fs::fs_read_dir,
             fs::fs_read_file,
             fs::fs_read_base64,
@@ -336,8 +368,18 @@ pub fn run() {
             desktop::desktop_update,
             desktop::desktop_stop_all,
             desktop::desktop_browser_restart,
-            live::live_busy_sessions
+            live::live_busy_sessions,
+            windows::window_new,
+            windows::windows_list,
+            windows::window_focus,
+            windows::window_quit_begin,
+            windows::window_quit_cancel
         ])
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                windows::forget(window.app_handle(), window.label());
+            }
+        })
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -349,6 +391,7 @@ pub fn run() {
             proc::install(app.handle().clone());
             app.manage(updates::UpdatesState::default());
             app.manage(ServerState { child: Mutex::new(None), config: Mutex::new(None), project: Mutex::new(None) });
+            app.manage(windows::WindowsState::default());
             desktop::start(app.handle());
             routines::start(app.handle());
             push::start(app.handle());
@@ -356,14 +399,19 @@ pub fn run() {
             live::start(app.handle());
             hub::setup(app.handle())?;
             app.manage(term::TermState { terms: Mutex::new(HashMap::new()) });
-            app.manage(watch::WatchState { current: Mutex::new(None) });
+            app.manage(watch::WatchState::default());
+            if !std::env::args().any(|a| a == hub::HIDDEN_ARG) {
+                windows::restore(app.handle());
+            }
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
-            if let tauri::RunEvent::Exit = event {
-                shutdown(app);
+            match event {
+                tauri::RunEvent::ExitRequested { .. } => windows::mark_exiting(app),
+                tauri::RunEvent::Exit => shutdown(app),
+                _ => {}
             }
         });
 }

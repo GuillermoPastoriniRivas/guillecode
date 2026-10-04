@@ -8,6 +8,7 @@ import {
   isHelper,
   oc,
   projectName,
+  setProjectLabels,
   samePath,
   scheduleLabel,
   type HubInfo,
@@ -27,7 +28,7 @@ import { Icon, Md, OfflineBanner, useLive, usePoll } from "./ui"
 
 export type Route = { kind: "home" } | { kind: "session"; project: string; id: string; title: string }
 
-const MAX_PROJECTS = 8
+const MAX_PROJECTS = 12
 const FIRST_PAGE = 6
 const PAGE = 10
 
@@ -194,6 +195,7 @@ export function Home({ open, viewed }: { open: (r: Route) => void; viewed: strin
     const cached = cache.current
     if (shown.current || !cached) return
     shown.current = true
+    setProjectLabels(cached.info.labels)
     setInfo(cached.info)
     setData(cached.data)
     setStaleAt(cached.at)
@@ -202,6 +204,7 @@ export function Home({ open, viewed }: { open: (r: Route) => void; viewed: strin
   const load = useCallback(async () => {
     try {
       const next = await hub<HubInfo>("GET", "/info")
+      setProjectLabels(next.labels)
       const projects = await Promise.all(next.projects.slice(0, MAX_PROJECTS).map(loadProject))
       const all = projects.flatMap((d) => d.sessions)
       ensureSeenBaseline(all)

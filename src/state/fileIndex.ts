@@ -21,6 +21,7 @@ export function getFileIndex(root: string): Promise<string[]> {
   useFileIndex.setState({ loading: true, root })
   inflight = listFiles(root)
     .then((files) => {
+      if (useFileIndex.getState().root !== root) return files
       stale = false
       useFileIndex.setState({ files, loading: false, loadedAt: Date.now(), root })
       return files
@@ -42,4 +43,11 @@ const rebuild = debounce((root: string) => {
 export function markIndexStale(root: string | null): void {
   stale = true
   if (root && useFileIndex.getState().loadedAt > 0) rebuild(root)
+}
+
+export function resetFileIndex(): void {
+  stale = true
+  inflight = null
+  rebuild.cancel()
+  useFileIndex.setState({ root: null, files: [], loading: false, loadedAt: 0 })
 }

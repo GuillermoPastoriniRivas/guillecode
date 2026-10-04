@@ -1,9 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "permisos de la ventana principal",
+  "description": "permisos de las ventanas de GuilleCode",
   "windows": [
-    "main"
+    "main",
+    "w-*"
   ],
   "permissions": [
     "core:default",

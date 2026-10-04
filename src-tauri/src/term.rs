@@ -15,6 +15,21 @@ pub struct Term {
     writer: Mutex<Box<dyn Write + Send>>,
     master: Box<dyn MasterPty + Send>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
+    pid: Option<u32>,
+    owner: String,
+}
+
+impl Term {
+    fn kill_tree(&self) {
+        #[cfg(windows)]
+        if let Some(pid) = self.pid {
+            let mut command = std::process::Command::new("taskkill");
+            command.args(["/PID", &pid.to_string(), "/T", "/F"]);
+            crate::proc::hide_console(&mut command);
+            let _ = command.output();
+        }
+        let _ = self.killer.lock().unwrap().kill();
+    }
 }
 
 #[derive(Deserialize, Clone)]
@@ -140,6 +155,7 @@ pub fn terminal_shells() -> Vec<ShellInfo> {
 #[tauri::command]
 pub async fn terminal_spawn(
     app: AppHandle,
+    window: tauri::WebviewWindow,
     state: tauri::State<'_, TermState>,
     args: TermSpawnArgs,
     on_event: Channel<TermEvent>,
@@ -166,6 +182,7 @@ pub async fn terminal_spawn(
         .map_err(|e| format!("no se pudo iniciar el shell: {}", e))?;
     drop(pair.slave);
     let killer = child.clone_killer();
+    let pid = child.process_id();
     let writer = pair.master.take_writer().map_err(|e| format!("take_writer: {}", e))?;
     let mut reader = pair
         .master
@@ -206,6 +223,8 @@ pub async fn terminal_spawn(
             writer: Mutex::new(writer),
             master: pair.master,
             killer: Mutex::new(killer),
+            pid,
+            owner: window.label().to_string(),
         },
     );
     Ok(())
@@ -233,21 +252,36 @@ pub async fn terminal_resize(state: tauri::State<'_, TermState>, id: String, col
 pub async fn terminal_kill(state: tauri::State<'_, TermState>, id: String) -> Result<(), String> {
     let removed = state.terms.lock().unwrap().remove(&id);
     if let Some(term) = removed {
-        let _ = term.killer.lock().unwrap().kill();
+        let _ = tauri::async_runtime::spawn_blocking(move || term.kill_tree()).await;
     }
     Ok(())
 }
 
 #[tauri::command]
-pub fn terminal_kill_all(app: AppHandle) {
-    kill_all(&app);
+pub async fn terminal_kill_all(app: AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
+    let label = window.label().to_string();
+    let _ = tauri::async_runtime::spawn_blocking(move || kill_owned(&app, &label)).await;
+    Ok(())
+}
+
+pub fn kill_owned(app: &AppHandle, owner: &str) {
+    if let Some(state) = app.try_state::<TermState>() {
+        let drained: Vec<Term> = {
+            let mut terms = state.terms.lock().unwrap();
+            let ids: Vec<String> = terms.iter().filter(|(_, t)| t.owner == owner).map(|(id, _)| id.clone()).collect();
+            ids.into_iter().filter_map(|id| terms.remove(&id)).collect()
+        };
+        for term in drained {
+            term.kill_tree();
+        }
+    }
 }
 
 pub fn kill_all(app: &AppHandle) {
     if let Some(state) = app.try_state::<TermState>() {
         let drained: Vec<Term> = state.terms.lock().unwrap().drain().map(|(_, t)| t).collect();
         for term in drained {
-            let _ = term.killer.lock().unwrap().kill();
+            term.kill_tree();
         }
     }
 }

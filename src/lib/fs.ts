@@ -7,9 +7,10 @@ export type FsEntry = {
   isDir: boolean
   heavy: boolean
   size: number
+  repo: string | null
 }
 
-type RawEntry = { name: string; path: string; is_dir: boolean; heavy: boolean; size: number }
+type RawEntry = { name: string; path: string; is_dir: boolean; heavy: boolean; size: number; repo?: string | null }
 
 export type FileContent = {
   content: string
@@ -24,7 +25,7 @@ export const BINARY_FILE_ERROR = "binary"
 
 export async function readDir(dir: string): Promise<FsEntry[]> {
   const raw = await call<RawEntry[]>("fs_read_dir", { dir })
-  return raw.map((e) => ({ name: e.name, path: normalizePath(e.path), isDir: e.is_dir, heavy: e.heavy, size: e.size }))
+  return raw.map((e) => ({ name: e.name, path: normalizePath(e.path), isDir: e.is_dir, heavy: e.heavy, size: e.size, repo: e.repo ?? null }))
 }
 
 export function readFile(file: string): Promise<FileContent> {

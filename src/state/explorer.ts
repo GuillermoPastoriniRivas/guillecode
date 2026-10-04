@@ -46,7 +46,7 @@ export async function initExplorer(root: string): Promise<void> {
   const saved = loadJson<string[]>(projectKey(root, "explorer.expanded"), [])
   const expanded: Record<string, true> = {}
   for (const p of saved) expanded[k(p)] = true
-  useExplorer.setState({ root, expanded, children: {} })
+  useExplorer.setState({ root, expanded, children: {}, selected: null, renaming: null, creating: null })
   await loadDir(root)
   await Promise.all(saved.map((p) => loadDir(p)))
 }

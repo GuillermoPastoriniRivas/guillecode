@@ -215,6 +215,12 @@ fn waiting_on_user(client: &Opencode, session_id: &str) -> bool {
 }
 
 fn execute(app: &AppHandle, routine: &Routine, run_id: &str) -> Result<Outcome, String> {
+    if !std::path::Path::new(&routine.project).is_dir() {
+        return Err(format!(
+            "La carpeta de la rutina ya no existe ({}). Si era una feature eliminada, editá la rutina y elegí otra carpeta",
+            routine.project
+        ));
+    }
     let server = ensure_server(app)?;
     let client = Opencode::new(&server, &routine.project);
     let models = crate::accounts::available_models(&client.get("/config/providers")?);

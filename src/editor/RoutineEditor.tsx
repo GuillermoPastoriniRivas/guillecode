@@ -22,7 +22,8 @@ import { pickOne } from "../state/quickinput"
 import { Markdown } from "../agent/Markdown"
 import { Icon, Spinner } from "../components/ui"
 import { Segmented, Select, Stepper, TimePicker, Toggle } from "../components/fields"
-import { modelKey } from "../lib/opencode"
+import { modelKey, rememberSessionDirectory } from "../lib/opencode"
+import { findFeature, useFeatures } from "../state/features"
 import { basename, samePath } from "../lib/paths"
 import { clockTime, formatDateTime } from "../lib/time"
 
@@ -74,6 +75,12 @@ function RunCard({ run, project }: { run: RoutineRun; project: string }) {
   const openSession = () => {
     if (!run.sessionId) return
     if (!sameProject) {
+      if (findFeature(project)) {
+        rememberSessionDirectory(run.sessionId, project)
+        useLayout.getState().toggleAgent(true)
+        selectSession(run.sessionId)
+        return
+      }
       void openProject(project)
       return
     }
@@ -174,10 +181,17 @@ function RoutineForm({ routine }: { routine: Routine | null }) {
   const [saving, setSaving] = useState(false)
   const set = (patch: Partial<RoutineDraft>) => setDraft((d) => ({ ...d, ...patch }))
 
+  const featureList = useFeatures((s) => s.list)
   const projects = useMemo(() => {
-    const list = [...(root ? [root] : []), ...recent, ...(draft.project ? [draft.project] : [])]
+    const features = (featureList?.features ?? []).filter((f) => !f.missing && !f.archived).map((f) => f.root)
+    const list = [...(root ? [root] : []), ...features, ...recent, ...(draft.project ? [draft.project] : [])]
     return list.filter((p, i) => list.findIndex((q) => samePath(p, q)) === i)
-  }, [root, recent, draft.project])
+  }, [root, recent, draft.project, featureList])
+  const projectLabel = (p: string) => {
+    const feature = findFeature(p, featureList)
+    if (!feature) return basename(p)
+    return feature.kind === "main" ? `${basename(p)} · principal` : `${basename(featureList?.project ?? p)} · ${feature.label}`
+  }
 
   const modelInfo = draft.model ? models.find((m) => m.providerID === draft.model!.providerID && m.modelID === draft.model!.modelID) : undefined
   const last = routine?.runs[0]
@@ -264,7 +278,7 @@ function RoutineForm({ routine }: { routine: Routine | null }) {
             className="routine-select-wide"
             icon="root-folder"
             value={draft.project}
-            options={projects.map((p) => ({ value: p, label: basename(p), description: p }))}
+            options={projects.map((p) => ({ value: p, label: projectLabel(p), description: p }))}
             onChange={(project) => set({ project })}
           />
         </div>

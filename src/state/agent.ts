@@ -1,9 +1,19 @@
 import { create } from "zustand"
 import type { Message, Part, Session, SessionStatus } from "@opencode-ai/sdk"
-import { api, client, DEFAULT_MODEL, modelKey, type ModelRef } from "../lib/opencode"
+import {
+  api,
+  client,
+  clientForDirectory,
+  currentDirectory,
+  DEFAULT_MODEL,
+  modelKey,
+  rememberSessionDirectory,
+  sessionDirectory,
+  type ModelRef,
+} from "../lib/opencode"
 import { loadJson, projectKey, saveJson } from "../lib/persist"
 import { call, isTauri } from "../lib/tauri"
-import { normalizePath, relativePath, toFileUrl } from "../lib/paths"
+import { normalizePath, relativePath, samePath, toFileUrl } from "../lib/paths"
 import { notify } from "./toasts"
 import { chooseAvailableModel, hasAccount, modelAvailable, modelVisible } from "../lib/providers"
 
@@ -53,6 +63,7 @@ type AgentState = {
   modelsLoaded: boolean
   modelsError: string | null
   sessions: Session[]
+  allSessions: Session[]
   sessionsLoaded: boolean
   statuses: Record<string, SessionStatus>
   doneFlash: Record<string, number>
@@ -88,6 +99,7 @@ export const useAgent = create<AgentState>(() => ({
   modelsLoaded: false,
   modelsError: null,
   sessions: [],
+  allSessions: [],
   sessionsLoaded: false,
   statuses: {},
   doneFlash: {},
@@ -113,6 +125,12 @@ export const useAgent = create<AgentState>(() => ({
 }))
 
 let boundProject: string | null = null
+let knownDirectories: string[] = []
+
+export function sessionInRoot(s: Pick<Session, "directory">, root: string | null): boolean {
+  if (!root) return true
+  return !!s.directory && samePath(s.directory, root)
+}
 
 export function bindAgentProject(root: string | null): void {
   boundProject = root
@@ -121,7 +139,37 @@ export function bindAgentProject(root: string | null): void {
   if (active && !open.includes(active)) open = [...open, active]
   if (!active && !open.includes(DRAFT_TAB)) open = [...open, DRAFT_TAB]
   if (open.length === 0) open = [DRAFT_TAB]
-  useAgent.setState({ activeSessionId: active, openSessionIds: open })
+  useAgent.setState((s) => ({
+    activeSessionId: active,
+    openSessionIds: open,
+    context: [],
+    sessions: sortSessions(s.allSessions.filter((x) => sessionInRoot(x, root))),
+  }))
+}
+
+export function setKnownDirectories(dirs: string[]): void {
+  const unique: string[] = []
+  for (const d of dirs) if (d && !unique.some((u) => samePath(u, d))) unique.push(d)
+  knownDirectories = unique
+}
+
+function directoriesToQuery(): string[] {
+  const dirs = [...knownDirectories]
+  if (boundProject && !dirs.some((d) => samePath(d, boundProject!))) dirs.unshift(boundProject)
+  return dirs
+}
+
+type ForeignSessionHandler = (directory: string, sessionID: string) => void
+let foreignSessionHandler: ForeignSessionHandler | null = null
+
+export function onForeignSession(handler: ForeignSessionHandler | null): void {
+  foreignSessionHandler = handler
+}
+
+export function foreignDirectory(sessionID: string): string | null {
+  const dir = sessionDirectory(sessionID)
+  if (!dir || !boundProject || samePath(dir, boundProject)) return null
+  return dir
 }
 
 function shareRemotePrefs(s: AgentState): void {
@@ -229,10 +277,23 @@ function appendDelta(messages: ChatMessage[], messageID: string, partID: string,
   return next
 }
 
+function mergeDirectorySessions(all: Session[], directory: string, list: Session[]): Session[] {
+  const ids = new Set(list.map((x) => x.id))
+  return [...all.filter((x) => !ids.has(x.id) && !sessionInRoot(x, directory)), ...list]
+}
+
+async function listSessionsIn(directory: string): Promise<Session[]> {
+  const res = await client.session.list({ query: { directory } })
+  const list = ((res.data ?? []) as Session[]).filter((x) => sessionInRoot(x, directory))
+  for (const x of list) rememberSessionDirectory(x.id, x.directory)
+  return list
+}
+
 export async function loadSessions(): Promise<boolean> {
+  const root = boundProject ?? (await currentDirectory())
   try {
-    const res = await client.session.list()
-    const list = (res.data ?? []) as Session[]
+    const list = await listSessionsIn(root)
+    if (boundProject && !samePath(root, boundProject)) return true
     const valid = new Set(list.map((x) => x.id))
     useAgent.setState((s) => {
       const active = s.activeSessionId && valid.has(s.activeSessionId) ? s.activeSessionId : null
@@ -240,12 +301,28 @@ export async function loadSessions(): Promise<boolean> {
       if (active && !open.includes(active)) open = [...open, active]
       if (!active && !open.includes(DRAFT_TAB)) open = [...open, DRAFT_TAB]
       if (open.length === 0) open = [DRAFT_TAB]
-      return { sessions: sortSessions(list), sessionsLoaded: true, activeSessionId: active, openSessionIds: open }
+      return {
+        sessions: sortSessions(list),
+        allSessions: sortSessions(mergeDirectorySessions(s.allSessions, root, list)),
+        sessionsLoaded: true,
+        activeSessionId: active,
+        openSessionIds: open,
+      }
     })
     return true
   } catch {
     return false
   }
+}
+
+export async function loadOtherSessions(): Promise<void> {
+  const others = directoriesToQuery().filter((d) => !boundProject || !samePath(d, boundProject))
+  const results = await Promise.allSettled(others.map(async (d) => ({ d, list: await listSessionsIn(d) })))
+  useAgent.setState((s) => {
+    let all = s.allSessions
+    for (const r of results) if (r.status === "fulfilled") all = mergeDirectorySessions(all, r.value.d, r.value.list)
+    return { allSessions: sortSessions(all) }
+  })
 }
 
 export async function ensureSessionView(sessionID: string, force = false): Promise<void> {
@@ -302,6 +379,36 @@ async function loadTodos(sessionID: string) {
 
 let metaGeneration = 0
 
+async function acrossDirectories<T extends { id: string }>(path: string): Promise<T[]> {
+  const results = await Promise.allSettled(directoriesToQuery().map((directory) => api<T[]>("GET", path, undefined, undefined, { directory })))
+  const out: T[] = []
+  let failed = 0
+  for (const r of results) {
+    if (r.status !== "fulfilled") {
+      failed += 1
+      continue
+    }
+    for (const item of r.value ?? []) if (!out.some((x) => x.id === item.id)) out.push(item)
+  }
+  if (results.length > 0 && failed === results.length) throw new Error(`no se pudo leer ${path}`)
+  return out
+}
+
+async function statusesEverywhere(): Promise<Record<string, SessionStatus>> {
+  const results = await Promise.allSettled(
+    directoriesToQuery().map((directory) => api<Record<string, SessionStatus>>("GET", "/session/status", undefined, undefined, { directory })),
+  )
+  const merged: Record<string, SessionStatus> = {}
+  let ok = false
+  for (const r of results) {
+    if (r.status !== "fulfilled") continue
+    ok = true
+    Object.assign(merged, r.value ?? {})
+  }
+  if (!ok) throw new Error("no se pudo leer el estado de las sesiones")
+  return merged
+}
+
 export async function loadAgentMeta(): Promise<void> {
   const generation = ++metaGeneration
   const [providers, agents, commands, permissions, questions, statuses] = await Promise.allSettled([
@@ -330,9 +437,9 @@ export async function loadAgentMeta(): Promise<void> {
     ),
     api<AgentInfo[]>("GET", "/agent"),
     api<CommandInfo[]>("GET", "/command"),
-    api<PermissionRequest[]>("GET", "/permission"),
-    api<QuestionRequest[]>("GET", "/question"),
-    api<Record<string, SessionStatus>>("GET", "/session/status"),
+    acrossDirectories<PermissionRequest>("/permission"),
+    acrossDirectories<QuestionRequest>("/question"),
+    statusesEverywhere(),
   ])
   if (generation !== metaGeneration) return
   const patch: Partial<AgentState> = {}
@@ -438,7 +545,19 @@ export function subscribeBranchChanges(fn: () => void): () => void {
 
 type ServerEvent = { type: string; properties: Record<string, unknown> }
 
-function handleEvent(e: ServerEvent) {
+function inActiveDirectory(directory: string | undefined): boolean {
+  if (!directory || !boundProject || directory === "global") return true
+  return samePath(directory, boundProject)
+}
+
+function belongsToThisWindow(directory: string | undefined): boolean {
+  if (!directory || directory === "global" || !boundProject) return true
+  if (samePath(directory, boundProject)) return true
+  return knownDirectories.some((d) => samePath(d, directory))
+}
+
+function handleEvent(e: ServerEvent, directory?: string) {
+  if (!belongsToThisWindow(directory)) return
   const p = e.properties ?? {}
   switch (e.type) {
     case "message.updated": {
@@ -478,7 +597,14 @@ function handleEvent(e: ServerEvent) {
     case "session.created":
     case "session.updated": {
       const info = p.info as Session
-      enqueue((s) => ({ sessions: sortSessions([info, ...s.sessions.filter((x) => x.id !== info.id)]) }))
+      rememberSessionDirectory(info.id, info.directory ?? directory)
+      enqueue((s) => {
+        const others = s.sessions.filter((x) => x.id !== info.id)
+        return {
+          allSessions: sortSessions([info, ...s.allSessions.filter((x) => x.id !== info.id)]),
+          sessions: sessionInRoot(info, boundProject) ? sortSessions([info, ...others]) : others,
+        }
+      })
       break
     }
     case "session.deleted": {
@@ -490,6 +616,7 @@ function handleEvent(e: ServerEvent) {
         if (open.length === 0) open = [DRAFT_TAB]
         return {
           sessions: s.sessions.filter((x) => x.id !== info.id),
+          allSessions: s.allSessions.filter((x) => x.id !== info.id),
           openSessionIds: open,
           activeSessionId: resetActive ? null : s.activeSessionId,
         }
@@ -536,11 +663,13 @@ function handleEvent(e: ServerEvent) {
       break
     }
     case "file.edited": {
+      if (!inActiveDirectory(directory)) break
       const file = normalizePath(p.file as string)
       for (const l of fileEditListeners) l(file)
       break
     }
     case "vcs.branch.updated":
+      if (!inActiveDirectory(directory)) break
       for (const l of branchListeners) l()
       break
   }
@@ -551,10 +680,13 @@ async function refreshAfterConnect(): Promise<void> {
     if (await loadSessions()) break
     await new Promise((r) => setTimeout(r, 800 * (attempt + 1)))
   }
+  void loadOtherSessions()
   await loadAgentMeta().catch(() => undefined)
   const active = useAgent.getState().activeSessionId
   if (active) void ensureSessionView(active, true)
 }
+
+type GlobalEvent = { directory?: string; payload?: ServerEvent } & Partial<ServerEvent>
 
 export function startEventStream(): () => void {
   let active = true
@@ -562,17 +694,20 @@ export function startEventStream(): () => void {
   const loop = async () => {
     while (active) {
       try {
-        const events = await client.event.subscribe({
+        const sdk = await clientForDirectory(await currentDirectory())
+        const events = await sdk.global.event({
           onSseError: () => useAgent.setState({ connected: false }),
         })
         for await (const event of events.stream) {
           if (!active) break
-          const e = event as unknown as ServerEvent
+          const raw = event as unknown as GlobalEvent
+          const e = (raw.payload ?? raw) as ServerEvent
+          if (!e?.type) continue
           if (e.type === "server.connected" || !useAgent.getState().connected) {
             useAgent.setState({ connected: true })
             void refreshAfterConnect()
           }
-          handleEvent(e)
+          handleEvent(e, raw.directory)
         }
       } catch {
         if (!active) break
@@ -584,7 +719,7 @@ export function startEventStream(): () => void {
   void loop()
   const poll = setInterval(() => {
     if (document.hidden || !useAgent.getState().connected) return
-    api<Record<string, SessionStatus>>("GET", "/session/status").then(syncStatuses).catch(() => undefined)
+    statusesEverywhere().then(syncStatuses).catch(() => undefined)
   }, 5000)
   return () => {
     active = false
@@ -599,6 +734,11 @@ export function sessionStatus(id: string | null): "idle" | "busy" | "retry" {
 }
 
 export function selectSession(id: string | null) {
+  const foreign = id ? foreignDirectory(id) : null
+  if (id && foreign && foreignSessionHandler) {
+    foreignSessionHandler(foreign, id)
+    return
+  }
   useAgent.setState((s) => {
     if (!id) {
       return {
@@ -738,11 +878,13 @@ export async function sendPrompt(
     const created = res.data as Session | undefined
     if (!created) throw new Error("no se pudo crear la sesión")
     id = created.id
+    rememberSessionDirectory(created.id, created.directory)
     useAgent.setState((st) => {
       const open = st.openSessionIds.map((x) => (x === DRAFT_TAB ? created.id : x))
       if (!open.includes(created.id)) open.push(created.id)
       return {
         sessions: sortSessions([created, ...st.sessions.filter((x) => x.id !== created.id)]),
+        allSessions: sortSessions([created, ...st.allSessions.filter((x) => x.id !== created.id)]),
         activeSessionId: created.id,
         openSessionIds: open,
         views: { ...st.views, [created.id]: { messages: [], loading: false, hasMore: false, error: null } },
@@ -806,7 +948,7 @@ export async function retryMessage(sessionID: string, message: ChatMessage): Pro
 export async function replyPermission(req: PermissionRequest, reply: "once" | "always" | "reject", message?: string) {
   useAgent.setState((s) => ({ permissions: s.permissions.filter((p) => p.id !== req.id) }))
   try {
-    await api("POST", `/permission/${req.id}/reply`, message ? { reply, message } : { reply })
+    await api("POST", `/permission/${req.id}/reply`, message ? { reply, message } : { reply }, undefined, directoryOf(req.sessionID))
   } catch (e) {
     notify.error("No se pudo responder el permiso", e instanceof Error ? e.message : String(e))
     useAgent.setState((s) => ({ permissions: [...s.permissions, req] }))
@@ -816,7 +958,7 @@ export async function replyPermission(req: PermissionRequest, reply: "once" | "a
 export async function replyQuestion(req: QuestionRequest, answers: string[][]) {
   useAgent.setState((s) => ({ questions: s.questions.filter((q) => q.id !== req.id) }))
   try {
-    await api("POST", `/question/${req.id}/reply`, { answers })
+    await api("POST", `/question/${req.id}/reply`, { answers }, undefined, directoryOf(req.sessionID))
   } catch (e) {
     notify.error("No se pudo responder", e instanceof Error ? e.message : String(e))
     useAgent.setState((s) => ({ questions: [...s.questions, req] }))
@@ -825,7 +967,12 @@ export async function replyQuestion(req: QuestionRequest, answers: string[][]) {
 
 export async function rejectQuestion(req: QuestionRequest) {
   useAgent.setState((s) => ({ questions: s.questions.filter((q) => q.id !== req.id) }))
-  await api("POST", `/question/${req.id}/reject`).catch(() => undefined)
+  await api("POST", `/question/${req.id}/reject`, undefined, undefined, directoryOf(req.sessionID)).catch(() => undefined)
+}
+
+function directoryOf(sessionID: string): { directory?: string } {
+  const directory = sessionDirectory(sessionID)
+  return directory ? { directory } : {}
 }
 
 export async function renameSession(id: string, title: string) {

@@ -9,7 +9,7 @@ import { useToasts } from "./toasts"
 
 type PendingSource = { permissions: PermissionRequest[]; questions: QuestionRequest[] }
 
-const TITLE = "GuilleCode"
+let baseTitle = "GuilleCode"
 const TITLE_FLASH_MS = 1100
 const SOUND_MS = 5000
 const SOUND_REPEATS = 3
@@ -43,6 +43,11 @@ export const useAttention = create<AttentionState>((set) => ({
 useAttention.subscribe((s, prev) => {
   if (s.sound !== prev.sound || s.desktop !== prev.desktop) saveJson(PREFS_KEY, { sound: s.sound, desktop: s.desktop })
 })
+
+export function setBaseTitle(title: string): void {
+  baseTitle = title
+  if (!useAttention.getState().alerting) setTitle(title)
+}
 
 export function pendingCount(s: PendingSource): number {
   return s.permissions.length + s.questions.length
@@ -229,7 +234,7 @@ function engage(): void {
   titleTimer = setInterval(() => {
     on = !on
     const n = pendingCount(useAgent.getState())
-    setTitle(on ? `● ${n} esperando · ${TITLE}` : TITLE)
+    setTitle(on ? `● ${n} esperando · ${baseTitle}` : baseTitle)
   }, TITLE_FLASH_MS)
   let chimes = 1
   soundTimer = setInterval(() => {
@@ -254,7 +259,7 @@ function disengage(): void {
   if (soundTimer) clearInterval(soundTimer)
   if (taskbarTimer) clearInterval(taskbarTimer)
   titleTimer = soundTimer = taskbarTimer = null
-  setTitle(TITLE)
+  setTitle(baseTitle)
   if (toastId !== null) {
     useToasts.getState().dismiss(toastId)
     toastId = null
@@ -271,10 +276,10 @@ export function testAlert(): void {
   const timer = setInterval(() => {
     on = !on
     ticks += 1
-    setTitle(on ? `● ${Math.max(useAttention.getState().count, 1)} esperando · ${TITLE}` : TITLE)
+    setTitle(on ? `● ${Math.max(useAttention.getState().count, 1)} esperando · ${baseTitle}` : baseTitle)
     if (ticks >= 6) {
       clearInterval(timer)
-      if (!useAttention.getState().alerting) setTitle(TITLE)
+      if (!useAttention.getState().alerting) setTitle(baseTitle)
     }
   }, TITLE_FLASH_MS)
 }
