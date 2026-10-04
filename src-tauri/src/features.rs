@@ -123,8 +123,31 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+#[cfg(windows)]
+fn long_path(path: &str) -> String {
+    use windows::core::HSTRING;
+    use windows::Win32::Storage::FileSystem::GetLongPathNameW;
+    let wide = HSTRING::from(path.replace('/', "\\"));
+    let needed = unsafe { GetLongPathNameW(&wide, None) } as usize;
+    if needed == 0 {
+        return path.to_string();
+    }
+    let mut buf = vec![0u16; needed];
+    let len = unsafe { GetLongPathNameW(&wide, Some(&mut buf)) } as usize;
+    if len == 0 || len >= needed {
+        return path.to_string();
+    }
+    String::from_utf16_lossy(&buf[..len])
+}
+
+#[cfg(not(windows))]
+fn long_path(path: &str) -> String {
+    path.to_string()
+}
+
 fn clean(path: &str) -> String {
-    let mut p = path.trim().replace('\\', "/");
+    let path = path.trim();
+    let mut p = if path.contains('~') { long_path(path) } else { path.to_string() }.replace('\\', "/");
     while p.len() > 3 && p.ends_with('/') {
         p.pop();
     }
@@ -1344,6 +1367,34 @@ mod tests {
         let conflicted = preview_sync(&main, &wt, "main").unwrap();
         assert_eq!(conflicted.conflicts, vec!["a.txt".to_string()]);
         assert_eq!(conflicted.target_checkout.as_deref().map(key), Some(key(&main)));
+    }
+
+    #[cfg(windows)]
+    fn short_path(path: &str) -> String {
+        use windows::core::HSTRING;
+        use windows::Win32::Storage::FileSystem::GetShortPathNameW;
+        let wide = HSTRING::from(path.replace('/', "\\"));
+        let mut buf = vec![0u16; 1024];
+        let len = unsafe { GetShortPathNameW(&wide, Some(&mut buf)) } as usize;
+        String::from_utf16_lossy(&buf[..len])
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn short_windows_paths_find_their_worktrees() {
+        let (_dir, main, wt) = repo_with_feature();
+        let (short_main, short_wt) = (short_path(&main), short_path(&wt));
+        if !short_main.contains('~') {
+            return;
+        }
+        assert_eq!(key(&short_wt), key(&wt));
+        assert_eq!(relative(&short_main, &main), "");
+        std::fs::write(join(&wt, "b.txt"), "nuevo\n").unwrap();
+        git_raw(&wt, &["add", "."]).unwrap();
+        git_raw(&wt, &["commit", "-qm", "b"]).unwrap();
+        let preview = preview_sync(&short_main, &short_wt, "main").unwrap();
+        assert_eq!(preview.total_commits, 1);
+        assert_eq!(require_ctx(&short_wt).unwrap().rel, "");
     }
 
     #[test]
