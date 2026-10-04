@@ -92,7 +92,7 @@ export function VoiceSettings() {
         <Icon name="mic" /> Audios desde el celular
       </strong>
       <span>
-        El celular graba, esta PC lo transcribe con un servicio compatible con la API de OpenAI (<code>/audio/transcriptions</code>) y el texto queda en el mensaje para que lo revises antes de mandarlo. La
+        El celular graba, esta PC lo transcribe con un servicio compatible con la API de OpenAI (<code>/audio/transcriptions</code>) y el mensaje se envía automáticamente al terminar la grabación. La
         clave nunca sale de esta PC.
       </span>
       <div className="voice-grid">
