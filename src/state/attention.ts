@@ -3,9 +3,10 @@ import { getCurrentWindow, UserAttentionType } from "@tauri-apps/api/window"
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification"
 import { isTauri } from "../lib/tauri"
 import { loadJson, saveJson } from "../lib/persist"
-import { selectSession, subscribeSessionFinished, useAgent, type PermissionRequest, type QuestionRequest } from "./agent"
+import { selectSession, sessionWaiting, subscribeSessionFinished, useAgent, type PermissionRequest, type QuestionRequest } from "./agent"
 import { useLayout } from "./layout"
 import { useToasts } from "./toasts"
+import { watchingSession } from "./unseen"
 
 type PendingSource = { permissions: PermissionRequest[]; questions: QuestionRequest[] }
 
@@ -145,9 +146,7 @@ function onAgentFinished(sessionID: string): void {
   const agent = useAgent.getState()
   const session = agent.sessions.find((s) => s.id === sessionID)
   if (!session || session.parentID) return
-  if (agent.permissions.some((p) => p.sessionID === sessionID) || agent.questions.some((q) => q.sessionID === sessionID)) return
-  const watching = useLayout.getState().agentVisible && agent.activeSessionId === sessionID && document.hasFocus()
-  if (watching) return
+  if (sessionWaiting(agent, sessionID) || watchingSession(sessionID)) return
   playChime()
 }
 

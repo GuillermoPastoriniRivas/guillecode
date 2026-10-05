@@ -262,6 +262,16 @@ section {
   color: var(--green);
 }
 
+.card.state-attention {
+  border-color: rgba(227, 179, 65, 0.45);
+  background: rgba(227, 179, 65, 0.08);
+}
+
+.card.state-attention small {
+  color: var(--warn);
+  font-weight: 600;
+}
+
 @keyframes pulse {
   0%,
   100% {

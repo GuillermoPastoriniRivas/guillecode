@@ -17,6 +17,7 @@ import { featureTitle, findFeature } from "../state/features"
 import { useToasts } from "../state/toasts"
 import { openEditor } from "../state/editors"
 import { useLayout } from "../state/layout"
+import { watchingSession } from "../state/unseen"
 
 type FsChanged = { root: string; paths: string[]; git: boolean }
 
@@ -61,8 +62,7 @@ export function startSync(root: string): () => void {
       })
       return
     }
-    const visible = useLayout.getState().agentVisible && agent.activeSessionId === sessionID && document.hasFocus()
-    if (visible) return
+    if (watchingSession(sessionID)) return
     useToasts.getState().push({
       kind: "success",
       title: `El agente terminó: ${session.title || "sesión"}`,

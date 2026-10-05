@@ -3,11 +3,25 @@ import { call, errorMessage, isTauri } from "../lib/tauri"
 import { loadJson, saveJson } from "../lib/persist"
 import { subscribeSessionFinished, useAgent } from "./agent"
 import { CHATGPT } from "./accounts"
+import { notify, useToasts } from "./toasts"
+import { confirmAction } from "../components/Dialog"
+import { percent } from "../lib/format"
 
 export const GO_PROVIDER = "opencode-go"
 
 export type ChatgptWindow = { usedPercent: number; windowSeconds: number; resetsAt: number | null }
-export type ChatgptUsage = { plan: string; windows: ChatgptWindow[]; limitReached: boolean; measuredAt: number }
+export type ChatgptUsage = { plan: string; windows: ChatgptWindow[]; limitReached: boolean; resetsAvailable?: number | null; measuredAt: number }
+
+export type ChatgptResetCredit = {
+  id: string
+  status: string
+  title: string | null
+  description: string | null
+  grantedAt: number | null
+  expiresAt: number | null
+}
+export type ChatgptResets = { credits: ChatgptResetCredit[]; available: number; measuredAt: number }
+type ResetOutcome = { outcome: string; windowsReset: number }
 
 export type GoUsage = { windows: ChatgptWindow[]; measuredAt: number }
 
@@ -40,6 +54,9 @@ type UsageState = {
   limits: UsageLimits
   chatgpt: ChatgptUsage | null
   chatgptError: string | null
+  resets: ChatgptResets | null
+  resetsError: string | null
+  redeeming: boolean
 }
 
 export const useUsage = create<UsageState>(() => ({
@@ -50,6 +67,9 @@ export const useUsage = create<UsageState>(() => ({
   limits: { ...DEFAULT_LIMITS, ...loadJson<Partial<UsageLimits>>("usage.goLimits", {}) },
   chatgpt: null,
   chatgptError: null,
+  resets: null,
+  resetsError: null,
+  redeeming: false,
 }))
 
 function shareLimits(limits: UsageLimits): void {
@@ -102,6 +122,81 @@ export function refreshChatgptUsage(): Promise<void> {
       chatgptInflight = null
     })
   return chatgptInflight
+}
+
+let resetsInflight: Promise<void> | null = null
+
+export function refreshChatgptResets(): Promise<void> {
+  if (!isTauri) return Promise.resolve()
+  resetsInflight ??= call<ChatgptResets>("chatgpt_resets")
+    .then((resets) => useUsage.setState({ resets, resetsError: null }))
+    .catch((e) => useUsage.setState({ resetsError: errorMessage(e) }))
+    .finally(() => {
+      resetsInflight = null
+    })
+  return resetsInflight
+}
+
+export function redeemableResets(resets: ChatgptResets): ChatgptResetCredit[] {
+  return resets.credits
+    .filter((c) => c.status === "available")
+    .sort((a, b) => (a.expiresAt ?? Infinity) - (b.expiresAt ?? Infinity))
+    .slice(0, Math.max(0, resets.available))
+}
+
+export function resetExpiryLabel(credit: ChatgptResetCredit): string {
+  return credit.expiresAt ? `Vence ${renewalLabel(credit.expiresAt)}` : "No vence"
+}
+
+export function resetsCountLabel(n: number): string {
+  return `${n} reset${n === 1 ? "" : "s"}`
+}
+
+function windowsSummary(usage: ChatgptUsage): string {
+  return usage.windows.map((w) => `${quotaWindowLabel(w.windowSeconds).toLowerCase()} al ${percent(w.usedPercent / 100)}`).join(", ")
+}
+
+export async function redeemChatgptReset(creditId: string | null): Promise<void> {
+  const { chatgpt, resets, redeeming } = useUsage.getState()
+  if (redeeming) return
+  const credit = creditId ? resets?.credits.find((c) => c.id === creditId) : undefined
+  const exhausted = !!chatgpt && (chatgpt.limitReached || chatgptWorst(chatgpt) >= 100)
+  const lines = ["Reinicia tu ventana de 5 h y la semanal de ChatGPT, la misma cuota que usa Codex. No se puede deshacer."]
+  if (chatgpt?.windows.length) lines.push(`Ahora: ${windowsSummary(chatgpt)}.`)
+  if (credit) lines.push(`Este reset ${resetExpiryLabel(credit).toLowerCase()}.`)
+  if (chatgpt && !exhausted) lines.push("Todavía no llegaste al límite: quizás te convenga guardarlo para cuando lo necesites.")
+  if (!(await confirmAction("¿Usar un reset de ChatGPT?", lines.join(" "), "Usar reset", !exhausted))) return
+  await consumeReset(creditId, crypto.randomUUID())
+}
+
+async function consumeReset(creditId: string | null, requestId: string): Promise<void> {
+  useUsage.setState({ redeeming: true })
+  let result: ResetOutcome
+  try {
+    result = await call<ResetOutcome>("chatgpt_use_reset", { requestId, creditId })
+  } catch (e) {
+    useUsage.setState({ redeeming: false })
+    void refreshChatgptResets()
+    useToasts.getState().push({
+      kind: "error",
+      title: "No se pudo usar el reset",
+      detail: `${errorMessage(e)}. Reintentar repite el mismo pedido, así que no gasta otro reset.`,
+      actions: [{ label: "Reintentar", primary: true, run: () => void consumeReset(creditId, requestId) }],
+    })
+    return
+  }
+  await Promise.all([refreshChatgptUsage(), refreshChatgptResets()])
+  useUsage.setState({ redeeming: false })
+  const left = useUsage.getState().resets?.available
+  if (result.outcome === "reset" || result.outcome === "already_redeemed") {
+    notify.success("Se reinició tu cuota de ChatGPT", left === undefined ? undefined : `Te ${left === 1 ? "queda" : "quedan"} ${resetsCountLabel(left)}.`)
+  } else if (result.outcome === "nothing_to_reset") {
+    notify.info("Tu cuota no necesita un reset ahora")
+  } else if (result.outcome === "no_credit") {
+    notify.warning(creditId ? "Ese reset ya no está disponible" : "No tenés resets disponibles", creditId ? "Actualicé la lista de resets." : undefined)
+  } else {
+    notify.warning("ChatGPT respondió algo inesperado al usar el reset", result.outcome)
+  }
 }
 
 function onChatgpt(): boolean {

@@ -17,6 +17,7 @@ import { decorationFor, repoForPath, statusEntryFor, useGit } from "../state/git
 import { useLayout } from "../state/layout"
 import { useProject } from "../state/project"
 import { useRoutines } from "../state/routines"
+import { useSessionMark } from "../state/unseen"
 import { revealInExplorer } from "../state/explorer"
 import { basename, dirname, relativePath } from "../lib/paths"
 import { decorationLetter } from "../lib/git"
@@ -105,7 +106,7 @@ function TabView({
   const dirty = useDocs((s) => (tab.input.kind === "file" ? !!s.dirty[docKey(tab.input.path)] : false))
   useGit((s) => s.revision)
   const decoration = tab.input.kind === "file" ? decorationFor(tab.input.path) : undefined
-  const busy = useAgent((s) => (tab.input.kind === "chat" ? s.statuses[tab.input.sessionId]?.type === "busy" : false))
+  const mark = useSessionMark(tab.input.kind === "chat" ? tab.input.sessionId : "")
   const hint =
     duplicate && tab.input.kind === "file" && root ? basename(dirname(relativePath(root, tab.input.path))) : null
 
@@ -150,7 +151,7 @@ function TabView({
 
   return (
     <div
-      className={`tab${active ? " active" : ""}${tab.preview ? " preview" : ""}${dirty ? " dirty" : ""}${decoration ? ` git-${decoration}` : ""}`}
+      className={`tab${active ? " active" : ""}${tab.preview ? " preview" : ""}${dirty ? " dirty" : ""}${decoration ? ` git-${decoration}` : ""}${mark === "attention" || mark === "unseen" ? ` state-${mark}` : ""}`}
       title={tab.input.kind === "file" ? tab.input.path : title}
       onMouseDown={(e) => {
         if (e.button === 1) {
@@ -165,7 +166,15 @@ function TabView({
         if (tab.input.kind === "file") e.dataTransfer.setData(PATH_DRAG_TYPE, tab.input.path)
       }}
     >
-      {busy ? <Icon name="loading" spin className="tab-icon" /> : tabIcon(tab.input)}
+      {mark === "attention" ? (
+        <Icon name="bell-dot" className="tab-icon attention" />
+      ) : mark === "busy" ? (
+        <Icon name="loading" spin className="tab-icon" />
+      ) : mark === "unseen" ? (
+        <Icon name="pass-filled" className="tab-icon done" />
+      ) : (
+        tabIcon(tab.input)
+      )}
       <span className="tab-label">{title}</span>
       {hint && <span className="tab-hint">{hint}</span>}
       {decoration && <span className="tab-decoration">{decorationLetter(decoration)}</span>}

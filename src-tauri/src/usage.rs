@@ -32,7 +32,34 @@ pub struct ChatgptUsage {
     pub plan: String,
     pub windows: Vec<QuotaWindow>,
     pub limit_reached: bool,
+    pub resets_available: Option<i64>,
     pub measured_at: i64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetCredit {
+    pub id: String,
+    pub status: String,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub granted_at: Option<i64>,
+    pub expires_at: Option<i64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatgptResets {
+    pub credits: Vec<ResetCredit>,
+    pub available: i64,
+    pub measured_at: i64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetOutcome {
+    pub outcome: String,
+    pub windows_reset: i64,
 }
 
 #[derive(Serialize)]
@@ -42,7 +69,7 @@ pub struct GoUsage {
     pub measured_at: i64,
 }
 
-const CHATGPT_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
+const CHATGPT_WHAM: &str = "https://chatgpt.com/backend-api/wham";
 const GO_USAGE_URL: &str = "https://opencode.ai/zen/go/v1/usage";
 
 pub fn opencode_data() -> Option<PathBuf> {
@@ -126,38 +153,60 @@ fn quota_window(w: &Value, now: i64) -> Option<QuotaWindow> {
     })
 }
 
-pub fn chatgpt_snapshot() -> Result<ChatgptUsage, String> {
+fn chatgpt_request(method: &str, path: &str, timeout: Duration) -> Result<ureq::Request, String> {
     let auth = crate::accounts::read_auth()?;
     let openai = &auth["openai"];
     if openai["type"].as_str() != Some("oauth") {
         return Err("ChatGPT no está conectado con tu suscripción".into());
     }
     let access = openai["access"].as_str().ok_or_else(|| "falta el token de ChatGPT en auth.json".to_string())?;
-    let now = now_ms();
-    if openai["expires"].as_i64().is_some_and(|e| e < now) {
+    if openai["expires"].as_i64().is_some_and(|e| e < now_ms()) {
         return Err("la sesión de ChatGPT venció: se renueva sola con el próximo mensaje que mandes con un modelo de ChatGPT".into());
     }
-    let mut request = ureq::get(CHATGPT_USAGE_URL)
+    let mut request = ureq::request(method, &format!("{}{}", CHATGPT_WHAM, path))
         .set("Authorization", &format!("Bearer {}", access))
         .set("Accept", "application/json")
-        .timeout(Duration::from_secs(15));
+        .timeout(timeout);
     if let Some(account) = openai["accountId"].as_str() {
         request = request.set("ChatGPT-Account-Id", account);
     }
-    let body: Value = request
-        .call()
-        .map_err(|e| match e {
-            ureq::Error::Status(401, _) | ureq::Error::Status(403, _) => "ChatGPT rechazó la sesión: cerrá sesión y volvé a entrar desde Cuentas de IA".to_string(),
-            ureq::Error::Status(code, _) => format!("ChatGPT respondió {}", code),
-            other => format!("no se pudo consultar ChatGPT: {}", other),
-        })?
+    Ok(request)
+}
+
+fn chatgpt_error(e: ureq::Error) -> String {
+    match e {
+        ureq::Error::Status(401, _) | ureq::Error::Status(403, _) => "ChatGPT rechazó la sesión: cerrá sesión y volvé a entrar desde Cuentas de IA".to_string(),
+        ureq::Error::Status(code, response) => {
+            let body: Value = response.into_json().unwrap_or(Value::Null);
+            let detail = body["detail"]
+                .as_str()
+                .or_else(|| body["error"]["message"].as_str())
+                .or_else(|| body["message"].as_str());
+            match detail {
+                Some(detail) => format!("ChatGPT respondió {}: {}", code, detail),
+                None => format!("ChatGPT respondió {}", code),
+            }
+        }
+        other => format!("no se pudo consultar ChatGPT: {}", other),
+    }
+}
+
+fn chatgpt_json(response: Result<ureq::Response, ureq::Error>) -> Result<Value, String> {
+    response
+        .map_err(chatgpt_error)?
         .into_json()
-        .map_err(|e| format!("respuesta de ChatGPT ilegible: {}", e))?;
+        .map_err(|e| format!("respuesta de ChatGPT ilegible: {}", e))
+}
+
+pub fn chatgpt_snapshot() -> Result<ChatgptUsage, String> {
+    let body = chatgpt_json(chatgpt_request("GET", "/usage", Duration::from_secs(15))?.call())?;
+    let now = now_ms();
     let limit = &body["rate_limit"];
     Ok(ChatgptUsage {
         plan: body["plan_type"].as_str().unwrap_or_default().to_string(),
         windows: ["primary_window", "secondary_window"].iter().filter_map(|k| quota_window(&limit[*k], now)).collect(),
         limit_reached: limit["limit_reached"].as_bool().unwrap_or(false),
+        resets_available: body["rate_limit_reset_credits"]["available_count"].as_i64(),
         measured_at: now,
     })
 }
@@ -165,6 +214,64 @@ pub fn chatgpt_snapshot() -> Result<ChatgptUsage, String> {
 #[tauri::command]
 pub async fn chatgpt_usage() -> Result<ChatgptUsage, String> {
     blocking(chatgpt_snapshot).await
+}
+
+fn rfc3339_ms(value: &Value) -> Option<i64> {
+    value
+        .as_str()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|d| d.timestamp_millis())
+}
+
+pub fn chatgpt_resets_snapshot() -> Result<ChatgptResets, String> {
+    let body = chatgpt_json(chatgpt_request("GET", "/rate-limit-reset-credits", Duration::from_secs(15))?.call())?;
+    let credits = body["credits"]
+        .as_array()
+        .map(|list| {
+            list.iter()
+                .filter(|c| c["reset_type"].as_str().is_none_or(|t| t == "codex_rate_limits"))
+                .filter_map(|c| {
+                    Some(ResetCredit {
+                        id: c["id"].as_str()?.to_string(),
+                        status: c["status"].as_str().unwrap_or_default().to_string(),
+                        title: c["title"].as_str().map(str::to_string),
+                        description: c["description"].as_str().map(str::to_string),
+                        granted_at: rfc3339_ms(&c["granted_at"]),
+                        expires_at: rfc3339_ms(&c["expires_at"]),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let available = body["available_count"]
+        .as_i64()
+        .unwrap_or_else(|| credits.iter().filter(|c| c.status == "available").count() as i64);
+    Ok(ChatgptResets { credits, available, measured_at: now_ms() })
+}
+
+#[tauri::command]
+pub async fn chatgpt_resets() -> Result<ChatgptResets, String> {
+    blocking(chatgpt_resets_snapshot).await
+}
+
+pub fn chatgpt_use_reset_now(request_id: &str, credit_id: Option<&str>) -> Result<ResetOutcome, String> {
+    if request_id.trim().is_empty() {
+        return Err("falta el identificador del canje".into());
+    }
+    let mut payload = serde_json::json!({ "redeem_request_id": request_id });
+    if let Some(credit) = credit_id.filter(|c| !c.is_empty()) {
+        payload["credit_id"] = Value::from(credit);
+    }
+    let body = chatgpt_json(chatgpt_request("POST", "/rate-limit-reset-credits/consume", Duration::from_secs(30))?.send_json(payload))?;
+    Ok(ResetOutcome {
+        outcome: body["code"].as_str().unwrap_or("unknown").to_string(),
+        windows_reset: body["windows_reset"].as_i64().unwrap_or(0),
+    })
+}
+
+#[tauri::command]
+pub async fn chatgpt_use_reset(request_id: String, credit_id: Option<String>) -> Result<ResetOutcome, String> {
+    blocking(move || chatgpt_use_reset_now(&request_id, credit_id.as_deref())).await
 }
 
 fn go_window(w: &Value, window_seconds: i64) -> Option<QuotaWindow> {

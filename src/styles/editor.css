@@ -122,6 +122,21 @@
 .tab-icon.pr {
   color: var(--success);
 }
+.tab-icon.attention,
+.tab.state-attention .tab-label {
+  color: var(--warn);
+}
+.tab-icon.attention {
+  animation: pulse 1.4s infinite;
+}
+.tab-icon.done,
+.tab.state-unseen .tab-label {
+  color: var(--success);
+}
+.tab.state-attention .tab-label,
+.tab.state-unseen .tab-label {
+  font-weight: 600;
+}
 .tab-close {
   width: 20px;
   height: 20px;
