@@ -728,6 +728,21 @@ export function startEventStream(): () => void {
   }
 }
 
+function parentOf(all: Session[], id: string): string | undefined {
+  return all.find((x) => x.id === id)?.parentID
+}
+
+export function sessionWaiting(s: Pick<AgentState, "allSessions" | "permissions" | "questions">, id: string): boolean {
+  return [...s.permissions, ...s.questions].some((r) => {
+    let current: string | undefined = r.sessionID
+    for (let i = 0; current && i < 12; i++) {
+      if (current === id) return true
+      current = parentOf(s.allSessions, current)
+    }
+    return false
+  })
+}
+
 export function sessionStatus(id: string | null): "idle" | "busy" | "retry" {
   if (!id) return "idle"
   return useAgent.getState().statuses[id]?.type ?? "idle"

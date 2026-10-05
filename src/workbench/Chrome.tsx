@@ -12,6 +12,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "re
 import { createPortal } from "react-dom"
 import { useAgent, sessionStatus, toggleFavoriteModel } from "../state/agent"
 import { useAttention, testAlert, silenceSound, focusPending } from "../state/attention"
+import { useUnseen } from "../state/unseen"
 import {
   USAGE_WINDOWS,
   chatgptWorst,
@@ -68,13 +69,17 @@ export function ActivityBar() {
   const changes = useGit((s) => s.repos.reduce((n, r) => n + (s.byRepo[r]?.status?.entries.length ?? 0), 0))
   const busy = useAgent((s) => Object.values(s.statuses).filter((x) => x.type === "busy").length)
   const attention = useAgent((s) => s.permissions.length + s.questions.length)
+  const sessions = useAgent((s) => s.sessions)
+  const unseenIds = useUnseen((s) => s.ids)
+  const unseen = sessions.filter((s) => !s.parentID && s.id in unseenIds).length
   return (
     <nav className="activity-bar">
       <button type="button" className="activity-item commands" title="Comandos (Ctrl+Shift+P)" onClick={() => showQuickOpen(">")}>
         <Icon name="symbol-event" />
       </button>
       {VIEWS.map((v) => {
-        const badge = v.id === "scm" ? changes : v.id === "agents" ? attention || busy : 0
+        const badge = v.id === "scm" ? changes : v.id === "agents" ? attention || busy || unseen : 0
+        const tone = v.id !== "agents" ? "" : attention ? " attention" : !busy && unseen ? " done" : ""
         return (
           <button
             key={v.id}
@@ -84,7 +89,7 @@ export function ActivityBar() {
             onClick={() => useLayout.getState().showView(v.id)}
           >
             <Icon name={v.icon} />
-            {badge > 0 && <span className={`activity-badge${v.id === "agents" && attention ? " attention" : ""}`}>{badge > 99 ? "99+" : badge}</span>}
+            {badge > 0 && <span className={`activity-badge${tone}`}>{badge > 99 ? "99+" : badge}</span>}
           </button>
         )
       })}

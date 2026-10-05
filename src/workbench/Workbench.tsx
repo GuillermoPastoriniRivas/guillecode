@@ -6,6 +6,7 @@ import { basename } from "../lib/paths"
 import { bindAgentProject, loadAgentMeta, startEventStream, useAgent } from "../state/agent"
 import { AccountsEditor } from "../editor/AccountsEditor"
 import { initAttention } from "../state/attention"
+import { initUnseen } from "../state/unseen"
 import { startUsagePolling } from "../state/usage"
 import { startRoutines } from "../state/routines"
 import { startOutputCapture } from "../state/output"
@@ -59,6 +60,7 @@ function boot() {
   useZoom.getState().apply()
   startOutputCapture()
   initAttention()
+  initUnseen()
   startUpdates()
   void initProject().then(() => {
     const root = useProject.getState().root

@@ -676,6 +676,25 @@
 .session-state .done {
   color: var(--success);
 }
+.session-row.state-attention {
+  background: rgba(227, 179, 65, 0.1);
+}
+.session-row.state-unseen {
+  background: rgba(63, 185, 80, 0.08);
+}
+.session-row.state-attention .session-title,
+.session-row.state-unseen .session-title {
+  font-weight: 600;
+}
+.session-flag {
+  font-weight: 600;
+}
+.session-flag.attention {
+  color: var(--warn);
+}
+.session-flag.done {
+  color: var(--success);
+}
 .session-main {
   flex: 1;
   min-width: 0;

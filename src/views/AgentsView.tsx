@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react"
 import type { Session } from "@opencode-ai/sdk"
-import { deleteSession, newSession, renameSession, selectSession, sessionInRoot, useAgent } from "../state/agent"
+import { deleteSession, newSession, renameSession, selectSession, sessionInRoot, sessionWaiting, useAgent } from "../state/agent"
+import { useSessionMark } from "../state/unseen"
 import { useProject } from "../state/project"
 import { featureTitle, findFeature, useFeatures } from "../state/features"
 import { normalizePath } from "../lib/paths"
@@ -14,9 +15,8 @@ import { EmptyState, Icon, IconButton } from "../components/ui"
 
 function SessionRow({ session, depth, childCount }: { session: Session; depth: number; childCount: number }) {
   const active = useAgent((s) => s.activeSessionId === session.id)
-  const status = useAgent((s) => s.statuses[session.id]?.type ?? "idle")
+  const mark = useSessionMark(session.id)
   const flash = useAgent((s) => !!s.doneFlash[session.id])
-  const pending = useAgent((s) => s.permissions.some((p) => p.sessionID === session.id) || s.questions.some((q) => q.sessionID === session.id))
   const summary = session.summary
 
   const open = () => {
@@ -50,7 +50,7 @@ function SessionRow({ session, depth, childCount }: { session: Session; depth: n
 
   return (
     <div
-      className={`session-row${active ? " active" : ""}${status !== "idle" ? " busy" : ""}`}
+      className={`session-row state-${mark}${active ? " active" : ""}${mark === "busy" || mark === "retry" ? " busy" : ""}`}
       style={{ paddingLeft: 10 + depth * 14 }}
       onClick={open}
       onDoubleClick={() => openEditor({ kind: "chat", sessionId: session.id })}
@@ -58,13 +58,13 @@ function SessionRow({ session, depth, childCount }: { session: Session; depth: n
       title={session.title}
     >
       <span className="session-state">
-        {status === "busy" ? (
-          <Icon name="loading" spin />
-        ) : status === "retry" ? (
-          <Icon name="warning" />
-        ) : pending ? (
+        {mark === "attention" ? (
           <Icon name="bell-dot" className="attention" />
-        ) : flash ? (
+        ) : mark === "busy" ? (
+          <Icon name="loading" spin />
+        ) : mark === "retry" ? (
+          <Icon name="warning" />
+        ) : mark === "unseen" || flash ? (
           <Icon name="pass-filled" className="done" />
         ) : (
           <Icon name={depth > 0 ? "hubot" : "comment-discussion"} />
@@ -79,6 +79,8 @@ function SessionRow({ session, depth, childCount }: { session: Session; depth: n
               <span className="del">−{summary.deletions}</span>
             </span>
           )}
+          {mark === "attention" && <span className="session-flag attention">espera tu respuesta</span>}
+          {mark === "unseen" && <span className="session-flag done">terminó</span>}
           {childCount > 0 && <span className="session-children">{childCount} subagentes</span>}
           <span className="session-time">{shortAgo(session.time.updated)}</span>
         </span>
@@ -163,8 +165,7 @@ function OtherFeatureSessions() {
   const active = all.filter((s) => {
     if (s.parentID || sessionInRoot(s, root)) return false
     const busy = statuses[s.id] && statuses[s.id].type !== "idle"
-    const waiting = permissions.some((p) => p.sessionID === s.id) || questions.some((q) => q.sessionID === s.id)
-    return busy || waiting
+    return busy || sessionWaiting({ allSessions: all, permissions, questions }, s.id)
   })
   if (active.length === 0) return null
   return (

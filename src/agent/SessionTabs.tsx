@@ -12,6 +12,7 @@ import {
   useAgent,
 } from "../state/agent"
 import { openEditor } from "../state/editors"
+import { sessionMark, useUnseen } from "../state/unseen"
 import { promptInput } from "../state/quickinput"
 import { notify } from "../state/toasts"
 import { confirmAction } from "../components/Dialog"
@@ -64,10 +65,12 @@ function tabMenu(e: React.MouseEvent, id: string, session: Session | null) {
 export function SessionTabs() {
   const open = useAgent((s) => s.openSessionIds)
   const sessions = useAgent((s) => s.sessions)
+  const allSessions = useAgent((s) => s.allSessions)
   const activeId = useAgent((s) => s.activeSessionId)
   const statuses = useAgent((s) => s.statuses)
   const permissions = useAgent((s) => s.permissions)
   const questions = useAgent((s) => s.questions)
+  const unseen = useUnseen((s) => s.ids)
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -89,15 +92,14 @@ export function SessionTabs() {
         const draft = id === DRAFT_TAB
         const session = draft ? null : sessions.find((x) => x.id === id) ?? null
         const active = draft ? activeId === null : activeId === id
-        const status = statuses[id]?.type ?? "idle"
-        const busy = !draft && (status === "busy" || status === "retry")
-        const pending = !draft && (permissions.some((p) => p.sessionID === id) || questions.some((q) => q.sessionID === id))
+        const mark = draft ? "idle" : sessionMark({ allSessions, permissions, questions, statuses }, unseen, id)
         const title = draft ? "Nueva conversación" : session?.title || "Sin título"
+        const hint = mark === "attention" ? " · espera tu respuesta" : mark === "unseen" ? " · terminó, sin ver" : ""
         return (
           <div
             key={id}
-            className={`agent-tab${active ? " active" : ""}`}
-            title={title}
+            className={`agent-tab state-${mark}${active ? " active" : ""}`}
+            title={title + hint}
             onMouseDown={(e) => {
               if (e.button === 1) {
                 e.preventDefault()
@@ -109,10 +111,12 @@ export function SessionTabs() {
             }}
             onContextMenu={(e) => tabMenu(e, id, session)}
           >
-            {busy ? (
+            {mark === "attention" ? (
+              <Icon name="bell-dot" className="agent-tab-icon" />
+            ) : mark === "busy" || mark === "retry" ? (
               <Icon name="loading" spin className="agent-tab-icon" />
-            ) : pending ? (
-              <Icon name="bell-dot" className="agent-tab-icon attention" />
+            ) : mark === "unseen" ? (
+              <Icon name="pass-filled" className="agent-tab-icon" />
             ) : (
               <Icon name={draft ? "add" : "comment-discussion"} className="agent-tab-icon" />
             )}

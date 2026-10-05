@@ -176,6 +176,9 @@
   background: var(--warn);
   animation: pulse 1.4s infinite;
 }
+.activity-badge.done {
+  background: var(--success);
+}
 .activity-spacer {
   flex: 1;
 }
@@ -384,6 +387,42 @@ body.resizing-y * {
   color: var(--fg-dim);
   font-size: 11.5px;
   line-height: 1.4;
+}
+.quota-popover-resets {
+  padding: 11px 18px 10px;
+  border-top: 1px solid var(--border);
+}
+.quota-popover-resets-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+  margin-bottom: 4px;
+  color: var(--fg);
+  font-size: 12.5px;
+}
+.quota-popover-resets-head strong {
+  color: var(--accent-strong);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.quota-popover-reset {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 0;
+}
+.quota-popover-reset + .quota-popover-reset {
+  border-top: 1px solid var(--border);
+}
+.quota-popover-reset-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  color: var(--fg);
+  font-size: 12px;
 }
 .quota-popover-error {
   display: flex;
