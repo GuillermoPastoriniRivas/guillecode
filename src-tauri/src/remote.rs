@@ -338,6 +338,20 @@ fn hub_api(app: &AppHandle, mut req: Request, url: &str, path: &str) {
             Err(e) => respond_json(req, 200, json!({ "usage": null, "error": e })),
         };
     }
+    if method == "GET" && path == "/hub/usage/chatgpt/resets" {
+        return match usage::chatgpt_resets_snapshot() {
+            Ok(r) => respond_json(req, 200, json!({ "resets": r })),
+            Err(e) => respond_json(req, 200, json!({ "resets": null, "error": e })),
+        };
+    }
+    if method == "POST" && path == "/hub/usage/chatgpt/resets/use" {
+        let body = read_json(&mut req);
+        let request_id = body["requestId"].as_str().unwrap_or_default();
+        return match usage::chatgpt_use_reset_now(request_id, body["creditId"].as_str()) {
+            Ok(outcome) => respond_json(req, 200, json!(outcome)),
+            Err(e) => respond_json(req, 502, json!({ "error": e })),
+        };
+    }
     if method == "POST" && path == "/hub/transcribe" {
         let mime = req
             .headers()

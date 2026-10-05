@@ -359,6 +359,8 @@ pub fn run() {
             term::terminal_kill_all,
             usage::provider_usage,
             usage::chatgpt_usage,
+            usage::chatgpt_resets,
+            usage::chatgpt_use_reset,
             usage::go_usage,
             accounts::auth_entries,
             accounts::validate_opencode_key,

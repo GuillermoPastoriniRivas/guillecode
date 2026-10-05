@@ -8,7 +8,7 @@ import {
   pickRecentInNewWindow,
   pickWindow,
 } from "../state/project"
-import { useEffect, useLayoutEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import { createPortal } from "react-dom"
 import { useAgent, sessionStatus, toggleFavoriteModel } from "../state/agent"
 import { useAttention, testAlert, silenceSound, focusPending } from "../state/attention"
@@ -18,10 +18,15 @@ import {
   fiveHourRelease,
   goRows,
   quotaWindowLabel,
+  redeemChatgptReset,
+  redeemableResets,
+  refreshChatgptResets,
   refreshChatgptUsage,
   refreshGoUsage,
   refreshUsage,
   renewalLabel,
+  resetExpiryLabel,
+  resetsCountLabel,
   setUsageLimits,
   usageRatio,
   useUsage,
@@ -221,12 +226,13 @@ function QuotaStatus() {
 
 type QuotaRow = { key: string; label: string; ratio: number; detail?: string }
 
-function QuotaPopover({ anchor, onClose, title, badge, rows, note, error, actions }: {
+function QuotaPopover({ anchor, onClose, title, badge, rows, extra, note, error, actions }: {
   anchor: HTMLElement
   onClose: () => void
   title: string
   badge?: string
   rows: QuotaRow[]
+  extra?: ReactNode
   note: string
   error?: string | null
   actions: Array<{ label: string; icon: string; run: () => void }>
@@ -237,14 +243,20 @@ function QuotaPopover({ anchor, onClose, title, badge, rows, note, error, action
   useLayoutEffect(() => {
     const panel = ref.current
     if (!panel) return
-    const rect = anchor.getBoundingClientRect()
-    const width = panel.offsetWidth
-    const height = panel.offsetHeight
-    setPosition({
-      left: Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8)),
-      top: Math.max(8, rect.top - height - 8),
-    })
-  }, [anchor, rows, error])
+    const place = () => {
+      const rect = anchor.getBoundingClientRect()
+      const width = panel.offsetWidth
+      const height = panel.offsetHeight
+      setPosition({
+        left: Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8)),
+        top: Math.max(8, rect.top - height - 8),
+      })
+    }
+    place()
+    const observer = new ResizeObserver(place)
+    observer.observe(panel)
+    return () => observer.disconnect()
+  }, [anchor])
 
   useEffect(() => {
     const onPointer = (e: PointerEvent) => {
@@ -295,6 +307,7 @@ function QuotaPopover({ anchor, onClose, title, badge, rows, note, error, action
           )
         })}
       </div>
+      {extra}
       {error && <div className="quota-popover-error"><Icon name="warning" /> Última lectura fallida: {error}</div>}
       <div className="quota-popover-footer">
         <div className="quota-popover-note">{note}</div>
@@ -308,6 +321,53 @@ function QuotaPopover({ anchor, onClose, title, badge, rows, note, error, action
       </div>
     </div>,
     document.body,
+  )
+}
+
+function ChatgptResets({ exhausted, onUse }: { exhausted: boolean; onUse: () => void }) {
+  const resets = useUsage((s) => s.resets)
+  const error = useUsage((s) => s.resetsError)
+  const fromUsage = useUsage((s) => s.chatgpt?.resetsAvailable ?? null)
+  const redeeming = useUsage((s) => s.redeeming)
+  useEffect(() => { void refreshChatgptResets() }, [])
+  const credits = resets ? redeemableResets(resets) : []
+  const available = resets?.available ?? fromUsage
+  const use = (creditId: string | null) => {
+    onUse()
+    void redeemChatgptReset(creditId)
+  }
+  const button = (creditId: string | null) => (
+    <button type="button" className={`btn btn-sm${exhausted ? " btn-primary" : ""}`} disabled={redeeming} onClick={() => use(creditId)}>
+      {redeeming ? <Icon name="loading" spin /> : <Icon name="debug-restart" />} Usar
+    </button>
+  )
+  return (
+    <div className="quota-popover-resets">
+      <div className="quota-popover-resets-head">
+        <span>Resets guardados</span>
+        <strong>{available ?? "–"}</strong>
+      </div>
+      {credits.map((c) => (
+        <div className="quota-popover-reset" key={c.id}>
+          <div className="quota-popover-reset-text" title={[c.title, c.description].filter(Boolean).join(" · ") || undefined}>
+            <span>Reset completo: 5 h y semana</span>
+            <span className="quota-popover-detail">{resetExpiryLabel(c)}</span>
+          </div>
+          {button(c.id)}
+        </div>
+      ))}
+      {credits.length === 0 && !!available && available > 0 && (
+        <div className="quota-popover-reset">
+          <div className="quota-popover-reset-text">
+            <span>Reset completo: 5 h y semana</span>
+            <span className="quota-popover-detail">{error ? "No pude leer cuándo vence" : "Consultando el vencimiento…"}</span>
+          </div>
+          {button(null)}
+        </div>
+      )}
+      {available === 0 && <div className="quota-popover-detail">No tenés resets. Cuando ChatGPT te dé uno, aparece acá.</div>}
+      {available === null && <div className="quota-popover-detail">{error ? `No pude leer tus resets: ${error}` : "Consultando tus resets…"}</div>}
+    </div>
   )
 }
 
@@ -340,15 +400,18 @@ function ChatgptQuotaStatus() {
     )
   }
   const worst = chatgptWorst(usage)
-  const tone = usage.limitReached || worst >= 100 ? "error" : worst >= 80 ? "warn" : undefined
+  const exhausted = usage.limitReached || worst >= 100
+  const tone = exhausted ? "error" : worst >= 80 ? "warn" : undefined
   const plan = usage.plan ? ` ${usage.plan[0].toUpperCase()}${usage.plan.slice(1)}` : ""
   const summary = usage.windows.map((w) => `${quotaWindowLabel(w.windowSeconds).toLowerCase()} ${percent(w.usedPercent / 100)}`).join(" · ")
+  const resets = usage.resetsAvailable ?? 0
+  const resetsNote = resets > 0 ? `. Tenés ${resetsCountLabel(resets)} guardado${resets === 1 ? "" : "s"}` : ""
   return (
     <>
       <StatusItem
         icon="credit-card"
-        label={`ChatGPT ${percent(worst / 100)}`}
-        title={`Cuota de tu plan${plan} de ChatGPT, compartida con Codex: ${summary}. Medida a las ${clockTime(usage.measuredAt)}`}
+        label={`ChatGPT ${percent(worst / 100)}${exhausted && resets > 0 ? ` · ${resetsCountLabel(resets)}` : ""}`}
+        title={`Cuota de tu plan${plan} de ChatGPT, compartida con Codex: ${summary}${resetsNote}. Medida a las ${clockTime(usage.measuredAt)}`}
         tone={tone}
         expanded={!!anchor}
         onClick={(e) => setAnchor(anchor ? null : e.currentTarget)}
@@ -359,6 +422,7 @@ function ChatgptQuotaStatus() {
         title="ChatGPT"
         badge={usage.plan || undefined}
         rows={usage.windows.map((w) => ({ key: String(w.windowSeconds), label: quotaWindowLabel(w.windowSeconds), ratio: w.usedPercent / 100, detail: w.resetsAt ? `Se renueva ${renewalLabel(w.resetsAt)}` : undefined }))}
+        extra={<ChatgptResets exhausted={exhausted} onUse={() => setAnchor(null)} />}
         note={`Cuota real compartida con Codex · medida a las ${clockTime(usage.measuredAt)}${usage.limitReached ? " · Límite alcanzado" : ""}`}
         error={error}
         actions={[{ label: "Cuentas de IA", icon: "account", run: () => void openEditor({ kind: "accounts" }) }, { label: "Actualizar", icon: "refresh", run: () => void refreshChatgptUsage() }]}

@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react"
-import { hub } from "./api"
+import { errorText, hub } from "./api"
 import { Icon, Sheet, usePoll } from "./ui"
 import "./quota.css"
 
@@ -99,9 +99,17 @@ export function useQuota() {
   return { quota, reload, refreshSoon }
 }
 
-type ChatgptUsage = { plan: string; windows: WindowStat[]; limitReached: boolean; measuredAt: number }
+type ChatgptUsage = { plan: string; windows: WindowStat[]; limitReached: boolean; resetsAvailable?: number | null; measuredAt: number }
 
 export type ChatgptQuota = { usage: ChatgptUsage | null; error?: string }
+
+type ResetCredit = { id: string; status: string; title: string | null; description: string | null; expiresAt: number | null }
+
+type ResetsReply = { resets: { credits: ResetCredit[]; available: number; measuredAt: number } | null; error?: string }
+
+type ResetOutcome = { outcome: string; windowsReset: number }
+
+type ResetNotice = { tone: "ok" | "warn" | "error"; text: string; retry?: { key: string; creditId: string | null; requestId: string } }
 
 function windowLabel(seconds: number): string {
   const hours = Math.round(seconds / 3600)
@@ -166,7 +174,144 @@ export function ChatgptQuotaChip({ quota, onOpen }: { quota: ChatgptQuota | null
   )
 }
 
-function ChatgptSection({ quota }: { quota: ChatgptQuota }) {
+function newRequestId(): string {
+  const b = crypto.getRandomValues(new Uint8Array(16))
+  b[6] = (b[6] & 0x0f) | 0x40
+  b[8] = (b[8] & 0x3f) | 0x80
+  const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("")
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`
+}
+
+function resetsLabel(n: number): string {
+  return `${n} reset${n === 1 ? "" : "s"}`
+}
+
+function ChatgptResets({ usage, onReload }: { usage: ChatgptUsage; onReload: () => Promise<void> }) {
+  const [reply, setReply] = useState<ResetsReply | null>(null)
+  const [confirming, setConfirming] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [notice, setNotice] = useState<ResetNotice | null>(null)
+
+  const load = useCallback(
+    () =>
+      hub<ResetsReply>("GET", "/usage/chatgpt/resets").then(
+        (r) => setReply(r),
+        (e) => setReply({ resets: null, error: errorText(e) }),
+      ),
+    [],
+  )
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const exhausted = usage.limitReached || chatgptWorst(usage) >= 1
+  const resets = reply?.resets ?? null
+  const available = resets?.available ?? usage.resetsAvailable ?? null
+  const credits = resets
+    ? resets.credits
+        .filter((c) => c.status === "available")
+        .sort((a, b) => (a.expiresAt ?? Infinity) - (b.expiresAt ?? Infinity))
+        .slice(0, Math.max(0, resets.available))
+    : []
+  const options: Array<{ key: string; creditId: string | null; expiry: string; hint?: string }> = credits.map((c) => ({
+    key: c.id,
+    creditId: c.id,
+    expiry: c.expiresAt ? `Vence ${renewal(c.expiresAt)}` : "No vence",
+    hint: [c.title, c.description].filter(Boolean).join(" · ") || undefined,
+  }))
+  if (options.length === 0 && available !== null && available > 0) {
+    options.push({ key: "any", creditId: null, expiry: reply?.error ? "No pude leer cuándo vence" : "Consultando el vencimiento…" })
+  }
+
+  const redeem = async (key: string, creditId: string | null, requestId: string) => {
+    setConfirming(null)
+    setBusy(true)
+    setNotice(null)
+    try {
+      const result = await hub<ResetOutcome>("POST", "/usage/chatgpt/resets/use", { requestId, creditId })
+      const [next] = await Promise.all([hub<ResetsReply>("GET", "/usage/chatgpt/resets").catch(() => null), onReload()])
+      if (next) setReply(next)
+      const left = next?.resets?.available
+      if (result.outcome === "reset" || result.outcome === "already_redeemed") {
+        setNotice({ tone: "ok", text: `Listo: se reinició tu cuota.${left === undefined ? "" : ` Te ${left === 1 ? "queda" : "quedan"} ${resetsLabel(left)}.`}` })
+      } else if (result.outcome === "nothing_to_reset") {
+        setNotice({ tone: "warn", text: "Tu cuota no necesita un reset ahora." })
+      } else if (result.outcome === "no_credit") {
+        setNotice({ tone: "warn", text: creditId ? "Ese reset ya no está disponible. Actualicé la lista." : "No tenés resets disponibles." })
+      } else {
+        setNotice({ tone: "warn", text: `ChatGPT respondió algo inesperado: ${result.outcome}` })
+      }
+    } catch (e) {
+      void load()
+      setNotice({ tone: "error", text: `No se pudo usar el reset: ${errorText(e)}`, retry: { key, creditId, requestId } })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="quota-resets">
+      <div className="quota-head">
+        <strong>Resets guardados</strong>
+        <span>{available ?? "–"}</span>
+      </div>
+      {options.map((o) => (
+        <div key={o.key} className="quota-reset">
+          <div className="quota-reset-line">
+            <div className="quota-reset-text" title={o.hint}>
+              <span>Reset completo: 5 h y semana</span>
+              <small className="muted">{o.expiry}</small>
+            </div>
+            {confirming !== o.key && (
+              <button type="button" className={`btn btn-sm${exhausted ? " primary" : ""}`} disabled={busy} onClick={() => setConfirming(o.key)}>
+                <Icon name={busy ? "loading" : "debug-restart"} spin={busy} /> Usar
+              </button>
+            )}
+          </div>
+          {confirming === o.key && (
+            <div className="quota-reset-confirm">
+              <small>
+                Reinicia tu ventana de 5 h y la semanal, la misma cuota que usa Codex. No se puede deshacer.
+                {exhausted ? "" : " Todavía no llegaste al límite: quizás te convenga guardarlo."}
+              </small>
+              <div className="quota-reset-actions">
+                <button type="button" className="btn btn-sm" onClick={() => setConfirming(null)}>
+                  Cancelar
+                </button>
+                <button type="button" className={`btn btn-sm ${exhausted ? "primary" : "danger"}`} disabled={busy} onClick={() => void redeem(o.key, o.creditId, newRequestId())}>
+                  Usar reset
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      ))}
+      {available === 0 && <small className="muted">No tenés resets. Cuando ChatGPT te dé uno, aparece acá.</small>}
+      {available === null && <small className="muted">{reply?.error ? `No pude leer tus resets: ${reply.error}` : "Consultando tus resets…"}</small>}
+      {notice && (
+        <div className={`quota-reset-notice ${notice.tone}`}>
+          <small>{notice.text}</small>
+          {notice.retry && (
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={busy}
+              onClick={() => {
+                const r = notice.retry
+                if (r) void redeem(r.key, r.creditId, r.requestId)
+              }}
+            >
+              <Icon name="refresh" /> Reintentar
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ChatgptSection({ quota, onReload }: { quota: ChatgptQuota; onReload: () => Promise<void> }) {
   const usage = quota.usage
   return (
     <>
@@ -189,9 +334,10 @@ function ChatgptSection({ quota }: { quota: ChatgptQuota }) {
       {usage && (
         <small className="muted">
           Es la cuota real de tu plan de ChatGPT, compartida con Codex, medida a las {clock(usage.measuredAt)}.
-          {usage.limitReached ? " Llegaste al límite: los modelos de ChatGPT no responden hasta que se renueve." : ""}
+          {usage.limitReached ? " Llegaste al límite: los modelos de ChatGPT no responden hasta que se renueve o uses un reset." : ""}
         </small>
       )}
+      {usage && <ChatgptResets usage={usage} onReload={onReload} />}
     </>
   )
 }
@@ -247,7 +393,7 @@ export function ChatgptQuotaSheet({ quota, onReload, onClose }: { quota: Chatgpt
   const plan = usage?.plan ? ` ${usage.plan[0].toUpperCase()}${usage.plan.slice(1)}` : ""
   return (
     <Sheet title={`Cuota de ChatGPT${plan}`} onClose={onClose}>
-      <ChatgptSection quota={quota} />
+      <ChatgptSection quota={quota} onReload={onReload} />
       <ReloadButton onReload={onReload} />
     </Sheet>
   )
@@ -343,7 +489,7 @@ export const QuotaHub = forwardRef<QuotaBarHandle>(function QuotaHub(_props, ref
         <Sheet title="Cuotas" onClose={() => setOpen(false)}>
           <section className="quota-block">
             <h3 className="quota-section">ChatGPT</h3>
-            {chatgpt.quota ? <ChatgptSection quota={chatgpt.quota} /> : <div className="alert">No pude leer la cuota de ChatGPT.</div>}
+            {chatgpt.quota ? <ChatgptSection quota={chatgpt.quota} onReload={chatgptReload} /> : <div className="alert">No pude leer la cuota de ChatGPT.</div>}
           </section>
           <section className="quota-block">
             <h3 className="quota-section">OpenCode Go</h3>
