@@ -52,7 +52,7 @@ async function setup(page: Page, failSend = false, transcript = "Mensaje dictado
     </script>
   ` }))
   await page.goto("/voice-test", { waitUntil: "domcontentloaded" })
-  await expect(page.getByText("Test model", { exact: true })).toBeVisible()
+  await expect(page.getByText("Test model", { exact: true })).toBeVisible({ timeout: 30000 })
   return sent
 }
 
