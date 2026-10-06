@@ -11,7 +11,7 @@ use tauri::{AppHandle, Emitter, Manager};
 pub mod browser;
 mod mcp;
 mod routines;
-mod terminal;
+pub(crate) mod terminal;
 mod worktrees;
 #[cfg(windows)]
 mod ocr;

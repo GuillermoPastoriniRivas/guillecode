@@ -190,8 +190,15 @@ fn track(app: &AppHandle, kind: &str, props: &Value, directory: &str) {
     }
 }
 
+fn same_dir(a: &str, b: &str) -> bool {
+    fn norm(path: &str) -> String {
+        path.trim_end_matches(['\\', '/']).replace('\\', "/").to_lowercase()
+    }
+    !a.is_empty() && norm(a) == norm(b)
+}
+
 fn finish(app: &AppHandle, id: &str, directory: &str) {
-    let failed = {
+    let (failed, dir) = {
         let state = app.state::<LiveState>();
         let mut marks = state.marks.lock().unwrap();
         let mark = marks.entry(id.to_string()).or_default();
@@ -199,8 +206,17 @@ fn finish(app: &AppHandle, id: &str, directory: &str) {
             return;
         }
         mark.busy = false;
-        mark.error.is_some()
+        let dir = if mark.directory.is_empty() { directory.to_string() } else { mark.directory.clone() };
+        (mark.error.is_some(), dir)
     };
+    let still_busy = {
+        let state = app.state::<LiveState>();
+        let marks = state.marks.lock().unwrap();
+        marks.values().any(|m| m.busy && same_dir(&m.directory, &dir))
+    };
+    if !still_busy {
+        crate::desktop::terminal::sweep_idle_agent(app, &dir);
+    }
     let capture_app = app.clone();
     let capture_session = id.to_string();
     std::thread::spawn(move || crate::memory::capture(&capture_app, &capture_session));
@@ -360,4 +376,17 @@ pub fn stream(app: &AppHandle, req: Request, session: Option<String>) {
         alive = out.write_all(chunk.as_bytes()).and_then(|_| out.flush()).is_ok();
     }
     state.subscribers.lock().unwrap().retain(|s| s.id != id);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::same_dir;
+
+    #[test]
+    fn same_dir_matches_separators_case_and_trailing_slash() {
+        assert!(same_dir("C:\\Repo\\App", "c:/repo/app/"));
+        assert!(same_dir("C:/repo/app", "C:/repo/app"));
+        assert!(!same_dir("C:/repo/app", "C:/repo/other"));
+        assert!(!same_dir("", "C:/repo/app"));
+    }
 }

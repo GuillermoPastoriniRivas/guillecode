@@ -12,7 +12,7 @@ pub const INSTRUCTIONS: &str = "Terminal integrada de GuilleCode (MCP terminal):
 - cwd es la ruta absoluta de la carpeta donde corre el comando. El comando es PowerShell en un solo renglón (encadená con ;).
 - Para un servidor pasá until con el texto que indica que está listo (ej. «listening|ready in|compiled») y un wait_seconds razonable: te devuelve el control apenas aparece y el proceso sigue a la vista. Si vence el tiempo no se corta nada.
 - Logs y errores: terminal_read (lines, grep; wait_seconds/until para esperar). Cortar: terminal_send key=ctrl+c. Reiniciar: ctrl+c y terminal_run con terminal=<id>.
-- Reutilizá tus terminales libres (terminal=<id>) en vez de abrir una por comando, y cerrá con terminal_close las que ya no sirven. Las terminales del usuario se pueden leer; no escribas en ellas ni las cortes salvo que te lo pida.";
+- Reutilizá tus terminales libres (terminal=<id>) en vez de abrir una por comando; una libre del mismo cwd y título se reutiliza sola, y al terminar el turno GuilleCode cierra las que quedaron libres. Las terminales del usuario se pueden leer; no escribas en ellas ni las cortes salvo que te lo pida.";
 
 const DEFAULT_WAIT: u64 = 60;
 const MAX_WAIT: u64 = 600;
@@ -276,6 +276,54 @@ fn open(app: &AppHandle, cwd: &str, title: Option<&str>) -> Result<String, Strin
     }
 }
 
+fn reusable_agent(app: &AppHandle, cwd: &str, title: Option<&str>) -> Option<String> {
+    let target = norm(cwd);
+    let owner = window_for(app, cwd);
+    let state = app.state::<term::TermState>();
+    let terms = state.terms.lock().unwrap();
+    let mut best: Option<(Instant, String)> = None;
+    for (id, t) in terms.iter() {
+        if !t.agent || t.owner != owner || norm(&t.cwd) != target || t.title.as_deref() != title {
+            continue;
+        }
+        let screen = t.screen.state.lock().unwrap();
+        if screen.exited.is_none() && !screen.running() && screen.parser.callbacks().prompts > 0 {
+            let at = screen.last_activity;
+            if best.as_ref().map(|(prev, _)| at > *prev).unwrap_or(true) {
+                best = Some((at, id.clone()));
+            }
+        }
+    }
+    best.map(|(_, id)| id)
+}
+
+pub fn sweep_idle_agent(app: &AppHandle, directory: &str) {
+    let root = norm(directory);
+    if root.is_empty() {
+        return;
+    }
+    let ids: Vec<String> = {
+        let state = app.state::<term::TermState>();
+        let terms = state.terms.lock().unwrap();
+        terms
+            .iter()
+            .filter_map(|(id, t)| {
+                if !t.agent || !inside(&root, &norm(&t.cwd)) {
+                    return None;
+                }
+                let screen = t.screen.state.lock().unwrap();
+                let idle = screen.exited.is_none() && !screen.running() && screen.parser.callbacks().prompts > 0;
+                (idle && t.idle_tree()).then(|| id.clone())
+            })
+            .collect()
+    };
+    for id in ids {
+        if let Some(owner) = term::kill_one(app, &id) {
+            let _ = app.emit_to(owner.as_str(), "terminal://agent-closed", json!({ "id": id }));
+        }
+    }
+}
+
 fn run(app: &AppHandle, args: &Value) -> Result<String, String> {
     let command = text_arg(args, "command").ok_or("Falta command.")?;
     if command.contains('\n') || command.contains('\r') {
@@ -307,7 +355,15 @@ fn run(app: &AppHandle, args: &Value) -> Result<String, String> {
         }
         None => {
             let dir = cwd.ok_or("Falta cwd: la ruta absoluta de la carpeta donde correr el comando.")?;
-            (open(app, dir, text_arg(args, "title"))?, command.to_string())
+            let title = text_arg(args, "title");
+            match reusable_agent(app, dir, title) {
+                Some(existing) => {
+                    let owner = window_for(app, dir);
+                    let _ = app.emit_to(owner.as_str(), "terminal://agent-show", json!({ "id": existing }));
+                    (existing, command.to_string())
+                }
+                None => (open(app, dir, title)?, command.to_string()),
+            }
         }
     };
     let screen = term::screen_of(app, &id).ok_or("La terminal se cerró antes de empezar.")?;

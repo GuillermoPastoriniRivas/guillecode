@@ -42,6 +42,10 @@ impl Term {
         self.tree.terminate();
         let _ = self.killer.lock().unwrap().kill();
     }
+
+    pub fn idle_tree(&self) -> bool {
+        self.tree.active_processes().is_some_and(|n| n <= 1)
+    }
 }
 
 #[derive(Default)]
