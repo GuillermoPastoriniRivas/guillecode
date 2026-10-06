@@ -68,7 +68,7 @@ export function ScreenView({ target, active = true, controls = true, floating = 
   const input = useRef<InputQueue | null>(null)
   const [session, setSession] = useState<string | null>(null)
   const [control, setControl] = useState(false)
-  const [touchpad, setTouchpad] = useState(true)
+  const [touchpad, setTouchpad] = useState(false)
   const directControl = control && !touchpad
   const mouse = useRef({ x: 0.5, y: 0.5 })
   const [error, setError] = useState<string | null>(null)
@@ -446,8 +446,8 @@ export function ScreenView({ target, active = true, controls = true, floating = 
         onWrite={enter => { if (!text) return; input.current?.add({ t: "text", s: text }); if (enter) input.current?.add({ t: "key", k: "Enter" }); setText("") }}
         onClipboard={clipboard} mouse={<>
           <div className="screen-command-tabs" role="group" aria-label="Modo de mouse">
-            <button type="button" aria-pressed={touchpad} onClick={() => { releaseClick(); setTouchpad(true) }}>Panel táctil</button>
             <button type="button" aria-pressed={!touchpad} onClick={() => { dragMouse(false); setTouchpad(false) }}>Tocar pantalla</button>
+            <button type="button" aria-pressed={touchpad} onClick={() => { releaseClick(); setTouchpad(true) }}>Panel táctil</button>
           </div>
           {touchpad ? <ScreenTouchpad onMove={moveMouse} onClick={clickMouse} onDrag={dragMouse} onScroll={dy => input.current?.add({ t: "wheel", ...mouse.current, dy })} /> : <>
             <small className="muted">Tocá la imagen para hacer clic; deslizá para arrastrar. Usá dos dedos para hacer zoom.</small>

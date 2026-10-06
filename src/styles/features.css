@@ -564,6 +564,34 @@
   padding: 8px 14px 2px;
 }
 
+.feature-base {
+  margin-top: 2px;
+  color: var(--fg-dim);
+}
+.feature-base.unknown {
+  color: var(--warn);
+}
+.feature-comparison {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px 14px;
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+.feature-comparison .select-trigger {
+  width: 100%;
+  min-width: 0;
+}
+.feature-comparison-note {
+  color: var(--fg-faint);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+.feature-diff-summary {
+  font-size: 11px;
+}
+
 .no-project-recent {
   display: flex;
   flex-direction: column;

@@ -98,6 +98,18 @@ export function contextSettings(list: FeatureList | null = useFeatures.getState(
 export async function openFeatureCreate(repo?: string): Promise<void> {
   const list = useFeatures.getState().list
   if (!list?.git) {
+    notify.info("Los worktrees necesitan un repositorio git", "Abrí un repo, o una carpeta que tenga repos adentro")
+    return
+  }
+  const group = repo ? findGroup(repo, list) : null
+  useLayout.getState().toggleAgent(true)
+  newSession()
+  focusComposer(`Quiero trabajar en un worktree separado${group ? ` del repositorio ${group.name} (${group.path})` : ""}. Crealo o reutilizá uno adecuado con las herramientas de worktrees de GuilleCode, registrá su rama base real y prepará el entorno. No asumas main ni me pidas configurar ramas o carpetas. Trabajá con las rutas y el cwd de ese worktree.\n\nLo que quiero hacer: `)
+}
+
+export async function openFeatureCreateForm(repo?: string): Promise<void> {
+  const list = useFeatures.getState().list
+  if (!list?.git) {
     notify.info("Las features necesitan un repositorio git", "Abrí un repo, o una carpeta que tenga repos adentro")
     return
   }

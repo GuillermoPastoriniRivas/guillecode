@@ -1,10 +1,11 @@
 import { useMemo, useState } from "react"
 import type { Session } from "@opencode-ai/sdk"
-import { deleteSession, newSession, renameSession, selectSession, sessionInRoot, sessionWaiting, useAgent } from "../state/agent"
+import { deleteSession, newSession, renameSession, selectSession, sessionInRoot, sessionWaiting, setSessionArchived, useAgent } from "../state/agent"
 import { useSessionMark } from "../state/unseen"
 import { useProject } from "../state/project"
 import { featureTitle, findFeature, useFeatures } from "../state/features"
 import { normalizePath } from "../lib/paths"
+import { archivedSessionIds, archivedSessionOwner } from "../lib/sessions"
 import { openEditor } from "../state/editors"
 import { useLayout } from "../state/layout"
 import { promptInput } from "../state/quickinput"
@@ -17,7 +18,16 @@ function SessionRow({ session, depth, childCount }: { session: Session; depth: n
   const active = useAgent((s) => s.activeSessionId === session.id)
   const mark = useSessionMark(session.id)
   const flash = useAgent((s) => !!s.doneFlash[session.id])
+  const sessions = useAgent((s) => s.allSessions)
+  const archived = archivedSessionOwner(session, sessions)
+  const [saving, setSaving] = useState(false)
   const summary = session.summary
+
+  const toggleArchive = async () => {
+    setSaving(true)
+    await setSessionArchived(archived?.id ?? session.id, !archived)
+    setSaving(false)
+  }
 
   const open = () => {
     useLayout.getState().toggleAgent(true)
@@ -36,6 +46,12 @@ function SessionRow({ session, depth, childCount }: { session: Session; depth: n
           const title = await promptInput({ title: "Renombrar sesión", value: session.title })
           if (title?.trim()) await renameSession(session.id, title.trim())
         },
+      },
+      {
+        label: archived ? "Restaurar conversación" : "Archivar conversación",
+        icon: archived ? "discard" : "archive",
+        disabled: saving,
+        run: () => void toggleArchive(),
       },
       { separator: true },
       {
@@ -67,7 +83,7 @@ function SessionRow({ session, depth, childCount }: { session: Session; depth: n
         ) : mark === "unseen" || flash ? (
           <Icon name="pass-filled" className="done" />
         ) : (
-          <Icon name={depth > 0 ? "hubot" : "comment-discussion"} />
+          <Icon name={archived ? "archive" : depth > 0 ? "hubot" : "comment-discussion"} />
         )}
       </span>
       <span className="session-main">
@@ -85,6 +101,16 @@ function SessionRow({ session, depth, childCount }: { session: Session; depth: n
           <span className="session-time">{shortAgo(session.time.updated)}</span>
         </span>
       </span>
+      <IconButton
+        icon={archived ? "discard" : "archive"}
+        title={archived ? "Restaurar conversación" : "Archivar conversación"}
+        className="session-archive-action"
+        disabled={saving}
+        onClick={(e) => {
+          e.stopPropagation()
+          void toggleArchive()
+        }}
+      />
     </div>
   )
 }
@@ -94,19 +120,27 @@ export function AgentsView() {
   const loaded = useAgent((s) => s.sessionsLoaded)
   const [query, setQuery] = useState("")
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  const [showArchived, setShowArchived] = useState(false)
+  const archived = useMemo(() => archivedSessionIds(sessions), [sessions])
+  const counts = useMemo(() => ({
+    active: sessions.filter((s) => !archived.has(s.id) && (!s.parentID || !sessions.some((p) => p.id === s.parentID))).length,
+    archived: sessions.filter((s) => archived.has(s.id) && (!s.parentID || !archived.has(s.parentID))).length,
+  }), [sessions, archived])
 
   const tree = useMemo(() => {
+    const visible = sessions.filter((s) => archived.has(s.id) === showArchived)
+    const ids = new Set(visible.map((s) => s.id))
     const children = new Map<string, Session[]>()
-    for (const s of sessions) {
+    for (const s of visible) {
       if (!s.parentID) continue
       const list = children.get(s.parentID) ?? []
       list.push(s)
       children.set(s.parentID, list)
     }
     const q = query.trim().toLowerCase()
-    const roots = sessions.filter((s) => !s.parentID && (!q || (s.title ?? "").toLowerCase().includes(q)))
+    const roots = visible.filter((s) => (!s.parentID || !ids.has(s.parentID)) && (!q || (s.title ?? "").toLowerCase().includes(q)))
     return { roots, children }
-  }, [sessions, query])
+  }, [sessions, query, archived, showArchived])
 
   return (
     <div className="view agents-view">
@@ -123,14 +157,22 @@ export function AgentsView() {
           />
         </span>
       </div>
+      <div className="segmented session-filters" role="group" aria-label="Estado de las conversaciones">
+        <button type="button" className={!showArchived ? "active" : ""} aria-pressed={!showArchived} onClick={() => setShowArchived(false)}>
+          Activas ({counts.active})
+        </button>
+        <button type="button" className={showArchived ? "active" : ""} aria-pressed={showArchived} onClick={() => setShowArchived(true)}>
+          Archivadas ({counts.archived})
+        </button>
+      </div>
       <div className="view-filter">
         <Icon name="search" />
         <input placeholder="Filtrar sesiones" value={query} onChange={(e) => setQuery(e.target.value)} />
       </div>
       <div className="session-list">
         {loaded && tree.roots.length === 0 && (
-          <EmptyState icon="comment-discussion" title={query ? "Sin resultados" : "Todavía no hay sesiones"}>
-            {!query && "Escribile al agente en el panel de la derecha."}
+          <EmptyState icon={showArchived ? "archive" : "comment-discussion"} title={query ? "Sin resultados" : showArchived ? "No hay conversaciones archivadas" : "Todavía no hay sesiones"}>
+            {!query && (showArchived ? "Archivá una conversación para guardarla acá con todo su historial." : "Escribile al agente en el panel de la derecha.")}
           </EmptyState>
         )}
         {tree.roots.map((s) => {
@@ -149,7 +191,7 @@ export function AgentsView() {
             </div>
           )
         })}
-        <OtherFeatureSessions />
+        {!showArchived && <OtherFeatureSessions />}
       </div>
     </div>
   )
@@ -162,8 +204,9 @@ function OtherFeatureSessions() {
   const permissions = useAgent((s) => s.permissions)
   const questions = useAgent((s) => s.questions)
   const list = useFeatures((s) => s.list)
+  const archived = archivedSessionIds(all)
   const active = all.filter((s) => {
-    if (s.parentID || sessionInRoot(s, root)) return false
+    if (s.parentID || archived.has(s.id) || sessionInRoot(s, root)) return false
     const busy = statuses[s.id] && statuses[s.id].type !== "idle"
     return busy || sessionWaiting({ allSessions: all, permissions, questions }, s.id)
   })

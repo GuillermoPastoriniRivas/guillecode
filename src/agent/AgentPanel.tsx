@@ -6,6 +6,7 @@ import {
   focusComposer,
   newSession,
   selectSession,
+  setSessionArchived,
   useAgent,
 } from "../state/agent"
 import { notify } from "../state/toasts"
@@ -20,6 +21,7 @@ import { Icon, IconButton } from "../components/ui"
 import { Logo } from "../components/Logo"
 import { shortAgo } from "../lib/time"
 import { projectName } from "../lib/paths"
+import { archivedSessionOwner, unarchivedSessions } from "../lib/sessions"
 
 const SUGGESTIONS = [
   { icon: "telescope", title: "Entender el proyecto", text: "Explicame la arquitectura de este proyecto y dónde está cada cosa." },
@@ -38,6 +40,8 @@ export function SessionPane({ sessionId, variant }: { sessionId: string | null; 
   const sessions = useAgent((s) => s.sessions)
   const root = useProject((s) => s.root)
   const busy = status === "busy" || status === "retry"
+  const archived = archivedSessionOwner(session, sessions)
+  const recent = useMemo(() => unarchivedSessions(sessions).filter((s) => !s.parentID).slice(0, 6), [sessions])
 
   useEffect(() => {
     if (sessionId) void ensureSessionView(sessionId)
@@ -100,19 +104,16 @@ export function SessionPane({ sessionId, variant }: { sessionId: string | null; 
               </button>
             ))}
           </div>
-          {sessions.length > 0 && (
+          {recent.length > 0 && (
             <div className="agent-recent">
               <div className="agent-recent-title">Sesiones recientes</div>
-              {sessions
-                .filter((s) => !s.parentID)
-                .slice(0, 6)
-                .map((s) => (
-                  <button key={s.id} type="button" className="agent-recent-item" onClick={() => selectSession(s.id)}>
-                    <Icon name="comment-discussion" />
-                    <span className="agent-recent-name">{s.title || "Sin título"}</span>
-                    <span className="agent-recent-time">{shortAgo(s.time.updated)}</span>
-                  </button>
-                ))}
+              {recent.map((s) => (
+                <button key={s.id} type="button" className="agent-recent-item" onClick={() => selectSession(s.id)}>
+                  <Icon name="comment-discussion" />
+                  <span className="agent-recent-name">{s.title || "Sin título"}</span>
+                  <span className="agent-recent-time">{shortAgo(s.time.updated)}</span>
+                </button>
+              ))}
             </div>
           )}
         </div>
@@ -152,7 +153,15 @@ export function SessionPane({ sessionId, variant }: { sessionId: string | null; 
             </button>
           </div>
         )}
-        <Composer sessionId={sessionId} busy={busy} compact={variant === "panel"} usage={usage} />
+        {archived ? (
+          <div className="session-archived-banner">
+            <Icon name="archive" />
+            <span>Conversación archivada. Restaurala para continuar.</span>
+            <button type="button" className="btn btn-xs" onClick={() => void setSessionArchived(archived.id, false)}>Restaurar</button>
+          </div>
+        ) : (
+          <Composer sessionId={sessionId} busy={busy} compact={variant === "panel"} usage={usage} />
+        )}
       </div>
     </div>
   )

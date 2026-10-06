@@ -1621,3 +1621,15 @@
   background: rgba(248, 81, 73, 0.1);
   color: var(--error);
 }
+.session-archived-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  color: var(--fg-dim);
+  font-size: 12px;
+  border-top: 1px solid var(--border);
+}
+.session-archived-banner span {
+  flex: 1;
+}

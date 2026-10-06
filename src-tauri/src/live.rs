@@ -74,7 +74,13 @@ pub fn start(app: &AppHandle) {
 
 fn follow(app: &AppHandle) -> Result<(), String> {
     let server = ensure_server(app)?;
-    let resp = ureq::get(&format!("{}/global/event", server.url))
+    // OpenCode heartbeats arrive every 10 s. Bound an otherwise silent socket
+    // so the hub cannot keep a dead upstream forever while pinging the PWA.
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(5))
+        .timeout_read(Duration::from_secs(35))
+        .build();
+    let resp = agent.get(&format!("{}/global/event", server.url))
         .set("Authorization", &basic_auth(&server))
         .set("Accept", "text/event-stream")
         .call()

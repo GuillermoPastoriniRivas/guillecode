@@ -50,7 +50,7 @@ export function tabId(input: EditorInput): string {
     case "commit":
       return `commit:${input.hash}`
     case "commitFile":
-      return `commitFile:${input.parent}:${input.hash}:${input.path}`
+      return `commitFile:${normalizePath(input.repo).toLowerCase()}:${input.parent}:${input.hash}:${input.path}:${input.label ?? ""}`
     case "review":
       return `review:${input.sessionId}`
     case "pr":

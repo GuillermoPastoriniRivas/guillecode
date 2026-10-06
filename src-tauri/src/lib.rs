@@ -1,6 +1,7 @@
 use serde::Serialize;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::Manager;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
@@ -43,12 +44,16 @@ pub struct ServerState {
     child: Mutex<Option<CommandChild>>,
     config: Mutex<Option<ServerConfig>>,
     project: Mutex<Option<String>>,
+    stopping: AtomicBool,
 }
 
 pub fn ensure_server(app: &tauri::AppHandle) -> Result<ServerConfig, String> {
     let state = app.state::<ServerState>();
     let mut config = {
         let mut cfg = state.config.lock().unwrap();
+        if state.stopping.load(Ordering::SeqCst) {
+            return Err("GuilleCode se está cerrando".into());
+        }
         if cfg.is_none() {
             *cfg = Some(spawn_server(app, &state, &fallback_cwd(app))?);
         }
@@ -125,6 +130,7 @@ fn spawn_server(app: &tauri::AppHandle, state: &ServerState, worktree: &str) -> 
     let (mut rx, child) = command
         .spawn()
         .map_err(|e| format!("no se pudo iniciar opencode: {}", e))?;
+    let pid = child.pid();
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
         while let Some(event) = rx.recv().await {
@@ -134,8 +140,14 @@ fn spawn_server(app: &tauri::AppHandle, state: &ServerState, worktree: &str) -> 
                 CommandEvent::Terminated(payload) => {
                     log::warn!("[opencode] terminado: {:?}", payload);
                     let state = handle.state::<ServerState>();
-                    state.child.lock().unwrap().take();
-                    state.config.lock().unwrap().take();
+                    // Match ensure_server's lock order; an old exit event must
+                    // not clear a replacement engine that has already started.
+                    let mut config = state.config.lock().unwrap();
+                    let mut child = state.child.lock().unwrap();
+                    if child.as_ref().map(|c| c.pid()) == Some(pid) {
+                        child.take();
+                        config.take();
+                    }
                 }
                 _ => {}
             }
@@ -233,6 +245,15 @@ fn resolve_sidecar_path() -> Result<PathBuf, String> {
 
 fn shutdown(app: &tauri::AppHandle) {
     windows::mark_exiting(app);
+    {
+        // Synchronize with ensure_server BEFORE killing the engine. Live SSE,
+        // remote requests and background polling must not spawn it again while
+        // cleanup runs and NSIS starts replacing the bundled executable.
+        let state = app.state::<ServerState>();
+        let mut config = state.config.lock().unwrap();
+        state.stopping.store(true, Ordering::SeqCst);
+        config.take();
+    }
     if let Some(child) = app.state::<ServerState>().child.lock().unwrap().take() {
         #[cfg(windows)]
         {
@@ -369,6 +390,7 @@ pub fn run() {
             desktop::desktop_update,
             desktop::desktop_stop_all,
             desktop::desktop_browser_restart,
+            desktop::desktop_browser_setup,
             live::live_busy_sessions,
             windows::window_new,
             windows::windows_list,
@@ -391,7 +413,7 @@ pub fn run() {
             }
             proc::install(app.handle().clone());
             app.manage(updates::UpdatesState::default());
-            app.manage(ServerState { child: Mutex::new(None), config: Mutex::new(None), project: Mutex::new(None) });
+            app.manage(ServerState { child: Mutex::new(None), config: Mutex::new(None), project: Mutex::new(None), stopping: AtomicBool::new(false) });
             app.manage(windows::WindowsState::default());
             desktop::start(app.handle());
             routines::start(app.handle());

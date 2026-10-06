@@ -10,21 +10,24 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::Manager;
 
-const PACKAGE: &str = "@playwright/mcp";
-const VERSION: &str = "0.0.83";
-const BRIDGE_ARGS: &[&str] = &["--extension", "--snapshot-mode", "none", "--timeout-settle", "250"];
-const ACTION_TIMEOUT_MS: u64 = 5_000;
-const RETRY_TIMEOUT_MS: u64 = 10_000;
+const PACKAGE: &str = "chrome-devtools-mcp";
+const VERSION: &str = "1.10.1";
+const BRIDGE_ARGS: &[&str] = &[
+    "--autoConnect",
+    "--no-usage-statistics",
+    "--no-performance-crux",
+    "--category-memory=false",
+    "--category-performance=false",
+];
 const PREFIX: &str = "browser_";
 const START_TIMEOUT: Duration = Duration::from_secs(150);
 const CALL_TIMEOUT: Duration = Duration::from_secs(110);
-const SNAPSHOT_LIMIT: usize = 24_000;
 const RESULT_LIMIT: usize = 40_000;
 const HINTS: &[(&str, &str)] = &[
-    ("browser_snapshot", "En páginas grandes GuilleCode lo recorta por profundidad: para ubicar un elemento preferí browser_find, y para ver una sección pasá target con su ref."),
-    ("browser_find", "Es la forma más rápida de ubicar un botón, campo o texto y su ref."),
-    ("browser_fill_form", "Llena varios campos en una sola llamada."),
-    ("browser_run_code_unsafe", "Usalo para encadenar varias acciones de la página en una sola llamada."),
+    ("list_pages", "Usalo primero para comprobar la conexión y elegir el pageId de la pestaña correcta. Chrome puede pedirle permiso al usuario."),
+    ("take_snapshot", "Usá los uid del snapshot más reciente de ese pageId. Preferí verbose=false y no pidas un snapshot después de cada acción."),
+    ("fill_form", "Llena varios campos en una sola llamada; pasá pageId y los uid del snapshot."),
+    ("evaluate_script", "Para leer una página grande devolvé solo el texto necesario. Usá pageId para no actuar sobre otra pestaña."),
 ];
 
 #[derive(Serialize, Clone)]
@@ -33,6 +36,8 @@ pub struct BridgeStatus {
     pub state: &'static str,
     pub error: Option<String>,
     pub tools: usize,
+    pub connected: bool,
+    pub connecting: bool,
 }
 
 struct Inner {
@@ -41,7 +46,8 @@ struct Inner {
     tools: Vec<Value>,
     state: &'static str,
     error: Option<String>,
-    token: String,
+    connected: bool,
+    connecting: bool,
     generation: u64,
 }
 
@@ -55,7 +61,7 @@ struct Bridge {
 fn bridge() -> &'static Bridge {
     static BRIDGE: OnceLock<Bridge> = OnceLock::new();
     BRIDGE.get_or_init(|| Bridge {
-        inner: Mutex::new(Inner { child: None, stdin: None, tools: Vec::new(), state: "off", error: None, token: String::new(), generation: 0 }),
+        inner: Mutex::new(Inner { child: None, stdin: None, tools: Vec::new(), state: "off", error: None, connected: false, connecting: false, generation: 0 }),
         pending: Arc::new(Mutex::new(HashMap::new())),
         next: Mutex::new(0),
         starting: Mutex::new(()),
@@ -64,7 +70,7 @@ fn bridge() -> &'static Bridge {
 
 pub fn status() -> BridgeStatus {
     let inner = bridge().inner.lock().unwrap();
-    BridgeStatus { state: inner.state, error: inner.error.clone(), tools: inner.tools.len() }
+    BridgeStatus { state: inner.state, error: inner.error.clone(), tools: inner.tools.len(), connected: inner.connected, connecting: inner.connecting }
 }
 
 fn kill_tree(child: &mut Child) {
@@ -79,25 +85,17 @@ fn kill_tree(child: &mut Child) {
 pub fn stop() {
     let b = bridge();
     let mut inner = b.inner.lock().unwrap();
+    inner.generation += 1;
     inner.stdin = None;
     if let Some(mut child) = inner.child.take() {
         kill_tree(&mut child);
     }
     inner.state = "off";
+    inner.error = None;
+    inner.connected = false;
+    inner.connecting = false;
     inner.tools.clear();
     b.pending.lock().unwrap().clear();
-}
-
-pub fn set_token(token: &str) {
-    let changed = {
-        let mut inner = bridge().inner.lock().unwrap();
-        let changed = inner.token != token;
-        inner.token = token.to_string();
-        changed && inner.child.is_some()
-    };
-    if changed {
-        stop();
-    }
 }
 
 fn send_line(message: &Value) -> Result<(), String> {
@@ -105,7 +103,7 @@ fn send_line(message: &Value) -> Result<(), String> {
     let stdin = inner.stdin.as_mut().ok_or("el puente del navegador no está corriendo")?;
     let mut line = serde_json::to_string(message).map_err(|e| e.to_string())?;
     line.push('\n');
-    stdin.write_all(line.as_bytes()).and_then(|_| stdin.flush()).map_err(|e| format!("no pude hablar con Playwright: {}", e))
+    stdin.write_all(line.as_bytes()).and_then(|_| stdin.flush()).map_err(|e| format!("no pude hablar con Chrome DevTools: {}", e))
 }
 
 fn request(method: &str, params: Value, timeout: Duration) -> Result<Value, String> {
@@ -123,10 +121,10 @@ fn request(method: &str, params: Value, timeout: Duration) -> Result<Value, Stri
     }
     let reply = rx.recv_timeout(timeout).map_err(|_| {
         b.pending.lock().unwrap().remove(&id);
-        format!("Playwright no respondió a {} a tiempo", method)
+        format!("Chrome DevTools no respondió a {} a tiempo. Si Chrome está esperando permiso, aceptá la conexión y volvé a probar", method)
     })?;
     if let Some(error) = reply.get("error") {
-        return Err(error["message"].as_str().unwrap_or("error de Playwright").to_string());
+        return Err(error["message"].as_str().unwrap_or("error de Chrome DevTools").to_string());
     }
     Ok(reply["result"].clone())
 }
@@ -142,7 +140,7 @@ fn bridge_dir() -> Option<PathBuf> {
 fn installed_cli(dir: &Path) -> Option<PathBuf> {
     let package = dir.join("node_modules").join(PACKAGE);
     let manifest: Value = serde_json::from_str(&std::fs::read_to_string(package.join("package.json")).ok()?).ok()?;
-    let cli = package.join("cli.js");
+    let cli = package.join("build/src/bin/chrome-devtools-mcp.js");
     (manifest["version"].as_str() == Some(VERSION) && cli.is_file()).then_some(cli)
 }
 
@@ -163,7 +161,7 @@ fn install(dir: &Path) -> Result<PathBuf, String> {
     if !out.status.success() {
         return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
     }
-    installed_cli(dir).ok_or_else(|| "npm terminó pero Playwright MCP no quedó instalado".to_string())
+    installed_cli(dir).ok_or_else(|| "npm terminó pero Chrome DevTools MCP no quedó instalado".to_string())
 }
 
 fn ensure_installed(dir: &Path) -> Result<PathBuf, String> {
@@ -205,29 +203,29 @@ fn bridge_command() -> Command {
             cmd
         }
     };
-    cmd.args(BRIDGE_ARGS).arg("--timeout-action").arg(ACTION_TIMEOUT_MS.to_string());
+    cmd.args(BRIDGE_ARGS)
+        .env("CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS", "1")
+        .env("CHROME_DEVTOOLS_MCP_NO_CONFIG_DISCOVERY", "1")
+        .env_remove("PLAYWRIGHT_MCP_EXTENSION_TOKEN");
     if let Some(dir) = dir.filter(|d| d.is_dir()) {
-        cmd.arg("--output-dir").arg(dir.join("output")).current_dir(dir);
+        cmd.current_dir(dir);
     }
     cmd
 }
 
 fn launch() -> Result<(), String> {
     let b = bridge();
-    let (token, generation) = {
+    let generation = {
         let mut inner = b.inner.lock().unwrap();
         inner.generation += 1;
         inner.state = "starting";
         inner.error = None;
-        (inner.token.clone(), inner.generation)
+        inner.generation
     };
     let mut cmd = bridge_command();
     cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    if !token.is_empty() {
-        cmd.env("PLAYWRIGHT_MCP_EXTENSION_TOKEN", &token);
-    }
     hide_console(&mut cmd);
-    let mut child = cmd.spawn().map_err(|e| format!("no pude ejecutar npx (¿está instalado Node.js?): {}", e))?;
+    let mut child = cmd.spawn().map_err(|e| format!("no pude ejecutar Chrome DevTools MCP (requiere Node.js 20.19+ o 22.12+): {}", e))?;
     let stdout = child.stdout.take().ok_or("sin stdout")?;
     let stderr = child.stderr.take().ok_or("sin stderr")?;
     let stdin = child.stdin.take().ok_or("sin stdin")?;
@@ -253,13 +251,14 @@ fn launch() -> Result<(), String> {
         let mut inner = b.inner.lock().unwrap();
         if inner.generation == generation {
             inner.state = "error";
-            inner.error.get_or_insert_with(|| "el proceso de Playwright se cerró".into());
+            inner.error.get_or_insert_with(|| "el proceso de Chrome DevTools se cerró".into());
+            inner.connected = false;
+            inner.connecting = false;
             inner.stdin = None;
             inner.child = None;
             inner.tools.clear();
+            b.pending.lock().unwrap().clear();
         }
-        drop(inner);
-        b.pending.lock().unwrap().clear();
     });
     std::thread::spawn(move || {
         for line in BufReader::new(stderr).lines() {
@@ -329,7 +328,7 @@ fn stop_process_only() {
 
 pub fn tools() -> Vec<Value> {
     if let Err(e) = ensure() {
-        log::warn!("[browser] no se pudo iniciar Playwright MCP: {}", e);
+        log::warn!("[browser] no se pudo iniciar Chrome DevTools MCP: {}", e);
         return Vec::new();
     }
     bridge()
@@ -351,23 +350,51 @@ pub fn tools() -> Vec<Value> {
 }
 
 pub fn original_name(name: &str) -> String {
-    let known = bridge().inner.lock().unwrap().tools.iter().any(|t| t["name"].as_str() == Some(name));
-    if known {
-        name.to_string()
-    } else {
-        format!("{}{}", PREFIX, name)
-    }
+    name.strip_prefix(PREFIX).unwrap_or(name).to_string()
 }
 
 pub fn call(name: &str, arguments: Value) -> Result<Value, String> {
     ensure()?;
     let tool = original_name(name);
-    let mut invoke = |tool: &str, arguments: &Value| request("tools/call", json!({ "name": tool, "arguments": arguments }), CALL_TIMEOUT);
-    let result = with_retry(&tool, &arguments, &mut invoke)?;
-    Ok(compact(&tool, &arguments, result))
+    let generation = {
+        let mut inner = bridge().inner.lock().unwrap();
+        if !inner.tools.iter().any(|t| t["name"].as_str() == Some(&tool)) {
+            return Err(format!("Chrome DevTools no ofrece la herramienta {}", tool));
+        }
+        inner.connecting = !inner.connected;
+        inner.error = None;
+        inner.generation
+    };
+    // No repetir automáticamente una acción: un timeout puede ocurrir después del clic.
+    let result = request("tools/call", json!({ "name": tool, "arguments": arguments }), CALL_TIMEOUT);
+    {
+        let mut inner = bridge().inner.lock().unwrap();
+        if inner.generation == generation {
+            inner.connecting = false;
+            match &result {
+                Ok(r) if !failed(r) => inner.connected = true,
+                Ok(r) if !inner.connected || connection_failure(&text_of(r)) => {
+                    inner.connected = false;
+                    inner.error = Some(cut_at(&text_of(r), 1500).to_string());
+                }
+                Err(e) => {
+                    inner.connected = false;
+                    inner.error = Some(e.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+    result.map(compact)
 }
 
-type Invoke<'a> = dyn FnMut(&str, &Value) -> Result<Value, String> + 'a;
+pub fn connect() -> Result<BridgeStatus, String> {
+    let result = call("list_pages", json!({}))?;
+    if failed(&result) {
+        return Err(text_of(&result));
+    }
+    Ok(status())
+}
 
 fn text_of(result: &Value) -> String {
     result["content"].as_array().map(|items| items.iter().filter_map(|i| i["text"].as_str()).collect::<Vec<_>>().join("\n")).unwrap_or_default()
@@ -377,52 +404,15 @@ fn failed(result: &Value) -> bool {
     result["isError"].as_bool().unwrap_or(false)
 }
 
-fn timed_out(result: &Value) -> bool {
-    failed(result) && text_of(result).contains(&format!("Timeout {}ms exceeded", ACTION_TIMEOUT_MS))
+fn connection_failure(text: &str) -> bool {
+    ["Could not connect to Chrome", "Browser disconnected", "Connection closed", "ECONNREFUSED", "DevToolsActivePort"].iter().any(|part| text.contains(part))
 }
 
-fn set_action_timeout(invoke: &mut Invoke, ms: u64) -> bool {
-    let code = format!(
-        "async (page) => {{ const s = Object.getOwnPropertySymbols(page).find((x) => x.description === 'tabSymbol'); const tab = s && page[s]; if (!tab || !tab.actionTimeoutOptions) return false; tab.actionTimeoutOptions.timeout = {}; return true }}",
-        ms
-    );
-    match invoke("browser_run_code_unsafe", &json!({ "code": code })) {
-        Ok(r) => !failed(&r) && text_of(&r).contains("### Result\ntrue"),
-        Err(_) => false,
-    }
-}
-
-fn with_retry(tool: &str, arguments: &Value, invoke: &mut Invoke) -> Result<Value, String> {
-    let first = invoke(tool, arguments)?;
-    if !timed_out(&first) {
-        return Ok(first);
-    }
-    let raised = set_action_timeout(invoke, RETRY_TIMEOUT_MS);
-    let second = invoke(tool, arguments);
-    if raised {
-        set_action_timeout(invoke, ACTION_TIMEOUT_MS);
-    }
-    let mut second = second?;
-    let retry_secs = (if raised { RETRY_TIMEOUT_MS } else { ACTION_TIMEOUT_MS }) / 1000;
-    let note = if failed(&second) {
-        format!("[GuilleCode] No respondió en {} s; se reintentó con {} s y volvió a fallar.", ACTION_TIMEOUT_MS / 1000, retry_secs)
-    } else {
-        format!("[GuilleCode] No respondió en {} s; se reintentó con {} s y funcionó.", ACTION_TIMEOUT_MS / 1000, retry_secs)
-    };
-    if let Some(item) = second["content"].as_array_mut().and_then(|items| items.iter_mut().find(|i| i["type"] == "text")) {
-        let text = item["text"].as_str().unwrap_or_default();
-        item["text"] = json!(format!("{}\n\n{}", note, text));
-    }
-    Ok(second)
-}
-
-fn compact(tool: &str, arguments: &Value, mut result: Value) -> Value {
-    let by_depth = tool == "browser_snapshot" && arguments.get("depth").is_none();
+fn compact(mut result: Value) -> Value {
     if let Some(items) = result["content"].as_array_mut() {
         for item in items.iter_mut().filter(|i| i["type"] == "text") {
             let Some(text) = item["text"].as_str() else { continue };
-            let shorter = if by_depth { trim_snapshot(text, SNAPSHOT_LIMIT) } else { None }.or_else(|| truncate(text, RESULT_LIMIT));
-            if let Some(shorter) = shorter {
+            if let Some(shorter) = truncate(text, RESULT_LIMIT) {
                 item["text"] = json!(shorter);
             }
         }
@@ -447,153 +437,48 @@ fn truncate(text: &str, limit: usize) -> Option<String> {
     }
     let kept = cut_at(text, limit);
     Some(format!(
-        "{}\n\n[GuilleCode] Resultado recortado: tenía {} caracteres y se muestran los primeros {}. Pedí algo más específico: browser_find con un texto más preciso, browser_snapshot con target, o un evaluate que devuelva solo lo necesario.",
+        "{}\n\n[GuilleCode] Resultado recortado: tenía {} bytes y se muestran los primeros {}. Usá browser_evaluate_script con pageId para leer solo la sección necesaria; en snapshots preferí verbose=false y en red usá pageSize.",
         kept,
         text.len(),
         kept.len()
     ))
 }
 
-fn trim_snapshot(text: &str, limit: usize) -> Option<String> {
-    const OPEN: &str = "```yaml\n";
-    if text.len() <= limit {
-        return None;
-    }
-    let start = text.find(OPEN)? + OPEN.len();
-    let end = text[start..].rfind("\n```").map(|i| start + i).unwrap_or(text.len());
-    let (head, yaml, tail) = (&text[..start], &text[start..end], &text[end..]);
-    let lines: Vec<(usize, &str)> = yaml.lines().map(|l| ((l.len() - l.trim_start_matches(' ').len()) / 2, l)).collect();
-    let mut sizes: Vec<usize> = Vec::new();
-    for (depth, line) in &lines {
-        if sizes.len() <= *depth {
-            sizes.resize(depth + 1, 0);
-        }
-        sizes[*depth] += line.len() + 1;
-    }
-    let budget = limit.saturating_sub(head.len() + tail.len() + 600);
-    let mut total = 0;
-    let mut depth = 0;
-    for (d, size) in sizes.iter().enumerate() {
-        if d > 0 && total + size > budget {
-            break;
-        }
-        total += size;
-        depth = d;
-    }
-    let kept = lines.iter().filter(|(d, _)| *d <= depth).map(|(_, l)| *l).collect::<Vec<_>>().join("\n");
-    let note = format!(
-        "[GuilleCode] El snapshot completo tiene ~{} mil tokens: se muestran solo los primeros {} niveles del árbol, y las líneas que terminan en «:» tienen contenido oculto. Para ver una sección usá browser_snapshot con target=<ref>; para ubicar un texto, botón o campo usá browser_find; para leer el texto de la página usá browser_evaluate con () => document.body.innerText.",
-        (text.len() / 4000).max(1),
-        depth + 1
-    );
-    Some(format!("{}\n\n{}{}{}", note, head, cut_at(&kept, budget), tail))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn snapshot(yaml: &str) -> String {
-        format!("### Page\n- Page URL: https://x\n### Snapshot\n```yaml\n{}\n```\n", yaml)
-    }
-
-    fn reply(text: &str, error: bool) -> Value {
-        json!({ "content": [{ "type": "text", "text": text }], "isError": error })
-    }
-
-    fn timeout_reply(ms: u64) -> Value {
-        reply(&format!("### Error\nTimeoutError: browserBackend.callTool: Timeout {}ms exceeded.", ms), true)
-    }
-
-    fn scripted(replies: Vec<Value>) -> (std::rc::Rc<std::cell::RefCell<Vec<String>>>, impl FnMut(&str, &Value) -> Result<Value, String>) {
-        let calls = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-        let seen = calls.clone();
-        let mut replies = replies.into_iter();
-        let invoke = move |tool: &str, args: &Value| {
-            let ms = args["code"].as_str().and_then(|c| c.split("timeout = ").nth(1)).and_then(|r| r.split(';').next()).map(|ms| format!("({})", ms)).unwrap_or_default();
-            seen.borrow_mut().push(format!("{}{}", tool, ms));
-            Ok(replies.next().expect("una respuesta por llamada"))
-        };
-        (calls, invoke)
+    #[test]
+    #[ignore = "requires Chrome 144+ with remote debugging enabled and the user's connection approval"]
+    fn devtools_end_to_end() {
+        stop();
+        let listed = tools();
+        assert!(listed.iter().any(|t| t["name"] == "list_pages"), "{}", status().error.unwrap_or_default());
+        assert!(listed.iter().any(|t| t["name"] == "take_snapshot"));
+        assert_eq!(status().state, "ready");
+        assert!(!status().connected, "listing MCP tools must not claim Chrome is connected");
+        println!("Chrome DevTools ready; allow the new Chrome connection if prompted.");
+        let connected = connect();
+        let checked = status();
+        stop();
+        assert!(connected.is_ok(), "{:?}", connected.err());
+        assert!(checked.connected);
+        assert!(!checked.connecting);
+        assert!(checked.error.is_none());
+        assert!(!status().connected);
     }
 
     #[test]
-    fn actions_that_answer_in_time_run_once() {
-        let (calls, mut invoke) = scripted(vec![reply("ok", false)]);
-        let r = with_retry("browser_click", &json!({}), &mut invoke).unwrap();
-        assert_eq!(text_of(&r), "ok");
-        assert_eq!(*calls.borrow(), vec!["browser_click"]);
+    fn routes_native_devtools_names_without_a_second_browser_prefix() {
+        assert_eq!(original_name("list_pages"), "list_pages");
+        assert_eq!(original_name("browser_list_pages"), "list_pages");
+        assert_eq!(original_name("evaluate_script"), "evaluate_script");
     }
 
     #[test]
-    fn an_action_timeout_retries_with_ten_seconds_and_restores_five() {
-        let raised = reply("### Result\ntrue\n### Ran Playwright code", false);
-        let (calls, mut invoke) = scripted(vec![timeout_reply(5000), raised.clone(), reply("clickeado", false), raised]);
-        let r = with_retry("browser_click", &json!({ "target": "e3" }), &mut invoke).unwrap();
-        assert_eq!(*calls.borrow(), vec!["browser_click", "browser_run_code_unsafe(10000)", "browser_click", "browser_run_code_unsafe(5000)"]);
-        assert!(!failed(&r));
-        assert!(text_of(&r).starts_with("[GuilleCode] No respondió en 5 s; se reintentó con 10 s y funcionó."));
-        assert!(text_of(&r).ends_with("clickeado"));
-    }
-
-    #[test]
-    fn a_second_timeout_is_reported_as_a_failure() {
-        let raised = reply("### Result\ntrue", false);
-        let (calls, mut invoke) = scripted(vec![timeout_reply(5000), raised.clone(), timeout_reply(10000), raised]);
-        let r = with_retry("browser_type", &json!({}), &mut invoke).unwrap();
-        assert_eq!(calls.borrow().len(), 4);
-        assert!(failed(&r));
-        assert!(text_of(&r).contains("se reintentó con 10 s y volvió a fallar"));
-    }
-
-    #[test]
-    fn if_the_timeout_cannot_be_raised_it_retries_once_without_restoring() {
-        let (calls, mut invoke) = scripted(vec![timeout_reply(5000), reply("### Result\nfalse", false), reply("ok", false)]);
-        let r = with_retry("browser_hover", &json!({}), &mut invoke).unwrap();
-        assert_eq!(*calls.borrow(), vec!["browser_hover", "browser_run_code_unsafe(10000)", "browser_hover"]);
-        assert!(text_of(&r).contains("se reintentó con 5 s y funcionó"));
-    }
-
-    #[test]
-    fn other_errors_and_navigation_timeouts_are_not_retried() {
-        let (calls, mut invoke) = scripted(vec![timeout_reply(60000)]);
-        assert!(failed(&with_retry("browser_navigate", &json!({}), &mut invoke).unwrap()));
-        assert_eq!(calls.borrow().len(), 1);
-        let (calls, mut invoke) = scripted(vec![reply("Ref e9 not found in the current page snapshot", true)]);
-        with_retry("browser_click", &json!({}), &mut invoke).unwrap();
-        assert_eq!(calls.borrow().len(), 1);
-    }
-
-    #[test]
-    fn small_snapshots_pass_untouched() {
-        let text = snapshot("- main [ref=e1]:\n  - button \"Ok\" [ref=e2]");
-        assert!(trim_snapshot(&text, SNAPSHOT_LIMIT).is_none());
-        assert!(truncate(&text, RESULT_LIMIT).is_none());
-    }
-
-    #[test]
-    fn big_snapshots_keep_the_shallow_levels_and_valid_refs() {
-        let mut yaml = String::from("- generic [ref=e1]:\n  - banner [ref=e2]:\n    - link \"Inicio\" [ref=e3]\n  - main [ref=e4]:\n");
-        for i in 0..3000 {
-            yaml.push_str(&format!("    - paragraph [ref=e{}]:\n      - text: contenido largo número {}\n", i + 10, i));
-        }
-        let text = snapshot(&yaml);
-        let trimmed = trim_snapshot(&text, 4000).unwrap();
-        assert!(trimmed.len() <= 4000, "{}", trimmed.len());
-        assert!(trimmed.contains("- main [ref=e4]:"));
-        assert!(trimmed.contains("[GuilleCode]"));
-        assert!(trimmed.contains("Page URL: https://x"));
-        assert!(trimmed.trim_end().ends_with("```"));
-        assert!(!trimmed.contains("contenido largo"));
-    }
-
-    #[test]
-    fn explicit_depth_is_respected_and_only_truncated() {
-        let big = snapshot(&"- text: ñandú\n".repeat(5000));
-        let result = compact("browser_snapshot", &json!({ "depth": 30 }), json!({ "content": [{ "type": "text", "text": big }] }));
-        let text = result["content"][0]["text"].as_str().unwrap();
-        assert!(text.contains("Resultado recortado"));
-        assert!(text.len() < RESULT_LIMIT + 400);
+    fn browser_errors_are_distinct_from_stale_element_errors() {
+        assert!(connection_failure("Could not connect to Chrome. Check chrome://inspect/#remote-debugging."));
+        assert!(!connection_failure("Element with uid 3_4 not found"));
     }
 
     #[test]
@@ -602,7 +487,7 @@ mod tests {
         let out = truncate(&text, RESULT_LIMIT).unwrap();
         assert!(out.starts_with('ñ'));
         assert!(out.contains("Resultado recortado"));
-        let images = compact("browser_take_screenshot", &json!({}), json!({ "content": [{ "type": "image", "data": "x".repeat(RESULT_LIMIT * 2) }] }));
+        let images = compact(json!({ "content": [{ "type": "image", "data": "x".repeat(RESULT_LIMIT * 2) }] }));
         assert_eq!(images["content"][0]["data"].as_str().unwrap().len(), RESULT_LIMIT * 2);
     }
 }

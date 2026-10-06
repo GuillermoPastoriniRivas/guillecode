@@ -5,7 +5,7 @@ import { gitApplyPatch, gitShowFile, gitStage, gitUnstage, gitDiscard, isUntrack
 import { readFile, writeFile } from "../lib/fs"
 import { isRasterImage } from "../lib/files"
 import { fileImageDataUrl, gitImageDataUrl } from "../lib/imageData"
-import { joinPath } from "../lib/paths"
+import { basename, joinPath, samePath } from "../lib/paths"
 import { errorMessage } from "../lib/tauri"
 import { gitAction, refreshRepo, useGit } from "../state/git"
 import { openFile } from "../state/editors"
@@ -14,6 +14,7 @@ import { closeTab } from "./tabs"
 import { confirmAction } from "../components/Dialog"
 import { FileIcon, Icon, Spinner } from "../components/ui"
 import { ImageDiff } from "../components/ImageDiff"
+import { featureTitle, useFeatures } from "../state/features"
 
 type Loaded = { original: string; modified: string; editable: boolean; bom: boolean; eol: "\n" | "\r\n" }
 
@@ -38,6 +39,7 @@ export function GitDiffEditor({ repo, path, staged, tabId }: { repo: string; pat
   const [error, setError] = useState<string | null>(null)
   const revision = useGit((s) => s.revision)
   const entry = useGit((s) => s.byRepo[repo]?.status?.entries.find((e) => e.path === path))
+  const feature = useFeatures((s) => s.list?.features.find((f) => samePath(f.path, repo)))
   const abs = joinPath(repo, path)
   const raster = isRasterImage(path)
 
@@ -120,6 +122,7 @@ export function GitDiffEditor({ repo, path, staged, tabId }: { repo: string; pat
     <>
       <FileIcon path={path} />
       <span className="diff-title">{path}</span>
+      <span className="diff-kind" title={repo}>{feature ? featureTitle(feature) : basename(repo)}</span>
       <span className={`diff-kind ${staged ? "staged" : "working"}`}>{staged ? "Staged vs HEAD" : "Cambios vs index"}</span>
       <button type="button" className="btn btn-xs" onClick={() => openFile(abs)}>
         <Icon name="go-to-file" /> Abrir archivo

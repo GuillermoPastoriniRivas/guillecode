@@ -8,6 +8,7 @@ import {
   DEFAULT_MODEL,
   modelKey,
   rememberSessionDirectory,
+  resetConnection,
   sessionDirectory,
   type ModelRef,
 } from "../lib/opencode"
@@ -16,6 +17,7 @@ import { call, isTauri } from "../lib/tauri"
 import { normalizePath, relativePath, samePath, toFileUrl } from "../lib/paths"
 import { notify } from "./toasts"
 import { chooseAvailableModel, hasAccount, modelAvailable, modelVisible } from "../lib/providers"
+import { isArchivedSession, sessionTreeIds } from "../lib/sessions"
 
 export type ChatMessage = { info: Message; parts: Part[] }
 
@@ -201,6 +203,7 @@ function enqueue(m: Mutation) {
 }
 
 function flush() {
+  if (flushTimer) clearTimeout(flushTimer)
   flushTimer = null
   const pending = queue
   queue = []
@@ -218,6 +221,31 @@ export function isHelperSession(s: Session): boolean {
 
 function sortSessions(list: Session[]): Session[] {
   return [...list].filter((s) => !isHelperSession(s)).sort((a, b) => b.time.updated - a.time.updated)
+}
+
+function sessionUpdate(s: AgentState, info: Session): Partial<AgentState> {
+  const previous = s.allSessions.find((x) => x.id === info.id)
+  const allSessions = sortSessions([info, ...s.allSessions.filter((x) => x.id !== info.id)])
+  const others = s.sessions.filter((x) => x.id !== info.id)
+  const patch: Partial<AgentState> = {
+    allSessions,
+    sessions: sessionInRoot(info, boundProject) ? sortSessions([info, ...others]) : others,
+  }
+  if (!isArchivedSession(info) || (previous && isArchivedSession(previous))) return patch
+  return { ...patch, ...withoutSessionTabs(s, sessionTreeIds(allSessions, [info.id])) }
+}
+
+function withoutSessionTabs(s: AgentState, ids: Set<string>): Partial<AgentState> {
+  const open = s.openSessionIds.filter((id) => !ids.has(id))
+  if (open.length === s.openSessionIds.length) return {}
+  if (open.length === 0) open.push(DRAFT_TAB)
+  const patch: Partial<AgentState> = { openSessionIds: open }
+  if (s.activeSessionId && ids.has(s.activeSessionId)) {
+    const index = Math.max(0, s.openSessionIds.indexOf(s.activeSessionId))
+    const next = open[Math.min(index, open.length - 1)]
+    patch.activeSessionId = next === DRAFT_TAB ? null : next
+  }
+  return patch
 }
 
 function withView(s: AgentState, sessionID: string, fn: (v: SessionView) => SessionView): Partial<AgentState> {
@@ -296,8 +324,13 @@ export async function loadSessions(): Promise<boolean> {
     if (boundProject && !samePath(root, boundProject)) return true
     const valid = new Set(list.map((x) => x.id))
     useAgent.setState((s) => {
-      const active = s.activeSessionId && valid.has(s.activeSessionId) ? s.activeSessionId : null
-      let open = s.openSessionIds.filter((x) => x === DRAFT_TAB || valid.has(x))
+      const newlyArchived = list.filter((x) => {
+        const previous = s.allSessions.find((p) => p.id === x.id)
+        return isArchivedSession(x) && previous && !isArchivedSession(previous)
+      }).map((x) => x.id)
+      const tabs = { ...s, ...withoutSessionTabs(s, sessionTreeIds(list, newlyArchived)) }
+      const active = tabs.activeSessionId && valid.has(tabs.activeSessionId) ? tabs.activeSessionId : null
+      let open = tabs.openSessionIds.filter((x) => x === DRAFT_TAB || valid.has(x))
       if (active && !open.includes(active)) open = [...open, active]
       if (!active && !open.includes(DRAFT_TAB)) open = [...open, DRAFT_TAB]
       if (open.length === 0) open = [DRAFT_TAB]
@@ -491,7 +524,7 @@ const statusMirror: Record<string, SessionStatus["type"]> = {}
 function applyStatus(sessionID: string, st: SessionStatus) {
   const prev = statusMirror[sessionID]
   statusMirror[sessionID] = st.type
-  const finished = prev === "busy" && st.type === "idle"
+  const finished = (prev === "busy" || prev === "retry") && st.type === "idle"
   enqueue((s) => {
     const patch: Partial<AgentState> = { statuses: { ...s.statuses, [sessionID]: st } }
     if (finished) patch.doneFlash = { ...s.doneFlash, [sessionID]: Date.now() }
@@ -506,6 +539,7 @@ function applyStatus(sessionID: string, st: SessionStatus) {
         return { doneFlash }
       })
     }, DONE_FLASH_MS)
+    if (useAgent.getState().views[sessionID]) void ensureSessionView(sessionID, true)
     onSessionFinished(sessionID)
   }
 }
@@ -514,7 +548,11 @@ export function syncStatuses(map: Record<string, SessionStatus>) {
   for (const [id, st] of Object.entries(map)) {
     const prev = statusMirror[id]
     if (st.type === "idle" && (!prev || prev === "idle")) continue
-    if (prev === st.type) continue
+    if (prev === st.type) {
+      if (st.type !== "retry") continue
+      const current = useAgent.getState().statuses[id]
+      if (current?.type === "retry" && current.attempt === st.attempt && current.message === st.message && current.next === st.next) continue
+    }
     applyStatus(id, st)
   }
   for (const [id, prev] of Object.entries(statusMirror)) {
@@ -598,13 +636,7 @@ function handleEvent(e: ServerEvent, directory?: string) {
     case "session.updated": {
       const info = p.info as Session
       rememberSessionDirectory(info.id, info.directory ?? directory)
-      enqueue((s) => {
-        const others = s.sessions.filter((x) => x.id !== info.id)
-        return {
-          allSessions: sortSessions([info, ...s.allSessions.filter((x) => x.id !== info.id)]),
-          sessions: sessionInRoot(info, boundProject) ? sortSessions([info, ...others]) : others,
-        }
-      })
+      enqueue((s) => sessionUpdate(s, info))
       break
     }
     case "session.deleted": {
@@ -682,24 +714,39 @@ async function refreshAfterConnect(): Promise<void> {
   }
   void loadOtherSessions()
   await loadAgentMeta().catch(() => undefined)
-  const active = useAgent.getState().activeSessionId
-  if (active) void ensureSessionView(active, true)
+  const { activeSessionId, openSessionIds } = useAgent.getState()
+  const ids = new Set([...openSessionIds, activeSessionId].filter((id): id is string => !!id && id !== DRAFT_TAB))
+  for (const id of ids) void ensureSessionView(id, true)
 }
 
 type GlobalEvent = { directory?: string; payload?: ServerEvent } & Partial<ServerEvent>
 
 export function startEventStream(): () => void {
   let active = true
-  let retry: ReturnType<typeof setTimeout> | null = null
+  let streamController: AbortController | null = null
+  let wakeRetry: (() => void) | null = null
+  let polling = false
   const loop = async () => {
     while (active) {
+      const controller = new AbortController()
+      streamController = controller
+      // OpenCode sends a heartbeat every 10 s. A silent, half-open stream
+      // must not keep this window attached to a dead engine forever.
+      let watchdog = setTimeout(() => controller.abort(), 35000)
       try {
         const sdk = await clientForDirectory(await currentDirectory())
+        if (!active) break
         const events = await sdk.global.event({
-          onSseError: () => useAgent.setState({ connected: false }),
+          signal: controller.signal,
+          sseMaxRetryAttempts: 1,
+          onSseError: () => {
+            if (active) useAgent.setState({ connected: false })
+          },
         })
         for await (const event of events.stream) {
           if (!active) break
+          clearTimeout(watchdog)
+          watchdog = setTimeout(() => controller.abort(), 35000)
           const raw = event as unknown as GlobalEvent
           const e = (raw.payload ?? raw) as ServerEvent
           if (!e?.type) continue
@@ -711,19 +758,45 @@ export function startEventStream(): () => void {
         }
       } catch {
         if (!active) break
+      } finally {
+        clearTimeout(watchdog)
+        controller.abort()
+        if (streamController === controller) streamController = null
       }
+      if (!active) break
       useAgent.setState({ connected: false })
-      if (active) await new Promise((r) => (retry = setTimeout(r, 1500)))
+      // The sidecar can restart on a new port with a new password. Retrying
+      // inside the SDK reuses the old URL; resolve server_config again instead.
+      resetConnection()
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(done, 1500)
+        function done() {
+          clearTimeout(timer)
+          wakeRetry = null
+          resolve()
+        }
+        wakeRetry = done
+      })
     }
   }
   void loop()
   const poll = setInterval(() => {
-    if (document.hidden || !useAgent.getState().connected) return
-    statusesEverywhere().then(syncStatuses).catch(() => undefined)
+    if (document.hidden || polling) return
+    polling = true
+    void statusesEverywhere()
+      .then((statuses) => {
+        if (!active) return
+        syncStatuses(statuses)
+        const id = useAgent.getState().activeSessionId
+        if (!useAgent.getState().connected && id) void ensureSessionView(id, true)
+      })
+      .catch(() => undefined)
+      .finally(() => { polling = false })
   }, 5000)
   return () => {
     active = false
-    if (retry) clearTimeout(retry)
+    streamController?.abort()
+    wakeRetry?.()
     clearInterval(poll)
   }
 }
@@ -992,6 +1065,21 @@ function directoryOf(sessionID: string): { directory?: string } {
 
 export async function renameSession(id: string, title: string) {
   await client.session.update({ path: { id }, body: { title } })
+}
+
+export async function setSessionArchived(id: string, archived: boolean): Promise<boolean> {
+  try {
+    const info = await api<Session>("PATCH", `/session/${id}`, { time: { archived: archived ? Date.now() : 0 } })
+    if (!info?.id || isArchivedSession(info) !== archived) throw new Error("El motor no guardó el estado de la conversación.")
+    rememberSessionDirectory(info.id, info.directory)
+    flush()
+    useAgent.setState((s) => sessionUpdate(s, info))
+    notify.info(archived ? "Conversación archivada" : "Conversación restaurada", archived ? "Podés recuperarla desde Archivadas en el historial." : undefined)
+    return true
+  } catch (e) {
+    notify.error(archived ? "No se pudo archivar" : "No se pudo restaurar", e instanceof Error ? e.message : String(e))
+    return false
+  }
 }
 
 export async function deleteSession(id: string) {

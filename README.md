@@ -27,9 +27,17 @@ Funciones adicionales:
 
 - Git requiere Git para Windows.
 - Pull requests requieren GitHub CLI (`gh`) autenticado.
-- Control de Chrome requiere Node.js/npm y la extensión de Playwright; el puente descarga Playwright MCP mediante npx.
+- Control de Chrome requiere Chrome 144+ y Node.js/npm (Node 20.19+, 22.12+ o posterior compatible). Usa Chrome DevTools MCP con `autoConnect`, sin extensión ni token; el puente instala una versión fija localmente.
 - Acceso desde celular requiere Tailscale configurado.
 - Transcripción de audio requiere configurar un servicio y su API key; el login de ChatGPT no incluye la API de transcripción.
+
+### Conectar tu Chrome
+
+1. Abrí **Control de la PC** en GuilleCode y activá el control.
+2. Pulsá **Abrir configuración de Chrome**, o abrí `chrome://inspect/#remote-debugging` en Chrome, y habilitá la depuración remota.
+3. Pulsá **Probar / reconectar** y aceptá **Permitir** en Chrome. Se verifica la conexión leyendo las pestañas; «Chrome DevTools listo» solo indica que el servidor MCP arrancó.
+
+Chrome pide permiso en cada nueva conexión de depuración. La conexión reutiliza las ventanas y sesiones del perfil elegido por Chrome; con varios perfiles, verificá que sea el deseado. El agente usa `browser_*` para el contenido web y `desktop_*` como respaldo para la barra, los menús y los diálogos nativos.
 
 ## Desarrollo y distribución
 
@@ -63,5 +71,7 @@ npm run lint
 ```
 
 Los tests E2E usan Microsoft Edge con cuentas y llamadas IPC simuladas, sin modificar cuentas reales. El smoke test ejecuta el OpenCode incluido con un perfil temporal vacío y comprueba que el login de ChatGPT está disponible sin cuenta OpenCode. No consume tokens.
+
+Para comprobar el MCP del navegador instalado por GuilleCode, ejecutá `node tests/browser-smoke.mjs`. Con Chrome abierto y la depuración habilitada, `node tests/browser-smoke.mjs --live` también comprueba snapshot, formulario, clic y lectura en una pestaña local de prueba, que cierra al terminar. Puede pedir permiso en Chrome.
 
 El build del instalador no reemplaza la prueba de instalación, actualización y desinstalación en una máquina Windows limpia. Firma y actualizaciones automáticas requieren su configuración de distribución.

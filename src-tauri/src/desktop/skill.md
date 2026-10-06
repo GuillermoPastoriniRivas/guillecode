@@ -8,7 +8,7 @@ description: Manejar la PC del usuario desde GuilleCode — apps de Windows (her
 Tenés dos juegos de herramientas:
 
 - `desktop_*`: apps de Windows (Bloc de notas, Explorador de archivos, Excel, instaladores, apps de escritorio).
-- `browser_*`: el Chrome real del usuario, con sus sesiones iniciadas (Gmail, Meta Business, consolas web, etc.). Para cualquier cosa web usá estas, no `desktop_*`.
+- `browser_*`: el Chrome real del usuario, con sus sesiones iniciadas (Gmail, Meta Business, consolas web, etc.), conectado mediante Chrome DevTools sin extensión. Preferilas para el contenido web; `desktop_*` es el respaldo para barra, menús y diálogos nativos.
 
 Para archivos, código y comandos seguí usando read, edit y bash: son más rápidos y seguros que manejar la interfaz.
 
@@ -49,12 +49,14 @@ Canvas, juegos, escritorio remoto, PDFs escaneados o apps que en el snapshot apa
 
 Cada vuelta del modelo tarda más que cualquier acción del navegador, y el snapshot completo de una página grande puede pasar los 100.000 tokens. Por eso:
 
-1. Si sabés la URL, `browser_navigate` directo; no recorras menús.
-2. Las acciones devuelven solo la URL y el título, sin snapshot. Para ubicar un botón, campo o texto usá `browser_find`: devuelve esos elementos con su ref.
-3. `browser_snapshot` sin `target` solo para orientarte; en páginas grandes GuilleCode lo recorta por profundidad. Para ver una sección, pasale `target` con la ref de esa sección.
-4. Para leer el texto de una página: `browser_evaluate` con `() => (document.querySelector('main') ?? document.body).innerText`.
-5. Encadená pasos en una sola llamada: `browser_fill_form` para varios campos, y `browser_run_code_unsafe` para secuencias, por ejemplo `async (page) => { await page.getByLabel('Buscar').fill('zapatillas'); await page.keyboard.press('Enter'); return page.url() }`. Los bloques `### Ran Playwright code` de cada respuesta te muestran los localizadores que funcionan.
+1. Primero `browser_list_pages` para comprobar la conexión y elegir la pestaña por su URL. Todas las acciones de página llevan `pageId`; no asumas que la pestaña seleccionada en otra conversación es la tuya. Para abrir otra usá `browser_new_page`; para navegar, `browser_navigate_page`.
+2. `browser_take_snapshot` devuelve los elementos con `uid`. Usá los uid del snapshot más reciente de esa página en `browser_click`, `browser_fill` o `browser_fill_form`. Preferí `verbose: false`.
+3. Las acciones no necesitan devolver un snapshot completo: dejá `includeSnapshot: false` salvo que haga falta verificar un cambio. En páginas grandes leé una sección específica con JavaScript.
+4. Para leer el texto de una página: `browser_evaluate_script` con `pageId` y `function: "() => (document.querySelector('main') ?? document.body).innerText"`. Devolvé solo lo necesario.
+5. Encadená campos con `browser_fill_form` (pageId y elements con uid/value). Para operaciones DOM simples podés usar `browser_evaluate_script`; su función se ejecuta dentro de la página y no recibe un objeto Playwright ni Puppeteer.
 6. `browser_take_screenshot` solo si necesitás ver algo visual: una imagen pesa más que el texto.
+7. Para barra de direcciones, menús de Chrome y diálogos de Windows usá `desktop_*`. Para una página sin accesibilidad, podés usar OCR del escritorio como respaldo. No cambies al escritorio para eludir un permiso denegado ni una pausa.
+8. La conexión necesita Chrome 144+, abierto, con la depuración remota habilitada en `chrome://inspect/#remote-debugging`. Chrome puede pedir permiso en cada nueva conexión: lo acepta el usuario. Si no conecta, explicá qué falta; no inventes que «servidor listo» significa «Chrome conectado».
 
 ## Reglas
 

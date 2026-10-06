@@ -50,6 +50,8 @@ function check() {
   const tauri = json("src-tauri/tauri.conf.json")
   if (!tauri.bundle.createUpdaterArtifacts || !tauri.plugins.updater.pubkey || tauri.plugins.updater.endpoints.some((url) => !url.startsWith("https://"))) throw new Error("Updater incompleto o endpoint sin HTTPS")
   if (tauri.plugins.updater.dangerousInsecureTransportProtocol || tauri.plugins.updater.dangerousAcceptInvalidCerts) throw new Error("La release no puede habilitar transporte inseguro")
+  if (tauri.plugins.updater.windows?.installMode !== "quiet" || tauri.bundle.windows?.nsis?.installMode !== "currentUser") throw new Error("Las actualizaciones silenciosas requieren NSIS por usuario y updater quiet")
+  if (!tauri.bundle.windows.nsis.installerHooks) throw new Error("Falta el hook que libera el motor instalado antes de actualizar")
   console.log(`Release ${version}: versiones y configuración coherentes`)
   return version
 }

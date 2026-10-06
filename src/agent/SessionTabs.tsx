@@ -9,6 +9,7 @@ import {
   newSession,
   renameSession,
   selectSession,
+  setSessionArchived,
   useAgent,
 } from "../state/agent"
 import { openEditor } from "../state/editors"
@@ -18,10 +19,12 @@ import { notify } from "../state/toasts"
 import { confirmAction } from "../components/Dialog"
 import { openContextMenu, type MenuItem } from "../components/ContextMenu"
 import { Icon } from "../components/ui"
+import { archivedSessionOwner } from "../lib/sessions"
 
 function tabMenu(e: React.MouseEvent, id: string, session: Session | null) {
   const items: MenuItem[] = []
   if (session) {
+    const archived = archivedSessionOwner(session, useAgent.getState().allSessions)
     items.push(
       {
         label: "Renombrar…",
@@ -37,6 +40,11 @@ function tabMenu(e: React.MouseEvent, id: string, session: Session | null) {
         label: "Compactar conversación",
         icon: "fold",
         run: () => void compactSession(session.id).then(() => notify.info("Compactando la sesión…")),
+      },
+      {
+        label: archived ? "Restaurar conversación" : "Archivar conversación",
+        icon: archived ? "discard" : "archive",
+        run: () => void setSessionArchived(archived?.id ?? session.id, !archived),
       },
       { separator: true },
     )
@@ -94,7 +102,8 @@ export function SessionTabs() {
         const active = draft ? activeId === null : activeId === id
         const mark = draft ? "idle" : sessionMark({ allSessions, permissions, questions, statuses }, unseen, id)
         const title = draft ? "Nueva conversación" : session?.title || "Sin título"
-        const hint = mark === "attention" ? " · espera tu respuesta" : mark === "unseen" ? " · terminó, sin ver" : ""
+        const archived = archivedSessionOwner(session, allSessions)
+        const hint = (archived ? " · archivada" : "") + (mark === "attention" ? " · espera tu respuesta" : mark === "unseen" ? " · terminó, sin ver" : "")
         return (
           <div
             key={id}
@@ -118,7 +127,7 @@ export function SessionTabs() {
             ) : mark === "unseen" ? (
               <Icon name="pass-filled" className="agent-tab-icon" />
             ) : (
-              <Icon name={draft ? "add" : "comment-discussion"} className="agent-tab-icon" />
+              <Icon name={draft ? "add" : archived ? "archive" : "comment-discussion"} className="agent-tab-icon" />
             )}
             <span className="agent-tab-label">{title}</span>
             <button

@@ -24,6 +24,7 @@ export type Feature = {
   missing: boolean
   archived: boolean
   base: string | null
+  baseSource: "registered" | "reflog" | "upstream" | "inferred" | "unknown"
   baseOid: string | null
   createdAt: number | null
   changes: Changes | null
@@ -100,7 +101,7 @@ export type MergePreview = {
 export type MergeResult = { status: "merged" | "conflicts" | "up_to_date"; head: string | null; checkout: string | null; conflicts: string[] }
 
 function normalizeFeature(f: Feature): Feature {
-  return { ...f, path: normalizePath(f.path), root: normalizePath(f.root), repo: f.repo ? normalizePath(f.repo) : f.repo }
+  return { ...f, baseSource: f.baseSource || "unknown", path: normalizePath(f.path), root: normalizePath(f.root), repo: f.repo ? normalizePath(f.repo) : f.repo }
 }
 
 function normalizeGroup(g: RepoGroup): RepoGroup {
@@ -162,7 +163,7 @@ export const featuresUpdateFromBase = (project: string, path: string) =>
 
 export type FeatureDiff = { base: string | null; mergeBase: string | null; head: string | null; commits: number; files: CommitFile[] }
 
-export const featuresDiff = (project: string, path: string) => call<FeatureDiff>("features_diff", { project, path })
+export const featuresDiff = (project: string, path: string, base?: string) => call<FeatureDiff>("features_diff", { project, path, base: base || null })
 
 export const gitMergeAbort = (worktree: string) => call<void>("git_merge_abort", { worktree })
 export const gitMergeContinue = (worktree: string) => call<string>("git_merge_continue", { worktree })

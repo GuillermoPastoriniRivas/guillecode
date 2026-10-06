@@ -140,6 +140,14 @@ pub async fn update_install(app: AppHandle) -> Result<(), String> {
         handle.restart();
         Ok(())
     }).await;
+    if result.is_err() {
+        // Windows may reject launching NSIS after on_before_exit has run.
+        // Allow lazy engine recovery when the current app is still alive.
+        let server = app.state::<crate::ServerState>();
+        let _config = server.config.lock().unwrap();
+        server.stopping.store(false, Ordering::SeqCst);
+        crate::windows::window_quit_cancel(app.clone());
+    }
     state.installing.store(false, Ordering::SeqCst);
     result
 }

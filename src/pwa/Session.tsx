@@ -24,6 +24,12 @@ import { Icon, Md, OfflineBanner, useLive, usePoll } from "./ui"
 const PAGE = 60
 const STICK_PX = 160
 
+function promptID(prefix: "msg" | "prt"): string {
+  const time = (BigInt(Date.now()) << 12n).toString(16).padStart(12, "0")
+  const random = Array.from(crypto.getRandomValues(new Uint8Array(7)), (b) => b.toString(16).padStart(2, "0")).join("")
+  return `${prefix}_${time}${random}`
+}
+
 function byTime(a: Message, b: Message): number {
   return a.info.time.created - b.info.time.created || (a.info.id < b.info.id ? -1 : 1)
 }
@@ -334,10 +340,23 @@ export function SessionScreen({ route, back }: { route: Extract<Route, { kind: "
   const stick = useRef(true)
   const first = useRef(true)
   const quotaBar = useRef<QuotaBarHandle>(null)
+  const pending = useRef(new Map<string, Message>())
+  const revision = useRef(0)
+  const messageRevisions = useRef(new Map<string, number>())
+  const statusRevision = useRef(0)
+  const loading = useRef(false)
+  const reload = useRef(false)
 
   const mine = useCallback((sessionID: string | undefined) => !!sessionID && (sessionID === route.id || children.has(sessionID)), [children, route.id])
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (): Promise<void> => {
+    if (loading.current) {
+      reload.current = true
+      return
+    }
+    loading.current = true
+    const started = revision.current
+    const statusStarted = statusRevision.current
     try {
       const [msgs, status, perms, qs, kids, session] = await Promise.all([
         oc<Message[]>("GET", `/session/${route.id}/message?limit=${PAGE}`, route.project),
@@ -349,8 +368,20 @@ export function SessionScreen({ route, back }: { route: Extract<Route, { kind: "
       ])
       const ids = new Set((kids ?? []).map((k) => k.id))
       setChildren(ids)
-      setMessages(msgs ?? [])
-      setBusy(!!status?.[route.id] && status[route.id].type !== "idle")
+      const snapshot = msgs ?? []
+      const fetched = new Set(snapshot.map((m) => m.info.id))
+      for (const id of fetched) pending.current.delete(id)
+      // A slow refresh must not erase a newer SSE update or an accepted prompt
+      // that prompt_async has not persisted yet.
+      setMessages((current) => {
+        const latest = new Map(current.map((m) => [m.info.id, m]))
+        const changed = (id: string) => (messageRevisions.current.get(id) ?? 0) > started
+        return [
+          ...snapshot.flatMap((m) => changed(m.info.id) ? (latest.has(m.info.id) ? [latest.get(m.info.id)!] : []) : [m]),
+          ...current.filter((m) => !fetched.has(m.info.id) && (changed(m.info.id) || pending.current.has(m.info.id))),
+        ].sort(byTime)
+      })
+      if (statusRevision.current === statusStarted) setBusy(!!status?.[route.id] && status[route.id].type !== "idle")
       setPermissions((perms ?? []).filter((p) => p.sessionID === route.id || ids.has(p.sessionID)))
       setQuestions((qs ?? []).filter((q) => q.sessionID === route.id || ids.has(q.sessionID)))
       if (session?.title) setTitle(session.title)
@@ -360,6 +391,12 @@ export function SessionScreen({ route, back }: { route: Extract<Route, { kind: "
     } catch (e) {
       if (e instanceof OfflineError) setOffline(e.reason)
       else setError(errorText(e))
+    } finally {
+      loading.current = false
+      if (reload.current) {
+        reload.current = false
+        void load()
+      }
     }
   }, [route.id, route.project])
 
@@ -373,6 +410,13 @@ export function SessionScreen({ route, back }: { route: Extract<Route, { kind: "
     (e: LiveEvent) => {
       if (e.type === "resync") return void load()
       const p = (e.properties ?? {}) as Record<string, unknown>
+      if (e.type.startsWith("message.")) {
+        const msg = p.info as MessageInfo | undefined
+        const part = p.part as Part | undefined
+        const sessionID = p.sessionID ?? msg?.sessionID ?? part?.sessionID
+        const messageID = (p.messageID ?? msg?.id ?? part?.messageID) as string | undefined
+        if (sessionID === route.id && messageID) messageRevisions.current.set(messageID, ++revision.current)
+      }
       switch (e.type) {
         case "message.updated": {
           const msg = p.info as MessageInfo
@@ -397,10 +441,14 @@ export function SessionScreen({ route, back }: { route: Extract<Route, { kind: "
             setMessages((prev) => prev.map((m) => (m.info.id === p.messageID ? { ...m, parts: m.parts.filter((x) => x.id !== p.partID) } : m)))
           break
         case "session.status":
-          if (p.sessionID === route.id) setBusy((p.status as { type?: string } | undefined)?.type !== "idle")
+          if (p.sessionID === route.id) {
+            statusRevision.current += 1
+            setBusy((p.status as { type?: string } | undefined)?.type !== "idle")
+          }
           break
         case "session.idle":
           if (p.sessionID === route.id) {
+            statusRevision.current += 1
             setBusy(false)
             quotaBar.current?.refreshSoon()
           }
@@ -439,7 +487,9 @@ export function SessionScreen({ route, back }: { route: Extract<Route, { kind: "
   )
 
   const live = useLive(route.id, onEvent, () => void load())
-  usePoll(load, live === "open" ? null : offline ? 10000 : 3000)
+  // An open hub stream can keep sending heartbeats while its upstream is stuck.
+  // Reconcile even then, so the conversation never depends solely on SSE.
+  usePoll(load, offline ? 10000 : live === "open" && !busy ? 5000 : 3000)
 
   useEffect(() => {
     const onScroll = () => {
@@ -478,9 +528,29 @@ export function SessionScreen({ route, back }: { route: Extract<Route, { kind: "
   const initialModel = lastModel ?? info?.prefs?.model ?? null
 
   const send = async (draft: Draft) => {
-    await oc("POST", `/session/${route.id}/prompt_async`, route.project, promptBody(draft, info?.prefs, lastUser?.info.agent ?? info?.prefs?.agent))
+    const body = promptBody(draft, info?.prefs, lastUser?.info.agent ?? info?.prefs?.agent)
+    const id = promptID("msg")
+    const parts = body.parts.map((p) => ({ ...p, id: promptID("prt"), messageID: id, sessionID: route.id })) as Part[]
+    const message: Message = { info: { id, sessionID: route.id, role: "user", time: { created: Date.now() }, agent: body.agent, model: draft.model ?? undefined }, parts }
     stick.current = true
-    if (live !== "open") void load()
+    setUnseen(false)
+    pending.current.set(id, message)
+    messageRevisions.current.set(id, ++revision.current)
+    setMessages((prev) => [...prev, message].sort(byTime))
+    const statusStarted = statusRevision.current
+    try {
+      await oc("POST", `/session/${route.id}/prompt_async`, route.project, { ...body, messageID: id, parts })
+      if (statusRevision.current === statusStarted) {
+        statusRevision.current += 1
+        setBusy(true)
+      }
+      void load()
+    } catch (e) {
+      pending.current.delete(id)
+      messageRevisions.current.set(id, ++revision.current)
+      setMessages((prev) => prev.filter((m) => m.info.id !== id))
+      throw e
+    }
   }
 
   return (

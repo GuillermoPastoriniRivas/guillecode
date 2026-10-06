@@ -20,7 +20,7 @@ import {
   findGroup,
   handleMergeResult,
   hasUnsavedIn,
-  openFeatureCreate,
+  openFeatureCreateForm,
   openPullRequest,
   refreshFeatures,
   removeFeature,
@@ -153,7 +153,7 @@ export function FeatureCreateEditor({ repo }: { repo: string | null }) {
             className="btn btn-sm btn-primary"
             onClick={() => {
               removeTabs((t) => t.id === tabId({ kind: "featureCreate", repo: repo ?? undefined }))
-              void openFeatureCreate()
+              void openFeatureCreateForm()
             }}
           >
             <Icon name="repo" /> Elegir repositorio
@@ -315,7 +315,13 @@ export function FeatureIntegrateEditor({ path }: { path: string }) {
   const [nonce, setNonce] = useState(0)
 
   const scope = feature?.repo || project
-  const effectiveTarget = target || feature?.base?.replace(/^origin\//, "") || findGroup(scope, list)?.defaultBase || ""
+  // Comparison base and local merge destination are different references.
+  const suggestedTarget = feature?.base
+    ? (branches.find((b) => !b.remote && b.name === feature.base)?.name
+      ?? branches.find((b) => !b.remote && b.upstream === feature.base)?.name
+      ?? "")
+    : ""
+  const effectiveTarget = target || suggestedTarget
   const sourcePath = feature && !feature.missing ? feature.path : null
   const requestKey = scope && sourcePath && effectiveTarget ? `${sourcePath}|${effectiveTarget}|${feature?.head ?? ""}|${nonce}` : null
   const loading = requestKey !== null && loadedKey !== requestKey

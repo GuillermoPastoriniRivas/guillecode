@@ -147,8 +147,8 @@ export function PcCard({ status: initial, onChange }: { status: PcStatus; onChan
               <Icon name="circle-slash" /> Apagar el control de la PC
             </button>
           )}
-          {!status.browserConfigured && status.enabled && (
-            <small className="muted">Para que use tu Chrome sin pedirte aprobación, cargá el token de la extensión de Playwright en GuilleCode → «Control de la PC».</small>
+          {!status.bridge.connected && status.enabled && status.browser && (
+            <small className="muted">Para usar tu Chrome, habilitá chrome://inspect/#remote-debugging en la PC y aceptá la conexión. Podés comprobarla en GuilleCode → «Control de la PC»; no necesita extensión ni token.</small>
           )}
         </div>
       )}

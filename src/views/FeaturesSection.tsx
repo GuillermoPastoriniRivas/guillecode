@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { changeCount, featuresDiff, type Feature, type FeatureDiff, type RepoGroup } from "../lib/features"
-import { hasStaged, hasUnstaged, isConflict, type CommitFile } from "../lib/git"
+import { gitBranches, hasStaged, hasUnstaged, isConflict, type Branch, type CommitFile } from "../lib/git"
 import { basename, dirname, joinPath, samePath } from "../lib/paths"
 import { loadJson, saveJson } from "../lib/persist"
 import { openPath } from "@tauri-apps/plugin-opener"
@@ -31,6 +31,7 @@ import { StatusRow } from "./StatusRow"
 import { notify } from "../state/toasts"
 import { openContextMenu, openMenuAt, type MenuItem } from "../components/ContextMenu"
 import { FileIcon, Icon, IconButton, Section, Spinner } from "../components/ui"
+import { Select } from "../components/fields"
 
 const OPEN_KEY = "scm.featuresOpen"
 const EXPANDED_KEY = "scm.featuresExpanded"
@@ -142,9 +143,18 @@ function FeatureChanges({ feature, active }: { feature: Feature; active: boolean
   const project = useProject((s) => s.project)
   const status = useGit((s) => s.byRepo[feature.path]?.status ?? null)
   const statusError = useGit((s) => s.byRepo[feature.path]?.error ?? null)
-  const [diff, setDiff] = useState<FeatureDiff | null>(null)
-  const [diffError, setDiffError] = useState<string | null>(null)
+  const refreshedAt = useGit((s) => s.byRepo[feature.path]?.loadedAt ?? 0)
+  const [result, setResult] = useState<{ key: string; diff: FeatureDiff | null; error: string | null } | null>(null)
   const [nonce, setNonce] = useState(0)
+  const [comparison, setComparison] = useState("")
+  const [branches, setBranches] = useState<Branch[]>([])
+
+  useEffect(() => {
+    if (feature.missing || feature.kind === "main") return
+    let alive = true
+    gitBranches(feature.path).then((found) => alive && setBranches(found)).catch(() => alive && setBranches([]))
+    return () => { alive = false }
+  }, [feature.path, feature.missing, feature.kind, nonce])
 
   useEffect(() => {
     if (feature.missing) return
@@ -160,21 +170,22 @@ function FeatureChanges({ feature, active }: { feature: Feature; active: boolean
     return () => clearInterval(timer)
   }, [feature.path, feature.missing, active])
 
-  const diffKey = `${feature.path}|${feature.head ?? ""}|${feature.base ?? ""}|${nonce}`
+  const diffKey = `${feature.path}|${feature.head ?? ""}|${feature.base ?? ""}|${comparison}|${refreshedAt}|${nonce}`
+  const diff = result?.key === diffKey ? result.diff : null
+  const diffError = result?.key === diffKey ? result.error : null
   useEffect(() => {
     if (!project || feature.missing || feature.kind === "main") return
     let alive = true
-    featuresDiff(feature.repo || project, feature.path)
+    featuresDiff(feature.repo || project, feature.path, comparison)
       .then((d) => {
         if (!alive) return
-        setDiff(d)
-        setDiffError(null)
+        setResult({ key: diffKey, diff: d, error: null })
       })
-      .catch((e) => alive && setDiffError(errorMessage(e)))
+      .catch((e) => alive && setResult({ key: diffKey, diff: null, error: errorMessage(e) }))
     return () => {
       alive = false
     }
-  }, [diffKey, project, feature.repo, feature.path, feature.missing, feature.kind])
+  }, [diffKey, project, feature.repo, feature.path, feature.missing, feature.kind, comparison])
 
   if (feature.missing)
     return (
@@ -190,11 +201,31 @@ function FeatureChanges({ feature, active }: { feature: Feature; active: boolean
     void refreshRepo(feature.path)
     setNonce((n) => n + 1)
   }
+  const comparisonOptions = [
+    { value: "", label: feature.base ? `Base: ${feature.base}` : "Base por determinar", icon: "worktree" },
+    ...branches.filter((b) => b.name !== feature.branch && !b.name.endsWith("/HEAD"))
+      .map((b) => ({ value: b.name, label: b.name, description: b.remote ? "referencia remota · último fetch" : "rama local", icon: b.remote ? "cloud" : "git-branch" })),
+  ]
 
   return (
     <div className="feature-changes">
+      {feature.kind !== "main" && (
+        <div className="feature-comparison">
+          <span>Comparar con</span>
+          <Select value={comparison} options={comparisonOptions} onChange={setComparison} title="Comparar sin cambiar la base del worktree ni la carpeta activa" />
+          <span className="feature-comparison-note">
+            {comparison ? "Comparación temporal; la base del worktree se conserva." :
+              !feature.base ? "El agente debe registrar la base real. Podés inspeccionar otra referencia mientras tanto." :
+              feature.baseSource === "inferred" || feature.baseSource === "upstream" ? "Base inferida; el agente puede confirmar su origen." :
+              "Cambios propios desde el punto de separación de la base."}
+          </span>
+          {comparisonOptions.find((o) => o.value === comparison)?.icon === "cloud" || (!comparison && branches.some((b) => b.remote && b.name === feature.base)) ? (
+            <span className="feature-comparison-note">Referencia remota del último fetch.</span>
+          ) : null}
+        </div>
+      )}
       <div className="feature-changes-title">
-        <span>Sin commitear</span>
+        <span>Pendientes de commit</span>
         {entries.length > 0 && <span className="pane-count">{entries.length}</span>}
         <span className="toolbar-spacer" />
         <IconButton icon="refresh" title="Refrescar los cambios de esta feature" onClick={refresh} />
@@ -205,7 +236,7 @@ function FeatureChanges({ feature, active }: { feature: Feature; active: boolean
         </div>
       )}
       {statusError && <div className="view-error">{statusError}</div>}
-      {status && entries.length === 0 && <div className="view-note">Nada sin commitear en esta carpeta.</div>}
+      {status && entries.length === 0 && <div className="view-note">No hay cambios pendientes.{feature.kind !== "main" ? " Los commits propios se muestran abajo." : ""}</div>}
       {staged.map((e) => (
         <StatusRow key={`s-${e.path}`} repo={feature.path} entry={e} staged />
       ))}
@@ -215,7 +246,7 @@ function FeatureChanges({ feature, active }: { feature: Feature; active: boolean
       {feature.kind !== "main" && (
         <>
           <div className="feature-changes-title">
-            <span>{diff?.base ? `En la feature vs ${diff.base}` : "En la feature"}</span>
+            <span>{diff?.base ? `Cambios propios vs ${diff.base}` : "Cambios propios"}</span>
             {diff && diff.files.length > 0 && <span className="pane-count">{diff.files.length}</span>}
             {diff && diff.commits > 0 && <span className="feature-changes-meta">{diff.commits === 1 ? "1 commit" : `${diff.commits} commits`}</span>}
           </div>
@@ -225,8 +256,13 @@ function FeatureChanges({ feature, active }: { feature: Feature; active: boolean
               <Spinner size={11} /> Comparando con la base…
             </div>
           )}
-          {diff && !diff.base && <div className="view-note">Elegí la rama base desde el menú de la feature para comparar.</div>}
+          {diff && !diff.base && <div className="view-note">La base todavía no está registrada. No se asume main.</div>}
           {diff && diff.base && diff.files.length === 0 && <div className="view-note">Todavía no hay commits propios respecto de {diff.base}.</div>}
+          {diff && diff.files.length > 0 && (
+            <div className="view-note feature-diff-summary">
+              {diff.files.length} archivo(s) · <span className="pane-added">+{diff.files.reduce((sum, f) => sum + f.additions, 0)}</span> / <span className="pane-removed">−{diff.files.reduce((sum, f) => sum + f.deletions, 0)}</span>
+            </div>
+          )}
           {diff && diff.files.map((f) => <RangeRow key={f.path} feature={feature} diff={diff} file={f} />)}
         </>
       )}
@@ -315,6 +351,13 @@ function FeatureRow({
             </>
           )}
         </div>
+        {feature.kind !== "main" && !feature.missing && (
+          <div className={`feature-sub feature-base${!feature.base ? " unknown" : ""}`}>
+            <Icon name="git-compare" />
+            <span>Base: <span className="mono">{feature.base ?? "por determinar"}</span></span>
+            {(feature.baseSource === "inferred" || feature.baseSource === "upstream") && <span className="feature-badge">inferida</span>}
+          </div>
+        )}
       </div>
       <span className="feature-indicators">
         {activity.waiting > 0 && (
@@ -449,14 +492,14 @@ export function FeaturesSection() {
   }
   return (
     <Section
-      title="Features"
+      title="Worktrees"
       count={list.features.length > 1 ? visible.length : undefined}
       open={open}
       onToggle={toggle}
       actions={
         <>
           {loading && <Spinner size={11} />}
-          <IconButton icon="add" title="Nueva feature (worktree)" onClick={() => void openFeatureCreate()} />
+          <IconButton icon="add" title="Pedir al agente un nuevo worktree" onClick={() => void openFeatureCreate()} />
         </>
       }
     >
@@ -482,8 +525,8 @@ export function FeaturesSection() {
           <button type="button" className="feature-empty" onClick={() => void openFeatureCreate()}>
             <Icon name="git-branch-create" />
             <span>
-              <strong>Trabajá en paralelo</strong>
-              <span>Cada feature tiene su carpeta, su rama y sus conversaciones. Los agentes no se pisan.</span>
+              <strong>Pedile al agente un trabajo separado</strong>
+              <span>El agente crea y prepara el worktree. Acá supervisás sus cambios respecto a su base.</span>
             </span>
           </button>
         )}

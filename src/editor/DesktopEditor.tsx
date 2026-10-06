@@ -1,7 +1,6 @@
 import { useState } from "react"
-import { openUrl } from "@tauri-apps/plugin-opener"
 import { call, errorMessage } from "../lib/tauri"
-import { PLAYWRIGHT_EXTENSION_URL, recentlyActive, useDesktopStatus, type BridgeStatus, type DesktopStatus } from "../lib/desktop"
+import { recentlyActive, useDesktopStatus, type BridgeStatus, type DesktopStatus } from "../lib/desktop"
 import { confirmAction } from "../components/Dialog"
 import { Toggle } from "../components/fields"
 import { Icon, Spinner } from "../components/ui"
@@ -19,15 +18,16 @@ function stateLabel(s: DesktopStatus): { text: string; tone: string } {
 }
 
 function bridgeLabel(b: BridgeStatus): string {
-  if (b.state === "ready") return `Conectado a Playwright (${b.tools} herramientas)`
-  if (b.state === "starting") return "Arrancando Playwright…"
+  if (b.connecting) return "Conectando con Chrome: aceptá «Permitir» si lo pide…"
+  if (b.state === "ready" && b.connected) return `Conexión con Chrome verificada (${b.tools} herramientas)`
+  if (b.state === "ready") return b.error ? `Chrome no conectado: ${b.error}` : "Chrome DevTools listo; conexión con Chrome sin verificar"
+  if (b.state === "starting") return "Arrancando Chrome DevTools…"
   if (b.state === "error") return `Error: ${b.error ?? "desconocido"}`
   return "Sin iniciar: arranca solo cuando opencode lo pide"
 }
 
 export function DesktopEditor() {
   const { status, error, refresh, update } = useDesktopStatus(5000)
-  const [token, setToken] = useState("")
   const [newApp, setNewApp] = useState("")
   const [busy, setBusy] = useState(false)
 
@@ -74,13 +74,6 @@ export function DesktopEditor() {
       notify.info("Listo", aborted > 0 ? `Detuve ${aborted} sesión${aborted === 1 ? "" : "es"} y pausé el control.` : "No había sesiones trabajando. El control quedó en pausa.")
       await refresh()
     }, "No se pudo detener")
-
-  const saveToken = () =>
-    run(async () => {
-      await update({ browserToken: token })
-      setToken("")
-      notify.info("Token guardado", "La próxima vez que el agente use el navegador se conecta sin pedirte aprobación.")
-    }, "No se pudo guardar el token")
 
   const addBlocked = () => {
     const name = newApp.trim().toLowerCase()
@@ -154,42 +147,35 @@ export function DesktopEditor() {
             <Icon name="browser" /> Tu Chrome, con tus sesiones
           </strong>
           <span>
-            Para que el agente use tu Chrome real (Gmail, Meta Business, consolas web…) sin volver a iniciar sesión, instalá la extensión oficial de Playwright, abrila y copiá el token que muestra. Con
-            el token se conecta sola, sin pedirte aprobación cada vez: sin token, la primera conexión espera que toques «Permitir» en Chrome.
+            El agente se conecta a tu Chrome abierto, con tus sesiones, mediante Chrome DevTools. Requiere Chrome 144 o posterior. Abrí la configuración de abajo y habilitá la depuración remota;
+            después probá la conexión y aceptá «Permitir» en Chrome. Chrome pide permiso en cada nueva conexión, no en cada acción.
           </span>
           <div className="remote-command">
-            <button type="button" className="btn btn-sm" onClick={() => void openUrl(PLAYWRIGHT_EXTENSION_URL)}>
-              <Icon name="link-external" /> Instalar la extensión
+            <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void run(() => call("desktop_browser_setup"), "No se pudo abrir Chrome: abrí chrome://inspect/#remote-debugging manualmente")}>
+              <Icon name="link-external" /> Abrir configuración de Chrome
             </button>
-            <span className={`routine-pill ${status.bridge.state === "ready" ? "ok" : status.bridge.state === "error" ? "error" : ""}`}>{bridgeLabel(status.bridge)}</span>
+            <span className={`routine-pill ${status.bridge.connected ? "ok" : status.bridge.error ? "error" : ""}`}>{bridgeLabel(status.bridge)}</span>
           </div>
           <div className="voice-model desktop-token">
-            <input
-              className="input input-sm"
-              type="password"
-              value={token}
-              autoComplete="off"
-              spellCheck={false}
-              placeholder={status.browserConfigured ? "Token guardado. Pegá otro para reemplazarlo" : "PLAYWRIGHT_MCP_EXTENSION_TOKEN"}
-              onChange={(e) => setToken(e.target.value)}
-            />
-            <button type="button" className="btn btn-sm btn-primary" disabled={busy || !token.trim()} onClick={() => void saveToken()}>
-              Guardar
-            </button>
             <button
               type="button"
-              className="btn btn-sm"
-              disabled={busy}
+              className="btn btn-sm btn-primary"
+              disabled={busy || !status.enabled || status.paused || !status.browser}
               onClick={() =>
                 void run(async () => {
-                  await call<BridgeStatus>("desktop_browser_restart")
-                  await refresh()
-                }, "No se pudo reiniciar")
+                  try {
+                    await call<BridgeStatus>("desktop_browser_restart")
+                    notify.info("Chrome conectado", "Se comprobó el acceso a las pestañas del navegador.")
+                  } finally {
+                    await refresh()
+                  }
+                }, "No se pudo conectar con Chrome")
               }
             >
-              <Icon name="refresh" /> Reconectar
+              <Icon name="refresh" /> {busy ? "Esperando conexión…" : "Probar / reconectar"}
             </button>
           </div>
+          <span className="desktop-note">Sin extensión ni token. Se usa el perfil elegido por Chrome; si tenés varios, comprobá que sea el correcto. El control de escritorio queda disponible para la barra, los menús y los diálogos nativos.</span>
           <Toggle checked={status.browser} onChange={(v) => void run(() => update({ browser: v }), "No se pudo cambiar")} label="Ofrecerle al agente las herramientas del navegador" />
           {status.browser !== status.browserActive && <span className="desktop-note">Se aplica cuando reinicies GuilleCode.</span>}
           <Toggle checked={status.subagent} onChange={(v) => void run(() => update({ subagent: v }), "No se pudo cambiar")} label="Delegar el manejo de la PC en un subagente (recomendado: las conversaciones de código no cargan estas herramientas)" />

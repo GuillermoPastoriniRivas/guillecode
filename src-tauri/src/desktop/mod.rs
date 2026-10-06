@@ -12,6 +12,7 @@ pub mod browser;
 mod mcp;
 mod routines;
 mod terminal;
+mod worktrees;
 #[cfg(windows)]
 mod ocr;
 #[cfg(windows)]
@@ -56,6 +57,7 @@ pub enum Channel {
     Browser,
     Routines,
     Terminal,
+    Worktrees,
 }
 
 impl Channel {
@@ -65,6 +67,7 @@ impl Channel {
             Channel::Browser => "browser",
             Channel::Routines => "routines",
             Channel::Terminal => "terminal",
+            Channel::Worktrees => "worktrees",
         }
     }
 }
@@ -75,14 +78,13 @@ pub struct DesktopConfig {
     pub enabled: bool,
     pub paused: bool,
     pub browser: bool,
-    pub browser_token: String,
     pub blocked: Vec<String>,
     pub subagent: bool,
 }
 
 impl Default for DesktopConfig {
     fn default() -> Self {
-        DesktopConfig { enabled: false, paused: false, browser: true, browser_token: String::new(), blocked: DEFAULT_BLOCKED.iter().map(|s| s.to_string()).collect(), subagent: true }
+        DesktopConfig { enabled: false, paused: false, browser: true, blocked: DEFAULT_BLOCKED.iter().map(|s| s.to_string()).collect(), subagent: true }
     }
 }
 
@@ -120,7 +122,6 @@ pub struct DesktopStatus {
     browser_active: bool,
     subagent: bool,
     subagent_active: bool,
-    browser_configured: bool,
     bridge: browser::BridgeStatus,
     blocked: Vec<String>,
     activity: Vec<Activity>,
@@ -134,7 +135,6 @@ pub struct DesktopPatch {
     enabled: Option<bool>,
     paused: Option<bool>,
     browser: Option<bool>,
-    browser_token: Option<String>,
     blocked: Option<Vec<String>>,
     subagent: Option<bool>,
 }
@@ -170,13 +170,13 @@ fn write_skill(app: &AppHandle, subagent: bool) -> Option<PathBuf> {
     }
     std::fs::write(root.join("routines.md"), routines::INSTRUCTIONS).ok()?;
     std::fs::write(root.join("terminal.md"), terminal::INSTRUCTIONS).ok()?;
+    std::fs::write(root.join("worktrees.md"), worktrees::INSTRUCTIONS).ok()?;
     Some(root)
 }
 
 pub fn start(app: &AppHandle) {
     let config = load(app);
     set_blocked(&config.blocked);
-    browser::set_token(&config.browser_token);
     let token = format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
     let port = match mcp::serve(app, token.clone()) {
         Ok(p) => p,
@@ -228,7 +228,7 @@ fn agent_config(state: &DesktopState) -> Value {
             "timeout": timeout,
         })
     };
-    let mut mcp = json!({ "desktop": server("desktop", 120_000), "routines": server("routines", 120_000), "terminal": server("terminal", 660_000) });
+    let mut mcp = json!({ "desktop": server("desktop", 120_000), "routines": server("routines", 120_000), "terminal": server("terminal", 660_000), "worktrees": server("worktrees", 120_000) });
     if state.browser_injected {
         mcp["browser"] = server("browser", 180_000);
     }
@@ -246,7 +246,7 @@ fn agent_config(state: &DesktopState) -> Value {
     }
     if let Some(dir) = &state.skills {
         config["skills"] = json!({ "paths": [dir.to_string_lossy()] });
-        config["instructions"] = json!([dir.join("routines.md").to_string_lossy(), dir.join("terminal.md").to_string_lossy()]);
+        config["instructions"] = json!([dir.join("routines.md").to_string_lossy(), dir.join("terminal.md").to_string_lossy(), dir.join("worktrees.md").to_string_lossy()]);
     }
     config
 }
@@ -311,7 +311,9 @@ pub fn record(app: &AppHandle, channel: &str, tool: &str, summary: &str, ok: boo
 pub fn browser_line() -> String {
     let s = browser::status();
     match s.state {
-        "ready" => format!("listo ({} herramientas browser_*)", s.tools),
+        "ready" if s.connecting => "esperando la conexión con Chrome; aceptá «Permitir» en Chrome si lo pide".into(),
+        "ready" if s.connected => format!("Chrome conectado ({} herramientas browser_*)", s.tools),
+        "ready" => format!("Chrome DevTools listo, conexión con Chrome sin verificar{}", s.error.map(|e| format!(": {}", e)).unwrap_or_default()),
         "starting" => "arrancando".into(),
         "error" => format!("con error: {}", s.error.unwrap_or_default()),
         _ => "sin iniciar (arranca solo al usarlo)".into(),
@@ -321,9 +323,10 @@ pub fn browser_line() -> String {
 fn instructions(channel: Channel) -> &'static str {
     match channel {
         Channel::Desktop => "Maneja apps de Windows por accesibilidad. Ciclo: status → windows → snapshot o find (refs [eN]) → click/type/select por ref → leer lo que cambió (cada acción devuelve solo el diff; las refs se mantienen). wait para esperar cargas o diálogos; steps para varias acciones en una llamada. Apps sin árbol: screen_text (OCR, refs [tN]) y click con esa ref; screenshot y click_xy como último recurso. Con la PC bloqueada solo funcionan las acciones por accesibilidad. Para la web usá las herramientas browser_*.",
-        Channel::Browser => "Maneja el Chrome real del usuario (con sus sesiones iniciadas) a través de la extensión de Playwright. Para ir rápido: navegá directo a la URL cuando la sepas; ubicá elementos con browser_find (no pidas el snapshot completo de una página grande) o con browser_snapshot y target; actuá por ref; encadená pasos con browser_fill_form o browser_run_code_unsafe. Las acciones devuelven URL y título, no el snapshot. Antes de enviar, pagar, borrar o publicar, confirmá con el usuario.",
+        Channel::Browser => "Maneja el Chrome real del usuario, con sus sesiones iniciadas, mediante Chrome DevTools MCP autoConnect (sin extensión ni token). Primero browser_list_pages y elegí la pestaña por URL; pasá su pageId en las acciones. browser_take_snapshot da uid para click/fill/fill_form; usá siempre el snapshot más reciente de esa página. Para leer texto o encadenar operaciones DOM usá browser_evaluate_script. Chrome 144+ debe tener habilitado chrome://inspect/#remote-debugging; si pide permiso lo acepta el usuario. Para barra, menús y diálogos nativos, usá desktop_* como respaldo. Si la conexión está denegada, apagada o pausada, no uses el respaldo para eludir esa decisión. Antes de enviar, pagar, borrar o publicar, confirmá con el usuario.",
         Channel::Routines => routines::INSTRUCTIONS,
         Channel::Terminal => terminal::INSTRUCTIONS,
+        Channel::Worktrees => worktrees::INSTRUCTIONS,
     }
 }
 
@@ -336,12 +339,13 @@ fn tool_list(channel: Channel) -> Vec<Value> {
         Channel::Browser => browser::tools(),
         Channel::Routines => routines::definitions(),
         Channel::Terminal => terminal::definitions(),
+        Channel::Worktrees => worktrees::definitions(),
     }
 }
 
 fn browser_summary(name: &str, args: &Value) -> String {
     let pick = |k: &str| args[k].as_str().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
-    let what = pick("element").or_else(|| pick("url")).or_else(|| pick("key")).or_else(|| pick("text").map(|t| format!("«{}»", t.chars().take(40).collect::<String>())));
+    let what = pick("element").or_else(|| pick("url")).or_else(|| pick("key")).or_else(|| pick("text").map(|t| format!("«{}»", t.chars().take(40).collect::<String>()))).or_else(|| args["pageId"].as_u64().map(|id| format!("pestaña {}", id)));
     match what {
         Some(w) => format!("{} · {}", name, w),
         None => name.to_string(),
@@ -352,6 +356,7 @@ fn call_tool(app: &AppHandle, channel: Channel, name: &str, args: &Value) -> Val
     match channel {
         Channel::Routines => routines::call(app, name, args),
         Channel::Terminal => terminal::call(app, name, args),
+        Channel::Worktrees => worktrees::call(app, name, args),
         #[cfg(windows)]
         Channel::Desktop => {
             let r = tools::call(app, name, args);
@@ -372,7 +377,7 @@ fn call_tool(app: &AppHandle, channel: Channel, name: &str, args: &Value) -> Val
                 }
                 Err(e) => {
                     record(app, "browser", name, &summary, false);
-                    json!({ "content": [{ "type": "text", "text": format!("El navegador no respondió: {}. Revisá que Chrome esté abierto y la extensión de Playwright conectada (GuilleCode → «Control de la PC»).", e) }], "isError": true })
+                    json!({ "content": [{ "type": "text", "text": format!("El navegador no respondió: {}. Abrí Chrome 144+, habilitá chrome://inspect/#remote-debugging y aceptá el permiso de conexión en Chrome. Podés probarlo en GuilleCode → «Control de la PC».", e) }], "isError": true })
                 }
             }
         }
@@ -390,7 +395,6 @@ pub fn status(app: &AppHandle) -> DesktopStatus {
         browser_active: state.browser_injected,
         subagent: c.subagent,
         subagent_active: state.subagent,
-        browser_configured: !c.browser_token.is_empty(),
         bridge: browser::status(),
         blocked: c.blocked.clone(),
         activity,
@@ -417,10 +421,6 @@ pub fn apply(app: &AppHandle, patch: DesktopPatch) -> DesktopStatus {
         }
         if let Some(v) = patch.subagent {
             c.subagent = v;
-        }
-        if let Some(t) = patch.browser_token {
-            c.browser_token = t.trim().to_string();
-            browser::set_token(&c.browser_token);
         }
         if let Some(list) = patch.blocked {
             let mut clean: Vec<String> = list.iter().map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()).collect();
@@ -518,14 +518,27 @@ pub async fn desktop_stop_all(app: AppHandle) -> usize {
 }
 
 #[tauri::command]
-pub async fn desktop_browser_restart() -> browser::BridgeStatus {
+pub async fn desktop_browser_restart(app: AppHandle) -> Result<browser::BridgeStatus, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        gate(&app)?;
+        if !config(&app).browser {
+            return Err("Activá «Ofrecerle al agente las herramientas del navegador» y reiniciá GuilleCode.".into());
+        }
         browser::stop();
-        let _ = browser::tools();
-        browser::status()
+        let result = browser::connect();
+        record(&app, "browser", "list_pages", "Comprobar la conexión con Chrome", result.is_ok());
+        result
     })
     .await
     .unwrap()
+}
+
+#[tauri::command]
+pub async fn desktop_browser_setup() -> Result<(), String> {
+    #[cfg(windows)]
+    return tauri::async_runtime::spawn_blocking(|| win::launch("chrome.exe", "chrome://inspect/#remote-debugging")).await.unwrap();
+    #[cfg(not(windows))]
+    Err("Abrí chrome://inspect/#remote-debugging en Chrome 144 o posterior.".into())
 }
 
 #[cfg(test)]

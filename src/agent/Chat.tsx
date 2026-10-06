@@ -182,6 +182,11 @@ function AssistantFooter({ message, onRetry, retrying }: { message: ChatMessage;
       {error && error.name !== "MessageAbortedError" && (
         <div className="msg-error">
           <Icon name="error" /> {error.data?.message ?? error.name}
+          {onRetry && (
+            <button type="button" className="msg-retry" onClick={onRetry} disabled={retrying}>
+              <Icon name={retrying ? "loading" : "refresh"} spin={retrying} /> Reintentar
+            </button>
+          )}
         </div>
       )}
       {error?.name === "MessageAbortedError" && (

@@ -16,6 +16,7 @@ import { rankFuzzy, type FuzzyMatch } from "../lib/fuzzy"
 import { basename, joinPath, relativePath } from "../lib/paths"
 import { activeCode, goToLine } from "../editor/bridge"
 import { shortAgo } from "../lib/time"
+import { unarchivedSessions } from "../lib/sessions"
 import { FileIcon, Highlighted, Icon, Kbd, Spinner } from "./ui"
 
 type Row = {
@@ -188,7 +189,7 @@ export function QuickInput() {
       ]
     }
     if (mode === "sessions") {
-      const ranked = rankFuzzy(sessions, query, (s) => s.title || "Sin título", 80)
+      const ranked = rankFuzzy(unarchivedSessions(sessions), query, (s) => s.title || "Sin título", 80)
       return ranked.map(({ item, match }) => ({
         id: item.id,
         label: item.title || "Sin título",

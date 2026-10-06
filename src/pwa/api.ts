@@ -60,8 +60,7 @@ export type PcStatus = {
   paused: boolean
   browser: boolean
   browserActive: boolean
-  browserConfigured: boolean
-  bridge: { state: string; error: string | null; tools: number }
+  bridge: { state: string; error: string | null; tools: number; connected: boolean; connecting: boolean }
   activity: PcActivity[]
   machine: PcMachine
   available: boolean

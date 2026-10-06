@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "guillecode",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "identifier": "com.guillecode.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -51,6 +51,12 @@
     },
     "resources": {
       "../dist-pwa/": "dist-pwa/"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "installerHooks": "windows/installer-hooks.nsh"
+      }
     }
   },
   "plugins": {
@@ -60,7 +66,7 @@
         "https://github.com/GuillermoPastoriniRivas/guillecode/releases/latest/download/latest.json"
       ],
       "windows": {
-        "installMode": "passive"
+        "installMode": "quiet"
       }
     }
   }

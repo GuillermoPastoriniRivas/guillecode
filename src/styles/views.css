@@ -659,6 +659,19 @@
 .session-row.active {
   background: var(--accent-bg);
 }
+.session-archive-action {
+  flex-shrink: 0;
+  opacity: 0;
+}
+.session-row:hover .session-archive-action,
+.session-row:focus-within .session-archive-action,
+.session-archive-action:disabled {
+  opacity: 1;
+}
+.session-filters {
+  flex-shrink: 0;
+  margin-top: 4px;
+}
 .session-state {
   padding-top: 1px;
   color: var(--fg-faint);

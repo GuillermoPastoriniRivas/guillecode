@@ -11,7 +11,7 @@ export type MachineStatus = {
   lidSleeps: boolean
 }
 
-export type BridgeStatus = { state: "off" | "starting" | "ready" | "error"; error: string | null; tools: number }
+export type BridgeStatus = { state: "off" | "starting" | "ready" | "error"; error: string | null; tools: number; connected: boolean; connecting: boolean }
 
 export type DesktopActivity = { at: number; channel: "desktop" | "browser"; tool: string; summary: string; ok: boolean }
 
@@ -22,7 +22,6 @@ export type DesktopStatus = {
   browserActive: boolean
   subagent: boolean
   subagentActive: boolean
-  browserConfigured: boolean
   bridge: BridgeStatus
   blocked: string[]
   activity: DesktopActivity[]
@@ -30,9 +29,7 @@ export type DesktopStatus = {
   available: boolean
 }
 
-export type DesktopPatch = Partial<{ enabled: boolean; paused: boolean; browser: boolean; browserToken: string; blocked: string[]; subagent: boolean }>
-
-export const PLAYWRIGHT_EXTENSION_URL = "https://chromewebstore.google.com/detail/playwright-extension/mmlmfjhmonkocbjadbfplnigmagldckm"
+export type DesktopPatch = Partial<{ enabled: boolean; paused: boolean; browser: boolean; blocked: string[]; subagent: boolean }>
 
 const ACTIVE_MS = 20000
 

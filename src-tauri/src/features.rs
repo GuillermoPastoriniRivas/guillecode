@@ -36,6 +36,7 @@ struct Entry {
     label: String,
     branch: Option<String>,
     base: Option<String>,
+    base_source: Option<String>,
     base_oid: Option<String>,
     created_at: i64,
     archived: bool,
@@ -82,6 +83,7 @@ pub struct FeatureInfo {
     pub missing: bool,
     pub archived: bool,
     pub base: Option<String>,
+    pub base_source: String,
     pub base_oid: Option<String>,
     pub created_at: Option<i64>,
     pub changes: Option<Changes>,
@@ -326,22 +328,141 @@ fn local_branch_exists(cwd: &str, branch: &str) -> bool {
 }
 
 fn default_base(main: &str) -> Option<String> {
-    let remote = probe(main, &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"])
+    // A default for NEW worktrees, never evidence of an existing worktree's origin.
+    probe(main, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"])
+        .or_else(|| probe(main, &["symbolic-ref", "--short", "HEAD"]))
+        .or_else(|| probe(main, &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]))
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .or_else(|| {
-            ["origin/main", "origin/master", "main", "master"]
-                .iter()
-                .find(|c| probe(main, &["rev-parse", "--verify", "--quiet", c]).is_some())
-                .map(|c| c.to_string())
-        })
-        .or_else(|| probe(main, &["rev-parse", "--abbrev-ref", "HEAD"]).map(|s| s.trim().to_string()).filter(|s| s != "HEAD"))?;
-    let local = remote.split_once('/').map(|(_, rest)| rest.to_string()).unwrap_or_else(|| remote.clone());
-    if local_branch_exists(main, &local) {
-        Some(local)
-    } else {
-        Some(remote)
+}
+
+#[derive(Default)]
+struct BaseResolution {
+    reference: Option<String>,
+    oid: Option<String>,
+    source: &'static str,
+}
+
+fn commit_oid(path: &str, reference: &str) -> Option<String> {
+    if reference.is_empty() || reference.starts_with('-') {
+        return None;
     }
+    probe(path, &["rev-parse", "--verify", "--quiet", &format!("{}^{{commit}}", reference)])
+        .map(|s| s.trim().to_string())
+}
+
+fn named_base(path: &str, reference: &str, branch: &str) -> bool {
+    if reference.starts_with('-') || reference == "HEAD" || reference == branch {
+        return false;
+    }
+    probe(path, &["rev-parse", "--symbolic-full-name", "--verify", reference])
+        .is_some_and(|r| r.trim().starts_with("refs/heads/") || r.trim().starts_with("refs/remotes/"))
+}
+
+fn base_metadata(path: &str, branch: &str) -> Option<BaseResolution> {
+    let reference = probe(path, &["config", "--local", "--get", &format!("branch.{}.guillecode-base", branch)])?
+        .trim().to_string();
+    if reference.is_empty() {
+        return None;
+    }
+    let oid = probe(path, &["config", "--local", "--get", &format!("branch.{}.guillecode-base-oid", branch)])
+        .map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    Some(BaseResolution { reference: Some(reference), oid, source: "registered" })
+}
+
+fn write_base_metadata(path: &str, branch: &str, base: &str, oid: Option<&str>) -> Result<(), String> {
+    let (code, _, error) = git_raw(path, &["config", "--local", &format!("branch.{}.guillecode-base", branch), base])?;
+    if code != 0 {
+        return Err(format!("no se pudo registrar la base del worktree: {}", error));
+    }
+    let oid_key = format!("branch.{}.guillecode-base-oid", branch);
+    if let Some(oid) = oid {
+        let (code, _, error) = git_raw(path, &["config", "--local", &oid_key, oid])?;
+        if code != 0 {
+            return Err(format!("no se pudo registrar el commit inicial: {}", error));
+        }
+    } else {
+        let _ = probe(path, &["config", "--local", "--unset-all", &oid_key]);
+    }
+    Ok(())
+}
+
+fn branch_creation(path: &str, branch: &str) -> Option<(String, String)> {
+    probe(path, &["reflog", "show", "--format=%H%x1f%gs", &format!("refs/heads/{}", branch)])
+        .and_then(|out| out.lines().rev().find_map(|line| {
+            let (oid, subject) = line.split_once('\x1f')?;
+            Some((oid.to_string(), subject.strip_prefix("branch: Created from ")?.to_string()))
+        }))
+}
+
+fn resolve_base(ctx: &RepoCtx, w: &Worktree, entry: Option<&Entry>) -> BaseResolution {
+    if let Some(branch) = w.branch.as_deref() {
+        if let Some(base) = base_metadata(&ctx.main, branch) {
+            return base;
+        }
+    }
+    // Old external entries could have had the repo default persisted by rename/archive.
+    // Only a recorded creation OID or an explicit registration makes that base authoritative.
+    if let Some(e) = entry.filter(|e| e.base_oid.is_some() || e.base_source.as_deref() == Some("registered")) {
+        if e.base.is_some() {
+            return BaseResolution { reference: e.base.clone(), oid: e.base_oid.clone(), source: "registered" };
+        }
+    }
+    let Some(branch) = w.branch.as_deref() else {
+        return BaseResolution { source: "unknown", ..Default::default() };
+    };
+    let creation = branch_creation(&ctx.main, branch);
+    if let Some((oid, reference)) = &creation {
+        if named_base(&ctx.main, reference, branch) {
+            return BaseResolution { reference: Some(reference.clone()), oid: Some(oid.clone()), source: "reflog" };
+        }
+    }
+    let upstream = probe(&ctx.main, &["for-each-ref", "--format=%(upstream:short)", &format!("refs/heads/{}", branch)])
+        .map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    if let Some(reference) = &upstream {
+        // origin/feature/foo is a publication upstream, not the parent of feature/foo.
+        if reference.split_once('/').map(|(_, name)| name != branch).unwrap_or(false) && named_base(&ctx.main, reference, branch) {
+            return BaseResolution { reference: Some(reference.clone()), oid: creation.map(|c| c.0), source: "upstream" };
+        }
+    }
+    infer_base(ctx, w, creation.map(|c| c.0), upstream.as_deref())
+}
+
+fn infer_base(ctx: &RepoCtx, w: &Worktree, creation_oid: Option<String>, upstream: Option<&str>) -> BaseResolution {
+    let unknown = || BaseResolution { source: "unknown", ..Default::default() };
+    let Some(head) = &w.head else { return unknown() };
+    let refs = probe(&ctx.main, &["for-each-ref", "--format=%(refname)%1f%(refname:short)%1f%(objectname)%1f%(symref)", "refs/heads", "refs/remotes"])
+        .unwrap_or_default();
+    let mut best = u32::MAX;
+    let mut candidates: Vec<(String, String, bool)> = Vec::new();
+    for line in refs.lines() {
+        let fields: Vec<&str> = line.split('\x1f').collect();
+        if fields.len() != 4 || !fields[3].is_empty() {
+            continue;
+        }
+        let (reference, oid, remote) = (fields[1], fields[2], fields[0].starts_with("refs/remotes/"));
+        if Some(reference) == w.branch.as_deref() || Some(reference) == upstream ||
+            ctx.worktrees.iter().any(|other| !same(&other.path, &ctx.main) && other.branch.as_deref() == Some(reference)) {
+            continue;
+        }
+        let Some(merge_base) = probe(&ctx.main, &["merge-base", reference, head]).map(|s| s.trim().to_string()) else { continue };
+        let distance = count_commits(&ctx.main, &merge_base, head);
+        if distance > best { continue }
+        if distance < best {
+            best = distance;
+            candidates.clear();
+        }
+        candidates.push((reference.to_string(), oid.to_string(), remote));
+    }
+    let Some((first, first_oid, first_remote)) = candidates.first() else { return unknown() };
+    let name = |reference: &str, remote: bool| if remote { reference.split_once('/').map(|(_, rest)| rest).unwrap_or(reference).to_string() } else { reference.to_string() };
+    let logical = name(first, *first_remote);
+    // Equivalent local/remote refs are one candidate. Distinct tips or branch names are ambiguous.
+    if candidates.iter().any(|(reference, oid, remote)| name(reference, *remote) != logical || oid != first_oid) {
+        return unknown();
+    }
+    let reference = candidates.iter().find(|(_, _, remote)| *remote).unwrap_or(&candidates[0]).0.clone();
+    BaseResolution { reference: Some(reference), oid: creation_oid, source: "inferred" }
 }
 
 fn worktrees_dir(main: &str) -> String {
@@ -420,7 +541,7 @@ fn settings_of(reg: &Registry, project: &str) -> ProjectSettings {
     reg.projects.get(&key(project)).cloned().unwrap_or_default()
 }
 
-fn collect(reg: &Registry, ctx: &RepoCtx, scope: &str, group: Option<&str>, default: &Option<String>, with_main: bool) -> Vec<FeatureInfo> {
+fn collect(reg: &Registry, ctx: &RepoCtx, scope: &str, group: Option<&str>, with_main: bool) -> Vec<FeatureInfo> {
     let entries: Vec<&Entry> = reg.features.iter().filter(|e| same(&e.repo, &ctx.main)).collect();
     let mut features: Vec<FeatureInfo> = Vec::new();
     for w in ctx.worktrees.iter().filter(|w| !w.bare) {
@@ -431,6 +552,7 @@ fn collect(reg: &Registry, ctx: &RepoCtx, scope: &str, group: Option<&str>, defa
         let entry = entries.iter().find(|e| same(&e.path, &w.path));
         let kind = if main { "main" } else if entry.is_some() { "managed" } else { "external" };
         let missing = w.prunable.is_some() || !Path::new(&w.path).is_dir();
+        let base = if main { BaseResolution::default() } else { resolve_base(ctx, w, entry.copied()) };
         features.push(FeatureInfo {
             id: entry.map(|e| e.id.clone()),
             path: w.path.clone(),
@@ -448,8 +570,9 @@ fn collect(reg: &Registry, ctx: &RepoCtx, scope: &str, group: Option<&str>, defa
             prunable: w.prunable.clone(),
             missing,
             archived: entry.map(|e| e.archived).unwrap_or(false),
-            base: if main { None } else { entry.and_then(|e| e.base.clone()).or_else(|| default.clone()) },
-            base_oid: entry.and_then(|e| e.base_oid.clone()),
+            base: base.reference,
+            base_source: base.source.to_string(),
+            base_oid: base.oid,
             created_at: entry.map(|e| e.created_at),
             ..Default::default()
         });
@@ -468,6 +591,7 @@ fn collect(reg: &Registry, ctx: &RepoCtx, scope: &str, group: Option<&str>, defa
             missing: true,
             archived: e.archived,
             base: e.base.clone(),
+            base_source: e.base_source.clone().unwrap_or_else(|| "unknown".into()),
             base_oid: e.base_oid.clone(),
             created_at: Some(e.created_at),
             ..Default::default()
@@ -546,7 +670,7 @@ fn single_list(reg: &Registry, ctx: RepoCtx) -> FeatureList {
         ensure_excluded(&ctx.main);
     }
     let default = default_base(&ctx.main);
-    let mut features = collect(reg, &ctx, &canonical, None, &default, true);
+    let mut features = collect(reg, &ctx, &canonical, None, true);
     fill_live(&mut features, &mut []);
     let settings = settings_of(reg, &canonical);
     let main = features.iter().find(|f| f.kind == "main");
@@ -600,7 +724,7 @@ fn multi_list(reg: &Registry, project: &str) -> FeatureList {
     let mut features: Vec<FeatureInfo> = Vec::new();
     let mut groups: Vec<RepoGroup> = Vec::new();
     for ((name, ctx), default) in repos.iter().zip(defaults) {
-        features.extend(collect(reg, ctx, &ctx.main, Some(name), &default, false));
+        features.extend(collect(reg, ctx, &ctx.main, Some(name), false));
         let main = ctx.worktrees.iter().find(|w| same(&w.path, &ctx.main));
         groups.push(RepoGroup {
             path: ctx.main.clone(),
@@ -629,7 +753,7 @@ fn multi_list(reg: &Registry, project: &str) -> FeatureList {
     FeatureList { git: true, multi: true, project, features, repos: groups, settings, ..Default::default() }
 }
 
-fn build_list(app: &AppHandle, project: &str) -> Result<FeatureList, String> {
+pub(crate) fn build_list(app: &AppHandle, project: &str) -> Result<FeatureList, String> {
     let reg = load(app);
     Ok(match repo_ctx(project)? {
         Some(ctx) => single_list(&reg, ctx),
@@ -797,7 +921,7 @@ pub struct CreateResult {
     pub skipped: Vec<String>,
 }
 
-fn create_sync(app: &AppHandle, args: CreateArgs) -> Result<CreateResult, String> {
+pub(crate) fn create_sync(app: &AppHandle, args: CreateArgs) -> Result<CreateResult, String> {
     let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let ctx = require_ctx(&args.project)?;
     let label = args.label.trim().to_string();
@@ -842,6 +966,8 @@ fn create_sync(app: &AppHandle, args: CreateArgs) -> Result<CreateResult, String
         git(&ctx.main, &["worktree", "add", "-b", &branch, &native, &base_oid])?;
     }
     let (copied, skipped) = copy_into(&ctx.main, &dir, &args.copy);
+    let creation_oid = if branch_exists { branch_creation(&ctx.main, &branch).map(|c| c.0) } else { Some(base_oid) };
+    write_base_metadata(&ctx.main, &branch, &base, creation_oid.as_deref())?;
     let mut reg = load(app);
     let entry = Entry {
         id: uuid::Uuid::new_v4().to_string(),
@@ -850,7 +976,8 @@ fn create_sync(app: &AppHandle, args: CreateArgs) -> Result<CreateResult, String
         label: label.clone(),
         branch: Some(branch.clone()),
         base: Some(base.clone()),
-        base_oid: Some(base_oid.clone()),
+        base_source: Some("registered".into()),
+        base_oid: creation_oid.clone(),
         created_at: now_ms(),
         archived: false,
     };
@@ -876,7 +1003,8 @@ fn create_sync(app: &AppHandle, args: CreateArgs) -> Result<CreateResult, String
             branch: Some(branch),
             head,
             base: Some(base),
-            base_oid: Some(base_oid),
+            base_source: "registered".into(),
+            base_oid: creation_oid,
             created_at: Some(entry.created_at),
             changes: Some(Changes::default()),
             ahead: Some(0),
@@ -896,9 +1024,10 @@ pub struct UpdateArgs {
     pub label: Option<String>,
     pub archived: Option<bool>,
     pub base: Option<String>,
+    pub base_oid: Option<String>,
 }
 
-fn update_sync(app: &AppHandle, args: UpdateArgs) -> Result<(), String> {
+pub(crate) fn update_sync(app: &AppHandle, args: UpdateArgs) -> Result<(), String> {
     let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let ctx = require_ctx(&args.project)?;
     if same(&args.path, &ctx.main) {
@@ -906,17 +1035,21 @@ fn update_sync(app: &AppHandle, args: UpdateArgs) -> Result<(), String> {
     }
     let mut reg = load(app);
     let worktree = ctx.worktrees.iter().find(|w| same(&w.path, &args.path)).cloned();
-    let index = match reg.features.iter().position(|e| same(&e.path, &args.path)) {
+    if args.base.is_some() && worktree.as_ref().map_or(true, |w| !exists(&w.path)) {
+        return Err("no se puede registrar la base: la carpeta del worktree no está disponible".into());
+    }
+    let index = match reg.features.iter().position(|e| same(&e.path, &args.path) && same(&e.repo, &ctx.main)) {
         Some(i) => i,
         None => {
-            let w = worktree.ok_or("esa carpeta no es un worktree de este repositorio")?;
+            let w = worktree.as_ref().ok_or("esa carpeta no es un worktree de este repositorio")?;
             reg.features.push(Entry {
                 id: uuid::Uuid::new_v4().to_string(),
                 repo: ctx.main.clone(),
                 path: w.path.clone(),
                 label: basename(&w.path),
                 branch: w.branch.clone(),
-                base: default_base(&ctx.main),
+                base: None,
+                base_source: None,
                 base_oid: None,
                 created_at: now_ms(),
                 archived: false,
@@ -925,6 +1058,9 @@ fn update_sync(app: &AppHandle, args: UpdateArgs) -> Result<(), String> {
         }
     };
     let entry = &mut reg.features[index];
+    if let Some(w) = &worktree {
+        entry.branch = w.branch.clone();
+    }
     if let Some(label) = args.label.map(|l| l.trim().to_string()).filter(|l| !l.is_empty()) {
         entry.label = label;
     }
@@ -932,9 +1068,17 @@ fn update_sync(app: &AppHandle, args: UpdateArgs) -> Result<(), String> {
         entry.archived = archived;
     }
     if let Some(base) = args.base.map(|b| b.trim().to_string()).filter(|b| !b.is_empty()) {
-        probe(&ctx.main, &["rev-parse", "--verify", "--quiet", &format!("{}^{{commit}}", base)])
-            .ok_or_else(|| format!("no encontré la rama {}", base))?;
+        commit_oid(&ctx.main, &base).ok_or_else(|| format!("no encontré la rama {}", base))?;
+        let oid = match args.base_oid {
+            Some(oid) => Some(commit_oid(&ctx.main, &oid).ok_or("no encontré el commit inicial")?),
+            None => if entry.base.as_deref() == Some(base.as_str()) { entry.base_oid.clone() } else { None },
+        };
+        if let Some(branch) = entry.branch.as_deref() {
+            write_base_metadata(&ctx.main, branch, &base, oid.as_deref())?;
+        }
         entry.base = Some(base);
+        entry.base_oid = oid;
+        entry.base_source = Some("registered".into());
     }
     save(app, &mut reg)?;
     changed(app);
@@ -995,7 +1139,7 @@ fn is_generated(rel: &str) -> bool {
     rel.trim_end_matches('/').split('/').any(|seg| GENERATED.contains(&seg))
 }
 
-fn candidates_sync(project: &str) -> Result<Vec<CopyCandidate>, String> {
+pub(crate) fn candidates_sync(project: &str) -> Result<Vec<CopyCandidate>, String> {
     let ctx = require_ctx(project)?;
     let mut out = Vec::new();
     for rel in ignored_entries(&ctx.main) {
@@ -1392,20 +1536,30 @@ fn count_commits(cwd: &str, from: &str, to: &str) -> u32 {
         .unwrap_or(0)
 }
 
-fn diff_sync(app: &AppHandle, project: &str, path: &str) -> Result<FeatureDiff, String> {
-    let list = build_list(app, project)?;
-    let feature = list.features.iter().find(|f| same(&f.path, path)).ok_or("esa feature ya no existe")?;
-    if feature.missing {
+fn diff_sync(app: &AppHandle, project: &str, path: &str, comparison: Option<&str>) -> Result<FeatureDiff, String> {
+    // Inspect only this checkout: a comparison must not poll every repo/worktree in the project.
+    let ctx = require_ctx(project)?;
+    let w = ctx.worktrees.iter().find(|w| same(&w.path, path)).ok_or("esa feature ya no existe")?;
+    if w.prunable.is_some() || !exists(&w.path) {
         return Err("la carpeta de esta feature ya no existe".to_string());
     }
-    let mut out = FeatureDiff { base: feature.base.clone(), ..Default::default() };
-    let Some(base) = feature.base.clone() else { return Ok(out) };
+    let reg = load(app);
+    let entry = reg.features.iter().find(|e| same(&e.path, path) && same(&e.repo, &ctx.main));
+    let base = if comparison.is_none() { resolve_base(&ctx, w, entry).reference } else { None };
+    diff_for(&FeatureInfo { path: w.path.clone(), base, ..Default::default() }, comparison)
+}
+
+fn diff_for(feature: &FeatureInfo, comparison: Option<&str>) -> Result<FeatureDiff, String> {
+    let path = &feature.path;
+    let base = comparison.map(str::to_string).or_else(|| feature.base.clone());
+    let mut out = FeatureDiff { base: base.clone(), ..Default::default() };
+    let Some(base) = base else { return Ok(out) };
+    commit_oid(path, &base).ok_or_else(|| format!("la referencia base {} no está disponible; actualizá las referencias del repositorio", base))?;
     let Some(head) = probe(path, &["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]).map(|h| h.trim().to_string()) else {
         return Ok(out);
     };
-    let Some(merge_base) = probe(path, &["merge-base", &base, &head]).map(|m| m.trim().to_string()) else {
-        return Ok(out);
-    };
+    let merge_base = probe(path, &["merge-base", &base, &head]).map(|m| m.trim().to_string())
+        .ok_or_else(|| format!("{} y la rama del worktree no tienen un ancestro común", base))?;
     out.commits = count_commits(path, &merge_base, &head);
     out.files = range_files(path, &merge_base, &head)?;
     out.merge_base = Some(merge_base);
@@ -1414,8 +1568,8 @@ fn diff_sync(app: &AppHandle, project: &str, path: &str) -> Result<FeatureDiff, 
 }
 
 #[tauri::command]
-pub async fn features_diff(app: AppHandle, project: String, path: String) -> Result<FeatureDiff, String> {
-    blocking(move || diff_sync(&app, &project, &path)).await
+pub async fn features_diff(app: AppHandle, project: String, path: String, base: Option<String>) -> Result<FeatureDiff, String> {
+    blocking(move || diff_sync(&app, &project, &path, base.as_deref())).await
 }
 
 #[tauri::command]
@@ -1704,5 +1858,149 @@ mod tests {
         git_raw(&wt, &["add", "staged.txt"]).unwrap();
         let c = changes_of(&wt).unwrap();
         assert_eq!((c.staged, c.unstaged, c.untracked, c.conflicts), (1, 1, 1, 0));
+    }
+
+    fn run(path: &str, args: &[&str]) {
+        let (code, _, error) = git_raw(path, args).unwrap();
+        assert_eq!(code, 0, "git {:?}: {}", args, error);
+    }
+
+    fn develop_repo() -> (tempdir::Dir, String, String, String) {
+        let dir = tempdir::Dir::new();
+        let main = join(&dir.path, "repo");
+        init_repo(&main);
+        run(&main, &["remote", "add", "origin", &main]);
+        run(&main, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        run(&main, &["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"]);
+        run(&main, &["checkout", "-qb", "develop"]);
+        std::fs::write(join(&main, "develop-only.txt"), "desarrollo\n").unwrap();
+        run(&main, &["add", "."]);
+        run(&main, &["commit", "-qm", "develop"]);
+        let origin = commit_oid(&main, "HEAD").unwrap();
+        run(&main, &["update-ref", "refs/remotes/origin/develop", &origin]);
+        run(&main, &["branch", "--set-upstream-to=origin/develop", "develop"]);
+        let wt = join(&worktrees_dir(&main), "login");
+        (dir, main, wt, origin)
+    }
+
+    #[test]
+    fn external_worktree_keeps_origin_develop_and_only_its_own_changes() {
+        let (_dir, main, wt, origin) = develop_repo();
+        // Local develop differs from origin/develop, and origin/HEAD still points to main.
+        std::fs::write(join(&main, "local-only.txt"), "local\n").unwrap();
+        run(&main, &["add", "."]);
+        run(&main, &["commit", "-qm", "develop local avanza"]);
+        assert_eq!(default_base(&main).as_deref(), Some("origin/develop"));
+        run(&main, &["worktree", "add", "-qb", "feature/login", &wt, "origin/develop"]);
+        std::fs::write(join(&wt, "login.txt"), "login\n").unwrap();
+        run(&wt, &["add", "login.txt"]);
+        run(&wt, &["commit", "-qm", "login"]);
+        std::fs::write(join(&wt, "a.txt"), "pendiente\n").unwrap();
+        std::fs::write(join(&wt, "nuevo.txt"), "nuevo\n").unwrap();
+        std::fs::write(join(&wt, "staged.txt"), "stage\n").unwrap();
+        run(&wt, &["add", "staged.txt"]);
+
+        let list = single_list(&Registry::default(), require_ctx(&main).unwrap());
+        let feature = list.features.iter().find(|f| same(&f.path, &wt)).unwrap();
+        assert_eq!(feature.kind, "external");
+        assert_eq!(feature.base.as_deref(), Some("origin/develop"));
+        assert_eq!(feature.base_source, "reflog");
+        assert_eq!(feature.base_oid.as_deref(), Some(origin.as_str()));
+        let changes = feature.changes.as_ref().unwrap();
+        assert_eq!((changes.staged, changes.unstaged, changes.untracked), (1, 1, 1));
+        let head_before = commit_oid(&wt, "HEAD");
+        let index_before = probe(&wt, &["diff", "--cached", "--name-only", "--"]);
+        let diff = diff_for(feature, None).unwrap();
+        assert_eq!(diff.commits, 1);
+        assert_eq!(diff.files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), vec!["login.txt"]);
+        let alternate = diff_for(feature, Some("origin/main")).unwrap();
+        assert!(alternate.files.iter().any(|f| f.path == "develop-only.txt"));
+        assert_eq!(feature.base.as_deref(), Some("origin/develop"));
+        assert_eq!(commit_oid(&wt, "HEAD"), head_before);
+        assert_eq!(probe(&wt, &["diff", "--cached", "--name-only", "--"]), index_before);
+        assert_eq!(probe(&main, &["symbolic-ref", "--short", "HEAD"]).unwrap().trim(), "develop");
+    }
+
+    #[test]
+    fn registered_base_survives_publication_upstream_and_remote_advances() {
+        let (_dir, main, wt, origin) = develop_repo();
+        run(&main, &["worktree", "add", "--no-track", "-qb", "feature/login", &wt, &origin]);
+        write_base_metadata(&main, "feature/login", "origin/develop", Some(&origin)).unwrap();
+        std::fs::write(join(&wt, "login.txt"), "login\n").unwrap();
+        run(&wt, &["add", "."]);
+        run(&wt, &["commit", "-qm", "login"]);
+        let head = commit_oid(&wt, "HEAD").unwrap();
+        run(&main, &["update-ref", "refs/remotes/origin/feature/login", &head]);
+        run(&wt, &["branch", "--set-upstream-to=origin/feature/login"]);
+        std::fs::write(join(&main, "base-new.txt"), "base nueva\n").unwrap();
+        run(&main, &["add", "."]);
+        run(&main, &["commit", "-qm", "avanza develop"]);
+        run(&main, &["update-ref", "refs/remotes/origin/develop", "HEAD"]);
+        let list = single_list(&Registry::default(), require_ctx(&main).unwrap());
+        let feature = list.features.iter().find(|f| same(&f.path, &wt)).unwrap();
+        assert_eq!(feature.base.as_deref(), Some("origin/develop"));
+        assert_eq!(feature.base_source, "registered");
+        assert_eq!(feature.base_oid.as_deref(), Some(origin.as_str()));
+        assert_eq!(diff_for(feature, None).unwrap().files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), vec!["login.txt"]);
+    }
+
+    #[test]
+    fn external_worktree_can_infer_develop_without_a_named_creation_ref() {
+        let (_dir, main, wt, origin) = develop_repo();
+        run(&main, &["worktree", "add", "--no-track", "-qb", "feature/login", &wt, &origin]);
+        let list = single_list(&Registry::default(), require_ctx(&main).unwrap());
+        let feature = list.features.iter().find(|f| same(&f.path, &wt)).unwrap();
+        assert_eq!(feature.base.as_deref(), Some("origin/develop"));
+        assert_eq!(feature.base_source, "inferred");
+    }
+
+    #[test]
+    fn ambiguous_external_origin_is_unknown_instead_of_defaulting_to_main() {
+        let (_dir, main, wt) = repo_with_feature();
+        run(&main, &["branch", "develop", "main"]);
+        let list = single_list(&Registry::default(), require_ctx(&main).unwrap());
+        let feature = list.features.iter().find(|f| same(&f.path, &wt)).unwrap();
+        assert!(feature.base.is_none());
+        assert_eq!(feature.base_source, "unknown");
+        assert!(diff_for(feature, None).unwrap().base.is_none());
+    }
+
+    #[test]
+    fn legacy_auto_registered_main_does_not_override_the_actual_origin() {
+        let (_dir, main, wt, _) = develop_repo();
+        run(&main, &["worktree", "add", "-qb", "feature/login", &wt, "origin/develop"]);
+        let mut reg = Registry::default();
+        reg.features.push(Entry { repo: main.clone(), path: wt.clone(), branch: Some("feature/login".into()), base: Some("main".into()), ..Default::default() });
+        let list = single_list(&reg, require_ctx(&main).unwrap());
+        let feature = list.features.iter().find(|f| same(&f.path, &wt)).unwrap();
+        assert_eq!(feature.base.as_deref(), Some("origin/develop"));
+        assert_eq!(feature.base_source, "reflog");
+    }
+
+    #[test]
+    fn publication_upstream_is_not_used_as_the_comparison_base() {
+        let (_dir, main, wt) = repo_with_feature();
+        run(&main, &["remote", "add", "origin", &main]);
+        std::fs::write(join(&wt, "login.txt"), "login\n").unwrap();
+        run(&wt, &["add", "."]);
+        run(&wt, &["commit", "-qm", "login"]);
+        run(&wt, &["update-ref", "refs/remotes/origin/feature/a", "HEAD"]);
+        run(&wt, &["branch", "--set-upstream-to=origin/feature/a"]);
+        let list = single_list(&Registry::default(), require_ctx(&main).unwrap());
+        let feature = list.features.iter().find(|f| same(&f.path, &wt)).unwrap();
+        assert_eq!(feature.base.as_deref(), Some("main"));
+        assert_eq!(diff_for(feature, None).unwrap().commits, 1);
+    }
+
+    #[test]
+    fn deleted_registered_base_returns_an_error_instead_of_an_empty_diff() {
+        let (_dir, main, wt, origin) = develop_repo();
+        run(&main, &["worktree", "add", "--no-track", "-qb", "feature/login", &wt, &origin]);
+        write_base_metadata(&main, "feature/login", "origin/develop", Some(&origin)).unwrap();
+        run(&main, &["update-ref", "-d", "refs/remotes/origin/develop"]);
+        let list = single_list(&Registry::default(), require_ctx(&main).unwrap());
+        let feature = list.features.iter().find(|f| same(&f.path, &wt)).unwrap();
+        assert_eq!(feature.base.as_deref(), Some("origin/develop"));
+        assert!(diff_for(feature, None).err().unwrap().contains("no está disponible"));
     }
 }
