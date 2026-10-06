@@ -19,6 +19,10 @@ Las cuentas se guardan en el perfil de OpenCode del usuario de Windows (`XDG_DAT
 
 La app del celular actualiza los modelos y verifica disponibilidad antes de enviar. Las rutinas verifican su modelo antes de crear una conversación; si se quitó su cuenta, se informa el error para que el usuario elija otro modelo.
 
+## Memoria
+
+GuilleCode recuerda el proyecto y las conversaciones de forma **100% local**, sin cuentas ni servicios. Un plugin del motor inyecta el contexto antes de cada respuesta, así el recuerdo no depende de que el agente pida nada. En cada conversación hay un interruptor **Memoria** (encendido por defecto): apagado, no se inyecta contexto, no se guardan checkpoints y el agente no puede usar las herramientas `memory_*`. La vista **Memoria** permite leer y editar las notas del proyecto, el estado de cada conversación y las preferencias, y «Continuar en un chat nuevo» arranca una sesión con el checkpoint. Los datos viven en el perfil de datos de GuilleCode, no en la nube.
+
 ## Instalar
 
 Ejecutar el instalador NSIS de Windows x64. Incluye el motor y los recursos de la app del celular. Si falta WebView2, el instalador descarga su bootstrapper; requiere conexión a Internet.
@@ -56,7 +60,7 @@ Para generar el instalador:
 npx tauri build
 ```
 
-Salida: `src-tauri/target/release/bundle/nsis/guillecode_0.2.0_x64-setup.exe`.
+Salida: `src-tauri/target/release/bundle/nsis/guillecode_0.8.0_x64-setup.exe`.
 
 Las variables `VITE_OPENCODE_USER`, `VITE_OPENCODE_PASSWORD`, `VITE_PROJECT` y `VITE_OPENCODE_MODEL` solo se usan en desarrollo. El build incluye un control que falla si una credencial `VITE_*PASSWORD`, `*TOKEN`, `*SECRET` o `*API_KEY` termina en el JavaScript de distribución.
 

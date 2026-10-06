@@ -396,6 +396,13 @@ export function registerBuiltinCommands(): void {
       run: () => openEditor({ kind: "desktop" }),
     },
     {
+      id: "memory.open",
+      title: "Memoria (el agente recuerda el proyecto y las conversaciones)",
+      category: "GuilleCode",
+      icon: "library",
+      run: () => openEditor({ kind: "memory" }),
+    },
+    {
       id: "accounts.chatgpt",
       title: "Cuentas de IA: conectar ChatGPT, OpenCode o quitar proveedores",
       category: "GuilleCode",

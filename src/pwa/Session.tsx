@@ -15,6 +15,7 @@ import {
   type Question,
   type SessionInfo,
 } from "./api"
+import { loadMemory, setMemory as setMemoryRemote, type MemoryState } from "./api"
 import { Composer, promptBody, type Draft } from "./Composer"
 import { pipOpen, ScreenPip, setPipOpen } from "./ScreenPip"
 import { QuotaBar, type QuotaBarHandle } from "./Quota"
@@ -337,6 +338,7 @@ export function SessionScreen({ route, back }: { route: Extract<Route, { kind: "
   const [offline, setOffline] = useState<OfflineReason | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [unseen, setUnseen] = useState(false)
+  const [memory, setMemory] = useState<MemoryState | null>(null)
   const stick = useRef(true)
   const first = useRef(true)
   const quotaBar = useRef<QuotaBarHandle>(null)
@@ -405,6 +407,12 @@ export function SessionScreen({ route, back }: { route: Extract<Route, { kind: "
       .then(setInfo)
       .catch(() => undefined)
   }, [])
+
+  useEffect(() => {
+    loadMemory(route.project, route.id)
+      .then(setMemory)
+      .catch(() => undefined)
+  }, [route.project, route.id])
 
   const onEvent = useCallback(
     (e: LiveEvent) => {
@@ -621,6 +629,12 @@ export function SessionScreen({ route, back }: { route: Extract<Route, { kind: "
           favorites={info?.prefs?.favorites ?? []}
           zenFreeOnly={info?.prefs?.zenFreeOnly ?? false}
           voice={info?.voice}
+          memoryOn={memory?.enabled ?? true}
+          onToggleMemory={() => {
+            const next = !(memory?.enabled ?? true)
+            setMemory((m) => (m ? { ...m, enabled: next } : { enabled: next, scope: "", slug: "", tasks: [] }))
+            void setMemoryRemote(route.id, next).catch(() => undefined)
+          }}
           onSend={send}
         />
       </footer>

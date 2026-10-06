@@ -9,6 +9,7 @@ import {
 } from "../lib/git"
 import { ancestors, isInside, joinPath, normalizePath } from "../lib/paths"
 import { debounce } from "../lib/persist"
+import { coalescedByKey } from "../lib/coalesced"
 import { errorMessage } from "../lib/tauri"
 import { notify } from "./toasts"
 
@@ -96,7 +97,7 @@ export async function initGit(root: string): Promise<void> {
   }
 }
 
-export async function refreshRepo(repo: string): Promise<void> {
+export const refreshRepo = coalescedByKey(async (repo: string): Promise<void> => {
   const gen = generation
   useGit.setState((s) => ({
     byRepo: { ...s.byRepo, [repo]: { ...(s.byRepo[repo] ?? { status: null, error: null, loadedAt: 0 }), loading: true } },
@@ -109,11 +110,12 @@ export async function refreshRepo(repo: string): Promise<void> {
       return { byRepo, ...rebuildDecorations(byRepo), revision: s.revision + 1 }
     })
   } catch (e) {
+    if (gen !== generation) return
     useGit.setState((s) => ({
       byRepo: { ...s.byRepo, [repo]: { status: null, error: errorMessage(e), loading: false, loadedAt: Date.now() } },
     }))
   }
-}
+})
 
 function trackedRepos(): string[] {
   const { repos, extraRepos } = useGit.getState()

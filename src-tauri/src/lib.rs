@@ -16,8 +16,10 @@ pub mod git;
 pub mod hub;
 pub mod live;
 pub mod machine;
+pub mod memory;
 pub mod oc;
 pub mod proc;
+pub mod process_tree;
 pub mod push;
 pub mod remote;
 pub mod routines;
@@ -41,10 +43,22 @@ pub struct ServerConfig {
 }
 
 pub struct ServerState {
-    child: Mutex<Option<CommandChild>>,
+    child: Mutex<Option<EngineChild>>,
     config: Mutex<Option<ServerConfig>>,
     project: Mutex<Option<String>>,
     stopping: AtomicBool,
+}
+
+struct EngineChild {
+    child: CommandChild,
+    tree: process_tree::ProcessTree,
+}
+impl EngineChild {
+    fn pid(&self) -> u32 { self.child.pid() }
+    fn kill(self) {
+        self.tree.terminate();
+        let _ = self.child.kill();
+    }
 }
 
 pub fn ensure_server(app: &tauri::AppHandle) -> Result<ServerConfig, String> {
@@ -131,6 +145,10 @@ fn spawn_server(app: &tauri::AppHandle, state: &ServerState, worktree: &str) -> 
         .spawn()
         .map_err(|e| format!("no se pudo iniciar opencode: {}", e))?;
     let pid = child.pid();
+    let tree = match process_tree::ProcessTree::attach(pid) {
+        Ok(tree) => tree,
+        Err(e) => { let _ = child.kill(); return Err(e); }
+    };
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
         while let Some(event) = rx.recv().await {
@@ -153,7 +171,7 @@ fn spawn_server(app: &tauri::AppHandle, state: &ServerState, worktree: &str) -> 
             }
         }
     });
-    *state.child.lock().unwrap() = Some(child);
+    *state.child.lock().unwrap() = Some(EngineChild { child, tree });
     Ok(ServerConfig {
         url: format!("http://127.0.0.1:{}", port),
         username: "opencode".into(),
@@ -255,15 +273,7 @@ fn shutdown(app: &tauri::AppHandle) {
         config.take();
     }
     if let Some(child) = app.state::<ServerState>().child.lock().unwrap().take() {
-        #[cfg(windows)]
-        {
-            // The engine can own browser/MCP children; release their executable locks too.
-            let mut command = std::process::Command::new("taskkill");
-            command.args(["/PID", &child.pid().to_string(), "/T", "/F"]);
-            proc::hide_console(&mut command);
-            let _ = command.output();
-        }
-        let _ = child.kill();
+        child.kill();
     }
     term::kill_all(app);
     watch::stop_all(app);
@@ -392,6 +402,16 @@ pub fn run() {
             desktop::desktop_browser_restart,
             desktop::desktop_browser_setup,
             live::live_busy_sessions,
+            memory::memory_status,
+            memory::memory_overview,
+            memory::memory_write_note,
+            memory::memory_write_overview,
+            memory::memory_write_preferences,
+            memory::memory_read_note,
+            memory::memory_delete_note,
+            memory::memory_search_cmd,
+            memory::memory_set_session,
+            memory::memory_session_enabled,
             windows::window_new,
             windows::windows_list,
             windows::window_focus,
@@ -415,6 +435,7 @@ pub fn run() {
             app.manage(updates::UpdatesState::default());
             app.manage(ServerState { child: Mutex::new(None), config: Mutex::new(None), project: Mutex::new(None), stopping: AtomicBool::new(false) });
             app.manage(windows::WindowsState::default());
+            memory::start(app.handle());
             desktop::start(app.handle());
             routines::start(app.handle());
             push::start(app.handle());
@@ -423,6 +444,7 @@ pub fn run() {
             hub::setup(app.handle())?;
             app.manage(term::TermState::new());
             app.manage(watch::WatchState::default());
+            term::start_cleanup(app.handle());
             if !std::env::args().any(|a| a == hub::HIDDEN_ARG) {
                 windows::restore(app.handle());
             }

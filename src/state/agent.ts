@@ -18,6 +18,7 @@ import { normalizePath, relativePath, samePath, toFileUrl } from "../lib/paths"
 import { notify } from "./toasts"
 import { chooseAvailableModel, hasAccount, modelAvailable, modelVisible } from "../lib/providers"
 import { isArchivedSession, sessionTreeIds } from "../lib/sessions"
+import { AUTO_RETRY_MAX, autoRetryDelayMs, isRetryableProviderError, lastVisibleUserMessage, shouldAutoRetry } from "../lib/autoretry"
 
 export type ChatMessage = { info: Message; parts: Part[] }
 
@@ -84,6 +85,7 @@ type AgentState = {
   favoriteModels: string[]
   variants: Record<string, string>
   zenFreeOnly: boolean
+  memoryEnabled: Record<string, boolean>
   agents: AgentInfo[]
   commands: CommandInfo[]
   composerFocus: number
@@ -120,6 +122,7 @@ export const useAgent = create<AgentState>(() => ({
   favoriteModels: loadJson("agent.favoriteModels", []),
   variants: loadJson("agent.variants", {}),
   zenFreeOnly: loadJson("agent.zenFreeOnly", true),
+  memoryEnabled: loadJson("agent.memoryEnabled", {}),
   agents: [],
   commands: [],
   composerFocus: 0,
@@ -187,6 +190,7 @@ useAgent.subscribe((s, prev) => {
   if (s.favoriteModels !== prev.favoriteModels) saveJson("agent.favoriteModels", s.favoriteModels)
   if (s.variants !== prev.variants) saveJson("agent.variants", s.variants)
   if (s.zenFreeOnly !== prev.zenFreeOnly) saveJson("agent.zenFreeOnly", s.zenFreeOnly)
+  if (s.memoryEnabled !== prev.memoryEnabled) saveJson("agent.memoryEnabled", s.memoryEnabled)
   if (s.agentName !== prev.agentName) saveJson("agent.name", s.agentName)
   if (s.includeActiveFile !== prev.includeActiveFile) saveJson("agent.includeActiveFile", s.includeActiveFile)
   if (s.activeSessionId !== prev.activeSessionId) saveJson(projectKey(boundProject, "agent.activeSession"), s.activeSessionId)
@@ -269,6 +273,31 @@ function upsertMessage(messages: ChatMessage[], info: Message): ChatMessage[] {
 
 const pendingParts = new Map<string, Part[]>()
 const fullHistory = new Map<string, ChatMessage[]>()
+
+// Closing a tab must release the whole conversation, not only hide it: otherwise
+// every session opened during a long run stays in memory with all its parts.
+function pruneSessionCaches(keep: Set<string>): Partial<AgentState> {
+  const pick = <T,>(map: Record<string, T>): Record<string, T> | null => {
+    let changed = false
+    const out: Record<string, T> = {}
+    for (const [id, value] of Object.entries(map)) {
+      if (keep.has(id)) out[id] = value
+      else changed = true
+    }
+    return changed ? out : null
+  }
+  const staleHistory = [...fullHistory.keys()].filter((id) => !keep.has(id))
+  for (const id of staleHistory) fullHistory.delete(id)
+  const views = pick(useAgent.getState().views)
+  const todos = pick(useAgent.getState().todos)
+  const doneFlash = pick(useAgent.getState().doneFlash)
+  if (!views && !todos && !doneFlash && staleHistory.length === 0) return {}
+  return {
+    views: views ?? useAgent.getState().views,
+    todos: todos ?? useAgent.getState().todos,
+    doneFlash: doneFlash ?? useAgent.getState().doneFlash,
+  }
+}
 
 function upsertPart(messages: ChatMessage[], part: Part): ChatMessage[] {
   const index = messages.findIndex((m) => m.info.id === part.messageID)
@@ -524,6 +553,7 @@ const statusMirror: Record<string, SessionStatus["type"]> = {}
 function applyStatus(sessionID: string, st: SessionStatus) {
   const prev = statusMirror[sessionID]
   statusMirror[sessionID] = st.type
+  if (st.type === "busy" || st.type === "retry") cancelAutoRetryTimer(sessionID)
   const finished = (prev === "busy" || prev === "retry") && st.type === "idle"
   enqueue((s) => {
     const patch: Partial<AgentState> = { statuses: { ...s.statuses, [sessionID]: st } }
@@ -557,6 +587,67 @@ export function syncStatuses(map: Record<string, SessionStatus>) {
   }
   for (const [id, prev] of Object.entries(statusMirror)) {
     if (prev !== "idle" && !(id in map)) applyStatus(id, { type: "idle" })
+  }
+}
+
+// When the engine gives up on a retryable provider error (the ChatGPT/Codex
+// backend returns transient 503s) resend the turn on our own, but only when no
+// tool ran in it: replaying tools could repeat side effects.
+type AutoRetryEntry = { parentID: string; count: number; timer: ReturnType<typeof setTimeout> | null }
+const autoRetry = new Map<string, AutoRetryEntry>()
+const autoRetryEvaluating = new Set<string>()
+
+function cancelAutoRetryTimer(sessionID: string): void {
+  const entry = autoRetry.get(sessionID)
+  if (entry?.timer) {
+    clearTimeout(entry.timer)
+    entry.timer = null
+  }
+}
+
+export function cancelAutoRetry(sessionID: string): void {
+  cancelAutoRetryTimer(sessionID)
+  autoRetry.delete(sessionID)
+}
+
+async function messagesForRetry(sessionID: string): Promise<ChatMessage[] | null> {
+  const view = useAgent.getState().views[sessionID]
+  if (view?.messages.length) return view.messages
+  try {
+    const res = await client.session.messages({ path: { id: sessionID }, query: { limit: PAGE_SIZE } })
+    return (res.data ?? []) as ChatMessage[]
+  } catch {
+    return null
+  }
+}
+
+async function maybeAutoRetry(sessionID: string, error: unknown): Promise<boolean> {
+  if (!isRetryableProviderError(error)) return false
+  if (autoRetry.get(sessionID)?.timer || autoRetryEvaluating.has(sessionID)) return true
+  autoRetryEvaluating.add(sessionID)
+  try {
+    const messages = await messagesForRetry(sessionID)
+    if (!messages) return false
+    const parent = lastVisibleUserMessage(messages)
+    if (!parent) return false
+    if (!shouldAutoRetry(messages, parent.info.id)) return false
+    const previous = autoRetry.get(sessionID)
+    const count = previous && previous.parentID === parent.info.id ? previous.count : 0
+    if (count >= AUTO_RETRY_MAX) return false
+    const entry: AutoRetryEntry = { parentID: parent.info.id, count, timer: null }
+    entry.timer = setTimeout(() => {
+      if (autoRetry.get(sessionID) !== entry) return
+      entry.timer = null
+      const status = useAgent.getState().statuses[sessionID]?.type
+      if (status === "busy" || status === "retry") return
+      entry.count += 1
+      notify.info(`El proveedor cortó la respuesta: reintento automático (${entry.count}/${AUTO_RETRY_MAX})`)
+      void retryMessage(sessionID, parent).catch(() => cancelAutoRetry(sessionID))
+    }, autoRetryDelayMs(count))
+    autoRetry.set(sessionID, entry)
+    return true
+  } finally {
+    autoRetryEvaluating.delete(sessionID)
   }
 }
 
@@ -600,6 +691,13 @@ function handleEvent(e: ServerEvent, directory?: string) {
   switch (e.type) {
     case "message.updated": {
       const info = p.info as Message
+      if (info.role === "assistant") {
+        if (info.time.completed && info.error) void maybeAutoRetry(info.sessionID, info.error)
+        else if (info.time.completed) {
+          const entry = autoRetry.get(info.sessionID)
+          if (entry && entry.parentID === info.parentID) cancelAutoRetry(info.sessionID)
+        }
+      }
       enqueue((s) => withView(s, info.sessionID, (v) => ({ ...v, messages: upsertMessage(v.messages, info) })))
       fullHistory.delete(info.sessionID)
       break
@@ -641,16 +739,22 @@ function handleEvent(e: ServerEvent, directory?: string) {
     }
     case "session.deleted": {
       const info = p.info as Session
+      delete statusMirror[info.id]
+      cancelAutoRetry(info.id)
       enqueue((s) => {
         const resetActive = s.activeSessionId === info.id
         let open = s.openSessionIds.filter((x) => x !== info.id)
         if (resetActive && !open.includes(DRAFT_TAB)) open = [...open, DRAFT_TAB]
         if (open.length === 0) open = [DRAFT_TAB]
+        const statuses = { ...s.statuses }
+        delete statuses[info.id]
         return {
           sessions: s.sessions.filter((x) => x.id !== info.id),
           allSessions: s.allSessions.filter((x) => x.id !== info.id),
           openSessionIds: open,
           activeSessionId: resetActive ? null : s.activeSessionId,
+          statuses,
+          ...pruneSessionCaches(new Set([...open, DRAFT_TAB])),
         }
       })
       break
@@ -664,7 +768,12 @@ function handleEvent(e: ServerEvent, directory?: string) {
       break
     case "session.error": {
       const err = p.error as { name?: string; data?: { message?: string } } | undefined
-      if (err && err.name !== "MessageAbortedError") notify.error("El agente tuvo un error", err.data?.message ?? err.name)
+      const sessionID = p.sessionID as string | undefined
+      const retryable = isRetryableProviderError(err)
+      if (err && err.name !== "MessageAbortedError" && !retryable) {
+        notify.error("El agente tuvo un error", err.data?.message ?? err.name)
+      }
+      if (sessionID) void maybeAutoRetry(sessionID, err)
       break
     }
     case "permission.asked": {
@@ -845,6 +954,15 @@ export function selectSession(id: string | null) {
   if (id) void ensureSessionView(id)
 }
 
+export function memoryFor(sessionId: string | null): boolean {
+  return useAgent.getState().memoryEnabled[sessionId ?? DRAFT_TAB] !== false
+}
+
+export function setMemory(sessionId: string, enabled: boolean): void {
+  useAgent.setState((s) => ({ memoryEnabled: { ...s.memoryEnabled, [sessionId]: enabled } }))
+  if (isTauri && sessionId && sessionId !== DRAFT_TAB) void call("memory_set_session", { session: sessionId, enabled }).catch(() => undefined)
+}
+
 export function newSession() {
   useAgent.setState((s) => ({
     activeSessionId: null,
@@ -858,21 +976,17 @@ export function closeSessionTab(id: string) {
   const wasActive = id === DRAFT_TAB ? s.activeSessionId === null : s.activeSessionId === id
   let open = s.openSessionIds.filter((x) => x !== id)
   if (open.length === 0) open = [DRAFT_TAB]
-  if (!wasActive) {
-    useAgent.setState({ openSessionIds: open })
-    return
-  }
   const index = Math.max(0, s.openSessionIds.indexOf(id))
-  const next = open[Math.min(index, open.length - 1)] ?? DRAFT_TAB
-  const activeSessionId = next === DRAFT_TAB ? null : next
-  useAgent.setState({ openSessionIds: open, activeSessionId })
-  if (activeSessionId) void ensureSessionView(activeSessionId)
+  const next = wasActive ? (open[Math.min(index, open.length - 1)] ?? DRAFT_TAB) : null
+  const activeSessionId = wasActive ? (next === DRAFT_TAB ? null : next) : s.activeSessionId
+  useAgent.setState({ openSessionIds: open, activeSessionId, ...pruneSessionCaches(new Set([...open, DRAFT_TAB])) })
+  if (wasActive && activeSessionId) void ensureSessionView(activeSessionId)
 }
 
 export function closeOtherSessionTabs(id: string) {
   const next = id === DRAFT_TAB || useAgent.getState().openSessionIds.includes(id) ? [id] : [DRAFT_TAB]
   const activeSessionId = next[0] === DRAFT_TAB ? null : next[0]
-  useAgent.setState({ openSessionIds: next, activeSessionId })
+  useAgent.setState({ openSessionIds: next, activeSessionId, ...pruneSessionCaches(new Set([...next, DRAFT_TAB])) })
   if (activeSessionId) void ensureSessionView(activeSessionId)
 }
 
@@ -967,6 +1081,10 @@ export async function sendPrompt(
     if (!created) throw new Error("no se pudo crear la sesión")
     id = created.id
     rememberSessionDirectory(created.id, created.directory)
+    if (s.memoryEnabled[DRAFT_TAB] === false) {
+      await call("memory_set_session", { session: created.id, enabled: false }).catch(() => undefined)
+      useAgent.setState((st) => ({ memoryEnabled: { ...st.memoryEnabled, [created.id]: false } }))
+    }
     useAgent.setState((st) => {
       const open = st.openSessionIds.map((x) => (x === DRAFT_TAB ? created.id : x))
       if (!open.includes(created.id)) open.push(created.id)
@@ -979,6 +1097,7 @@ export async function sendPrompt(
       }
     })
   }
+  if (id) cancelAutoRetry(id)
   const contextParts = contextToParts(root, s.context, s.includeActiveFile ? activeFile : null)
   const trimmed = text.trim()
   const command = findCommand(trimmed, s.commands)
@@ -1009,6 +1128,7 @@ export async function sendPrompt(
 
 export async function abortSession(id: string | null) {
   if (!id) return
+  cancelAutoRetry(id)
   await client.session.abort({ path: { id } }).catch(() => undefined)
 }
 

@@ -318,6 +318,22 @@ fn hub_api(app: &AppHandle, mut req: Request, url: &str, path: &str) {
             Err(e) => respond_json(req, 409, json!({ "error": e })),
         };
     }
+    if method == "GET" && path == "/hub/memory" {
+        let directory = query_param(url, "directory").unwrap_or_default();
+        let session = query_param(url, "session").unwrap_or_default();
+        return respond_json(req, 200, crate::memory::hub_state(app, &directory, &session));
+    }
+    if method == "GET" && path == "/hub/memory/overview" {
+        let directory = query_param(url, "directory").unwrap_or_default();
+        return respond_json(req, 200, crate::memory::overview(app, &directory));
+    }
+    if method == "POST" && path == "/hub/memory/session" {
+        let body = read_json(&mut req);
+        let session = body["session"].as_str().unwrap_or_default().to_string();
+        let enabled = body["enabled"].as_bool().unwrap_or(true);
+        crate::memory::set_session(app, &session, enabled);
+        return respond_json(req, 200, json!({ "ok": true, "enabled": enabled }));
+    }
     if method == "POST" && path.starts_with("/hub/routines/") && path.ends_with("/run") {
         let id = path.trim_start_matches("/hub/routines/").trim_end_matches("/run");
         return match routines::launch(app, id, true) {

@@ -1,11 +1,12 @@
 use crate::app_data_file;
 use crate::git::{git, git_quiet, merge_in_progress, parse_commits, range_files, Commit, CommitFile, COMMIT_FORMAT};
-use crate::proc::{blocking, hide_console};
+use crate::proc::{blocking, capture, command_timeout, MAX_GIT_PROCESSES};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 static LOCK: Mutex<()> = Mutex::new(());
@@ -227,13 +228,13 @@ fn git_raw(cwd: &str, args: &[&str]) -> Result<(i32, String, String), String> {
     cmd.current_dir(cwd)
         .args(&full)
         .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .env("GIT_EDITOR", "true")
         .env("NO_COLOR", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    hide_console(&mut cmd);
-    let out = cmd.output().map_err(|e| format!("no se pudo ejecutar git: {}", e))?;
+    let out = capture(&mut cmd, None, command_timeout("git", args), true).map_err(|e| format!("git: {}", e))?;
     Ok((
         out.status.code().unwrap_or(-1),
         String::from_utf8_lossy(&out.stdout).into_owned(),
@@ -266,6 +267,8 @@ fn save(app: &AppHandle, reg: &mut Registry) -> Result<(), String> {
 
 fn changed(app: &AppHandle) {
     ROOTS_CACHE.lock().unwrap_or_else(|e| e.into_inner()).take();
+    base_cache().lock().unwrap_or_else(|e| e.into_inner()).clear();
+    list_cache().lock().unwrap_or_else(|e| e.into_inner()).clear();
     let _ = app.emit("features://changed", ());
 }
 
@@ -336,11 +339,43 @@ fn default_base(main: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct BaseResolution {
     reference: Option<String>,
     oid: Option<String>,
     source: &'static str,
+}
+
+const BASE_TTL: Duration = Duration::from_secs(600);
+const MAX_BASE_CANDIDATES: usize = 32;
+type BaseCache = HashMap<String, (Instant, String, BaseResolution)>;
+fn base_cache() -> &'static Mutex<BaseCache> {
+    static CACHE: OnceLock<Mutex<BaseCache>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cached_base(ctx: &RepoCtx, w: &Worktree, entry: Option<&Entry>, refs: &str) -> BaseResolution {
+    let cache_key = key(&w.path);
+    let config_time = std::fs::metadata(Path::new(&ctx.main).join(".git/config")).and_then(|m| m.modified()).ok();
+    let fingerprint = format!("{:?}|{:?}|{:?}|{}|{}", w.branch, w.head, config_time, serde_json::to_string(&entry).unwrap_or_default(), refs);
+    {
+        let mut cache = base_cache().lock().unwrap_or_else(|e| e.into_inner());
+        cache.retain(|_, (at, _, _)| at.elapsed() < BASE_TTL);
+        if let Some((_, old, result)) = cache.get(&cache_key) {
+            if *old == fingerprint { return result.clone(); }
+        }
+    }
+    let result = resolve_base_with_refs(ctx, w, entry, refs);
+    let mut cache = base_cache().lock().unwrap_or_else(|e| e.into_inner());
+    if cache.len() >= 512 { cache.clear(); }
+    // Unknown is a cacheable result too, not an invitation to scan 709 refs
+    // again at every focus/watch/poll event.
+    cache.insert(cache_key, (Instant::now(), fingerprint, result.clone()));
+    result
+}
+
+fn base_refs(ctx: &RepoCtx) -> String {
+    probe(&ctx.main, &["for-each-ref", "--format=%(refname)%1f%(refname:short)%1f%(objectname)%1f%(symref)", "refs/heads", "refs/remotes"]).unwrap_or_default()
 }
 
 fn commit_oid(path: &str, reference: &str) -> Option<String> {
@@ -396,6 +431,10 @@ fn branch_creation(path: &str, branch: &str) -> Option<(String, String)> {
 }
 
 fn resolve_base(ctx: &RepoCtx, w: &Worktree, entry: Option<&Entry>) -> BaseResolution {
+    resolve_base_with_refs(ctx, w, entry, &base_refs(ctx))
+}
+
+fn resolve_base_with_refs(ctx: &RepoCtx, w: &Worktree, entry: Option<&Entry>, refs: &str) -> BaseResolution {
     if let Some(branch) = w.branch.as_deref() {
         if let Some(base) = base_metadata(&ctx.main, branch) {
             return base;
@@ -425,14 +464,16 @@ fn resolve_base(ctx: &RepoCtx, w: &Worktree, entry: Option<&Entry>) -> BaseResol
             return BaseResolution { reference: Some(reference.clone()), oid: creation.map(|c| c.0), source: "upstream" };
         }
     }
-    infer_base(ctx, w, creation.map(|c| c.0), upstream.as_deref())
+    infer_base(ctx, w, creation.map(|c| c.0), upstream.as_deref(), refs)
 }
 
-fn infer_base(ctx: &RepoCtx, w: &Worktree, creation_oid: Option<String>, upstream: Option<&str>) -> BaseResolution {
+fn infer_base(ctx: &RepoCtx, w: &Worktree, creation_oid: Option<String>, upstream: Option<&str>, refs: &str) -> BaseResolution {
     let unknown = || BaseResolution { source: "unknown", ..Default::default() };
     let Some(head) = &w.head else { return unknown() };
-    let refs = probe(&ctx.main, &["for-each-ref", "--format=%(refname)%1f%(refname:short)%1f%(objectname)%1f%(symref)", "refs/heads", "refs/remotes"])
-        .unwrap_or_default();
+    // In large repos ancestry does not prove the branch of origin. Preserve
+    // "unknown" and allow explicit registration instead of O(worktrees*refs)
+    // merge-base/rev-list subprocesses on every background refresh.
+    if refs.lines().count() > MAX_BASE_CANDIDATES { return unknown(); }
     let mut best = u32::MAX;
     let mut candidates: Vec<(String, String, bool)> = Vec::new();
     for line in refs.lines() {
@@ -544,6 +585,7 @@ fn settings_of(reg: &Registry, project: &str) -> ProjectSettings {
 fn collect(reg: &Registry, ctx: &RepoCtx, scope: &str, group: Option<&str>, with_main: bool) -> Vec<FeatureInfo> {
     let entries: Vec<&Entry> = reg.features.iter().filter(|e| same(&e.repo, &ctx.main)).collect();
     let mut features: Vec<FeatureInfo> = Vec::new();
+    let refs = if ctx.worktrees.iter().any(|w| !same(&w.path, &ctx.main)) { base_refs(ctx) } else { String::new() };
     for w in ctx.worktrees.iter().filter(|w| !w.bare) {
         let main = same(&w.path, &ctx.main);
         if main && !with_main {
@@ -552,7 +594,7 @@ fn collect(reg: &Registry, ctx: &RepoCtx, scope: &str, group: Option<&str>, with
         let entry = entries.iter().find(|e| same(&e.path, &w.path));
         let kind = if main { "main" } else if entry.is_some() { "managed" } else { "external" };
         let missing = w.prunable.is_some() || !Path::new(&w.path).is_dir();
-        let base = if main { BaseResolution::default() } else { resolve_base(ctx, w, entry.copied()) };
+        let base = if main { BaseResolution::default() } else { cached_base(ctx, w, entry.copied(), &refs) };
         features.push(FeatureInfo {
             id: entry.map(|e| e.id.clone()),
             path: w.path.clone(),
@@ -601,6 +643,9 @@ fn collect(reg: &Registry, ctx: &RepoCtx, scope: &str, group: Option<&str>, with
 }
 
 fn fill_live(features: &mut [FeatureInfo], groups: &mut [RepoGroup]) {
+    // Bound worker threads as well as subprocesses; a repo with dozens of
+    // worktrees must not allocate a thread per item just to wait on Git slots.
+    for features in features.chunks_mut(MAX_GIT_PROCESSES) {
     std::thread::scope(|scope| {
         let feature_handles: Vec<_> = features
             .iter()
@@ -617,14 +662,6 @@ fn fill_live(features: &mut [FeatureInfo], groups: &mut [RepoGroup]) {
                 })
             })
             .collect();
-        let group_handles: Vec<_> = groups
-            .iter()
-            .enumerate()
-            .map(|(i, g)| {
-                let path = g.main.clone();
-                scope.spawn(move || (i, changes_of(&path), merge_in_progress(&path)))
-            })
-            .collect();
         for h in feature_handles {
             if let Ok((i, changes, merging, counts)) = h.join() {
                 let f = &mut features[i];
@@ -636,13 +673,12 @@ fn fill_live(features: &mut [FeatureInfo], groups: &mut [RepoGroup]) {
                 }
             }
         }
-        for h in group_handles {
-            if let Ok((i, changes, merging)) = h.join() {
-                groups[i].changes = changes;
-                groups[i].merging = merging;
-            }
-        }
     });
+    }
+    for g in groups {
+        g.changes = changes_of(&g.main);
+        g.merging = merge_in_progress(&g.main);
+    }
 }
 
 fn sub_repos(project: &str) -> Vec<(String, RepoCtx)> {
@@ -753,7 +789,28 @@ fn multi_list(reg: &Registry, project: &str) -> FeatureList {
     FeatureList { git: true, multi: true, project, features, repos: groups, settings, ..Default::default() }
 }
 
+type ListSlot = Arc<Mutex<Option<(Instant, Result<FeatureList, String>)>>>;
+fn list_cache() -> &'static Mutex<HashMap<String, ListSlot>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, ListSlot>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 pub(crate) fn build_list(app: &AppHandle, project: &str) -> Result<FeatureList, String> {
+    let slot = {
+        let mut slots = list_cache().lock().unwrap_or_else(|e| e.into_inner());
+        if slots.len() >= 64 { slots.retain(|_, s| Arc::strong_count(s) > 1); }
+        slots.entry(key(project)).or_insert_with(|| Arc::new(Mutex::new(None))).clone()
+    };
+    let mut cached = slot.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, result)) = &*cached {
+        if at.elapsed() < Duration::from_secs(2) { return result.clone(); }
+    }
+    let result = build_list_uncached(app, project);
+    *cached = Some((Instant::now(), result.clone()));
+    result
+}
+
+fn build_list_uncached(app: &AppHandle, project: &str) -> Result<FeatureList, String> {
     let reg = load(app);
     Ok(match repo_ctx(project)? {
         Some(ctx) => single_list(&reg, ctx),

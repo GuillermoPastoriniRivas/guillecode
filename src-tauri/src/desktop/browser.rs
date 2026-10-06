@@ -42,6 +42,7 @@ pub struct BridgeStatus {
 
 struct Inner {
     child: Option<Child>,
+    tree: Option<crate::process_tree::ProcessTree>,
     stdin: Option<ChildStdin>,
     tools: Vec<Value>,
     state: &'static str,
@@ -61,7 +62,7 @@ struct Bridge {
 fn bridge() -> &'static Bridge {
     static BRIDGE: OnceLock<Bridge> = OnceLock::new();
     BRIDGE.get_or_init(|| Bridge {
-        inner: Mutex::new(Inner { child: None, stdin: None, tools: Vec::new(), state: "off", error: None, connected: false, connecting: false, generation: 0 }),
+        inner: Mutex::new(Inner { child: None, tree: None, stdin: None, tools: Vec::new(), state: "off", error: None, connected: false, connecting: false, generation: 0 }),
         pending: Arc::new(Mutex::new(HashMap::new())),
         next: Mutex::new(0),
         starting: Mutex::new(()),
@@ -73,11 +74,8 @@ pub fn status() -> BridgeStatus {
     BridgeStatus { state: inner.state, error: inner.error.clone(), tools: inner.tools.len(), connected: inner.connected, connecting: inner.connecting }
 }
 
-fn kill_tree(child: &mut Child) {
-    let mut cmd = Command::new("taskkill");
-    cmd.args(["/PID", &child.id().to_string(), "/T", "/F"]).stdout(Stdio::null()).stderr(Stdio::null());
-    hide_console(&mut cmd);
-    let _ = cmd.status();
+fn kill_tree(child: &mut Child, tree: Option<crate::process_tree::ProcessTree>) {
+    if let Some(tree) = tree { tree.terminate(); }
     let _ = child.kill();
     let _ = child.wait();
 }
@@ -87,14 +85,16 @@ pub fn stop() {
     let mut inner = b.inner.lock().unwrap();
     inner.generation += 1;
     inner.stdin = None;
+    let tree = inner.tree.take();
     if let Some(mut child) = inner.child.take() {
-        kill_tree(&mut child);
+        kill_tree(&mut child, tree);
     }
     inner.state = "off";
     inner.error = None;
     inner.connected = false;
     inner.connecting = false;
-    inner.tools.clear();
+    // Retain the small tool schema so listing tools while control is off does
+    // not restart Node. Calls lazily reconnect after the desktop gate allows it.
     b.pending.lock().unwrap().clear();
 }
 
@@ -157,7 +157,7 @@ fn install(dir: &Path) -> Result<PathBuf, String> {
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
     hide_console(&mut cmd);
-    let out = cmd.output().map_err(|e| format!("no pude ejecutar npm (¿está instalado Node.js?): {}", e))?;
+    let out = crate::proc::capture(&mut cmd, None, Duration::from_secs(150), false).map_err(|e| format!("no pude ejecutar npm: {}", e))?;
     if !out.status.success() {
         return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
     }
@@ -226,12 +226,21 @@ fn launch() -> Result<(), String> {
     cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     hide_console(&mut cmd);
     let mut child = cmd.spawn().map_err(|e| format!("no pude ejecutar Chrome DevTools MCP (requiere Node.js 20.19+ o 22.12+): {}", e))?;
+    let tree = match crate::process_tree::ProcessTree::attach(child.id()) {
+        Ok(tree) => tree,
+        Err(e) => { let _ = child.kill(); let _ = child.wait(); return Err(e); }
+    };
     let stdout = child.stdout.take().ok_or("sin stdout")?;
     let stderr = child.stderr.take().ok_or("sin stderr")?;
     let stdin = child.stdin.take().ok_or("sin stdin")?;
     {
         let mut inner = b.inner.lock().unwrap();
+        if inner.generation != generation {
+            kill_tree(&mut child, Some(tree));
+            return Err("se canceló el arranque de Chrome DevTools".into());
+        }
         inner.child = Some(child);
+        inner.tree = Some(tree);
         inner.stdin = Some(stdin);
     }
     let pending = b.pending.clone();
@@ -255,8 +264,8 @@ fn launch() -> Result<(), String> {
             inner.connected = false;
             inner.connecting = false;
             inner.stdin = None;
-            inner.child = None;
-            inner.tools.clear();
+            let tree = inner.tree.take();
+            if let Some(mut child) = inner.child.take() { kill_tree(&mut child, tree); }
             b.pending.lock().unwrap().clear();
         }
     });
@@ -286,6 +295,7 @@ fn launch() -> Result<(), String> {
     let listed = request("tools/list", json!({}), left)?;
     let tools = listed["tools"].as_array().cloned().unwrap_or_default();
     let mut inner = b.inner.lock().unwrap();
+    if inner.generation != generation { return Err("se canceló el arranque de Chrome DevTools".into()); }
     inner.tools = tools;
     inner.state = "ready";
     inner.error = None;
@@ -321,24 +331,17 @@ fn ensure() -> Result<(), String> {
 fn stop_process_only() {
     let mut inner = bridge().inner.lock().unwrap();
     inner.stdin = None;
+    let tree = inner.tree.take();
     if let Some(mut child) = inner.child.take() {
-        kill_tree(&mut child);
+        kill_tree(&mut child, tree);
     }
 }
 
-pub fn tools() -> Vec<Value> {
-    if let Err(e) = ensure() {
-        log::warn!("[browser] no se pudo iniciar Chrome DevTools MCP: {}", e);
-        return Vec::new();
-    }
-    bridge()
-        .inner
-        .lock()
-        .unwrap()
-        .tools
-        .iter()
+fn decorate(tools: Vec<Value>) -> Vec<Value> {
+    tools
+        .into_iter()
         .map(|t| {
-            let mut t = t.clone();
+            let mut t = t;
             let name = t["name"].as_str().unwrap_or_default().to_string();
             if let Some((_, hint)) = HINTS.iter().find(|(tool, _)| *tool == name) {
                 t["description"] = json!(format!("{} {}", t["description"].as_str().unwrap_or_default(), hint));
@@ -347,6 +350,31 @@ pub fn tools() -> Vec<Value> {
             t
         })
         .collect()
+}
+
+fn active() -> bool {
+    crate::proc::app()
+        .map(|app| {
+            let c = super::config(app);
+            c.enabled && !c.paused && c.browser
+        })
+        .unwrap_or(false)
+}
+
+pub fn tools() -> Vec<Value> {
+    let cached = bridge().inner.lock().unwrap().tools.clone();
+    // Listing tools must never start Node while PC control is off; any schema
+    // fetched earlier stays available so the agent still sees browser_* names.
+    if !active() {
+        return decorate(cached);
+    }
+    if cached.is_empty() {
+        if let Err(e) = ensure() {
+            log::warn!("[browser] no se pudo iniciar Chrome DevTools MCP: {}", e);
+            return Vec::new();
+        }
+    }
+    decorate(bridge().inner.lock().unwrap().tools.clone())
 }
 
 pub fn original_name(name: &str) -> String {

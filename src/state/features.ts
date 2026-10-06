@@ -18,6 +18,7 @@ import { api } from "../lib/opencode"
 import { readFile, stat } from "../lib/fs"
 import { joinPath, samePath } from "../lib/paths"
 import { debounce } from "../lib/persist"
+import { coalescedByKey } from "../lib/coalesced"
 import { errorMessage, isTauri, onEvent } from "../lib/tauri"
 import { useProject } from "./project"
 import { activateRoot } from "./workspace"
@@ -131,23 +132,24 @@ export async function openFeatureCreateForm(repo?: string): Promise<void> {
   if (target) openEditor({ kind: "featureCreate", repo: target.path })
 }
 
-let generation = 0
-
-export async function refreshFeatures(): Promise<void> {
-  const project = useProject.getState().project
-  if (!project || !isTauri) return
-  const gen = ++generation
+const refreshProject = coalescedByKey(async (project) => {
+  if (!samePath(project, useProject.getState().project ?? "")) return
   useFeatures.setState({ loading: true })
   try {
     const list = await featuresList(project)
-    if (gen !== generation) return
+    if (!samePath(project, useProject.getState().project ?? "")) return
     useFeatures.setState({ list, loading: false, error: null })
     setKnownDirectories(list.features.filter((f) => !f.missing).map((f) => f.root))
     void loadOtherSessions()
     keepActiveRootValid(list)
   } catch (e) {
-    if (gen === generation) useFeatures.setState({ loading: false, error: errorMessage(e) })
+    if (samePath(project, useProject.getState().project ?? "")) useFeatures.setState({ loading: false, error: errorMessage(e) })
   }
+})
+
+export function refreshFeatures(): Promise<void> {
+  const project = useProject.getState().project
+  return project && isTauri ? refreshProject(project.replace(/\\/g, "/").toLowerCase()) : Promise.resolve()
 }
 
 const scheduleRefresh = debounce(() => void refreshFeatures(), 2500)

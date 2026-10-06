@@ -7,6 +7,7 @@ import { Icon, Spinner } from "../components/ui"
 import { openImage } from "../state/lightbox"
 import { openContextMenu } from "../components/ContextMenu"
 import {
+  cancelAutoRetry,
   focusComposer,
   forkSession,
   loadOlderMessages,
@@ -285,6 +286,7 @@ export function Chat({ session, busy }: { session: Session; busy: boolean }) {
     const parent = userById.get(message.info.parentID)
     if (!parent) return
     setRetrying(message.info.id)
+    cancelAutoRetry(session.id)
     retryMessage(session.id, parent)
       .catch((err) => notify.error("No se pudo reintentar", err instanceof Error ? err.message : String(err)))
       .finally(() => setRetrying(null))

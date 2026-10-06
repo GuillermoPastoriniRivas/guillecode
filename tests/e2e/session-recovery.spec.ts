@@ -54,6 +54,7 @@ async function setup(page: Page, restart = false) {
         Object.assign(window, { __qaStreams: streams })
         const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined)
         return new Response(new ReadableStream({ start(controller) {
+          Object.assign(window, { __qaPush: (event: unknown) => controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`)) })
           controller.enqueue(new TextEncoder().encode('data: {"type":"server.connected","properties":{}}\n\n'))
           signal?.addEventListener("abort", () => controller.close(), { once: true })
         } }), { headers: { "Content-Type": "text/event-stream" } })
@@ -100,6 +101,23 @@ test("reconcilia reintentos perdidos y permite reintentar un 503 en la misma con
     model: { providerID: "openai", modelID: "qa" }, agent: "build", parts: [{ type: "text", text: "Continuá con el trabajo pendiente" }],
   } })
   expect(state.created).toBe(0)
+})
+
+test("reintenta automáticamente un 503 que no ejecutó herramientas", async ({ page }) => {
+  await page.clock.install()
+  const state = await setup(page)
+  await expect(page.locator(".msg-user")).toContainText("Continuá con el trabajo pendiente")
+
+  // The session starts as "retry"; make it idle so the automatic retry can fire.
+  state.status = {}
+  await page.evaluate((sid) => (window as unknown as { __qaPush: (event: unknown) => void }).__qaPush({ type: "session.status", properties: { sessionID: sid, status: { type: "idle" } } }), sessionID)
+
+  const failed = messages(true)[1].info
+  await page.evaluate((info) => (window as unknown as { __qaPush: (event: unknown) => void }).__qaPush({ type: "message.updated", properties: { info } }), failed)
+
+  await page.clock.fastForward(16_000)
+  await expect.poll(() => state.prompts.length).toBe(1)
+  expect(state.prompts[0].body.parts).toEqual([{ type: "text", text: "Continuá con el trabajo pendiente" }])
 })
 
 test("vuelve a resolver el motor y recupera la pestaña cuando cambia la conexión", async ({ page }) => {

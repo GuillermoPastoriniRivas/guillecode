@@ -173,6 +173,8 @@ export function Composer({
   autoFocus,
   rows = 2,
   voice,
+  memoryOn,
+  onToggleMemory,
   onSend,
 }: {
   directory: string
@@ -183,6 +185,8 @@ export function Composer({
   autoFocus?: boolean
   rows?: number
   voice?: boolean
+  memoryOn?: boolean
+  onToggleMemory?: () => void
   onSend: (draft: Draft) => Promise<void>
 }) {
   const [text, setText] = useState("")
@@ -354,6 +358,12 @@ export function Composer({
             <span>{label}</span>
             <Icon name="chevron-down" />
           </button>
+          {onToggleMemory && (
+            <button type="button" className={`chip${memoryOn ? " on" : ""}`} onClick={onToggleMemory} aria-label="Memoria" title={memoryOn ? "Memoria activada" : "Memoria apagada"}>
+              <Icon name="library" />
+              <span>{memoryOn ? "Memoria" : "Sin memoria"}</span>
+            </button>
+          )}
           <span className="spacer" />
           <button type="button" className="chip" onClick={startRecording} disabled={sending} aria-label="Grabar audio">
             <Icon name="mic" />

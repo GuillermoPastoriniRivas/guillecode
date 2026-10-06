@@ -58,6 +58,7 @@ pub enum Channel {
     Routines,
     Terminal,
     Worktrees,
+    Memory,
 }
 
 impl Channel {
@@ -68,6 +69,7 @@ impl Channel {
             Channel::Routines => "routines",
             Channel::Terminal => "terminal",
             Channel::Worktrees => "worktrees",
+            Channel::Memory => "memory",
         }
     }
 }
@@ -215,7 +217,9 @@ pub fn opencode_config(app: &AppHandle) -> Option<String> {
     if state.port == 0 {
         return None;
     }
-    Some(agent_config(&state).to_string())
+    let mut config = agent_config(&state);
+    crate::memory::extend_config(app, &mut config);
+    Some(config.to_string())
 }
 
 fn agent_config(state: &DesktopState) -> Value {
@@ -228,7 +232,7 @@ fn agent_config(state: &DesktopState) -> Value {
             "timeout": timeout,
         })
     };
-    let mut mcp = json!({ "desktop": server("desktop", 120_000), "routines": server("routines", 120_000), "terminal": server("terminal", 660_000), "worktrees": server("worktrees", 120_000) });
+    let mut mcp = json!({ "desktop": server("desktop", 120_000), "routines": server("routines", 120_000), "terminal": server("terminal", 660_000), "worktrees": server("worktrees", 120_000), "memory": server("memory", 120_000) });
     if state.browser_injected {
         mcp["browser"] = server("browser", 180_000);
     }
@@ -327,6 +331,7 @@ fn instructions(channel: Channel) -> &'static str {
         Channel::Routines => routines::INSTRUCTIONS,
         Channel::Terminal => terminal::INSTRUCTIONS,
         Channel::Worktrees => worktrees::INSTRUCTIONS,
+        Channel::Memory => crate::memory::instructions(),
     }
 }
 
@@ -340,6 +345,7 @@ fn tool_list(channel: Channel) -> Vec<Value> {
         Channel::Routines => routines::definitions(),
         Channel::Terminal => terminal::definitions(),
         Channel::Worktrees => worktrees::definitions(),
+        Channel::Memory => crate::memory::tool_list(),
     }
 }
 
@@ -357,6 +363,7 @@ fn call_tool(app: &AppHandle, channel: Channel, name: &str, args: &Value) -> Val
         Channel::Routines => routines::call(app, name, args),
         Channel::Terminal => terminal::call(app, name, args),
         Channel::Worktrees => worktrees::call(app, name, args),
+        Channel::Memory => crate::memory::call_tool(app, name, args),
         #[cfg(windows)]
         Channel::Desktop => {
             let r = tools::call(app, name, args);
@@ -367,6 +374,9 @@ fn call_tool(app: &AppHandle, channel: Channel, name: &str, args: &Value) -> Val
         Channel::Browser => {
             if let Err(e) = gate(app) {
                 return json!({ "content": [{ "type": "text", "text": e }], "isError": true });
+            }
+            if !config(app).browser {
+                return json!({ "content": [{ "type": "text", "text": "Las herramientas del navegador están desactivadas." }], "isError": true });
             }
             let summary = browser_summary(name, args);
             match browser::call(name, args.clone()) {
@@ -431,6 +441,10 @@ pub fn apply(app: &AppHandle, patch: DesktopPatch) -> DesktopStatus {
         save(app, &c);
     }
     let _ = app.emit("desktop://changed", ());
+    let c = config(app);
+    // Turning the control (or the browser) off releases the persistent Node
+    // bridge instead of keeping it alive until the app closes.
+    if !c.enabled || c.paused || !c.browser { browser::stop(); }
     #[cfg(windows)]
     if gate(app).is_err() {
         stream::release_control();

@@ -903,6 +903,32 @@
   background: var(--bg-input);
   color: var(--fg);
 }
+.remote-bridge-row {
+  align-self: stretch;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+}
+.remote-bridge {
+  flex: 1 1 220px;
+  min-width: 0;
+  padding: 3px 9px;
+  border-radius: 9px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--fg-dim);
+  background: var(--bg-hover);
+  overflow-wrap: anywhere;
+}
+.remote-bridge.ok {
+  color: var(--success);
+  background: var(--add-bg);
+}
+.remote-bridge.error {
+  color: var(--error);
+  background: var(--del-bg);
+}
 .accounts-code {
   padding: 6px 14px;
   border-radius: 8px;

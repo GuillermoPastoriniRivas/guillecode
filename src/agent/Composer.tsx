@@ -3,11 +3,13 @@ import {
   abortSession,
   addContext,
   currentModelInfo,
+  DRAFT_TAB,
   findCommand,
   removeContext,
   selectedVariant,
   sendPrompt,
   setAgentName,
+  setMemory,
   setModel,
   setVariant,
   toggleFavoriteModel,
@@ -126,6 +128,7 @@ export function Composer({
   const commands = useAgent((s) => s.commands)
   const composerFocus = useAgent((s) => s.composerFocus)
   const draft = useAgent((s) => s.draft)
+  const memoryOn = useAgent((s) => s.memoryEnabled[sessionId ?? DRAFT_TAB] !== false)
   const files = useFileIndex((s) => s.files)
   const activeFile = useEditors((s) => {
     const g = s.groups.find((x) => x.id === s.activeGroupId)
@@ -488,6 +491,15 @@ export function Composer({
           </button>
           <button type="button" className="composer-icon" title="Adjuntar imagen" onClick={() => fileInput.current?.click()}>
             <Icon name="attach" />
+          </button>
+          <button
+            type="button"
+            className={`composer-pill memory-pill${memoryOn ? " on" : ""}`}
+            title={memoryOn ? "Memoria activada: el agente recuerda el proyecto y esta conversación. Clic para apagarla." : "Memoria apagada: en esta conversación no se inyecta ni se guarda memoria."}
+            onClick={() => setMemory(sessionId ?? DRAFT_TAB, !memoryOn)}
+          >
+            <Icon name="library" />
+            <span>{memoryOn ? "Memoria" : "Sin memoria"}</span>
           </button>
         </div>
         <div className="composer-actions">

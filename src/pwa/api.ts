@@ -165,6 +165,18 @@ export function hub<T>(method: string, path: string, body?: unknown): Promise<T>
   return request<T>(method, `/hub${path}`, body)
 }
 
+export type MemoryTask = { id: string; title: string; updated: string; directory: string; progress: string; lastUser: string }
+export type MemoryState = { enabled: boolean; scope: string; slug: string; tasks: MemoryTask[] }
+
+export function loadMemory(directory: string, session: string): Promise<MemoryState> {
+  const qs = new URLSearchParams({ directory, session })
+  return hub<MemoryState>("GET", `/memory?${qs}`)
+}
+
+export function setMemory(session: string, enabled: boolean): Promise<{ ok: boolean; enabled: boolean }> {
+  return hub("POST", "/memory/session", { session, enabled })
+}
+
 export async function screenshot(window: string | null, max: number): Promise<string> {
   const qs = new URLSearchParams({ max: String(max) })
   if (window) qs.set("window", window)

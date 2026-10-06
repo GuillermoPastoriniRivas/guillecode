@@ -5,7 +5,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager};
 
@@ -29,7 +29,7 @@ pub struct Term {
     writer: Mutex<Box<dyn Write + Send>>,
     master: Box<dyn MasterPty + Send>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
-    pid: Option<u32>,
+    tree: crate::process_tree::ProcessTree,
     pub owner: String,
     pub cwd: String,
     pub title: Option<String>,
@@ -39,13 +39,7 @@ pub struct Term {
 
 impl Term {
     fn kill_tree(&self) {
-        #[cfg(windows)]
-        if let Some(pid) = self.pid {
-            let mut command = std::process::Command::new("taskkill");
-            command.args(["/PID", &pid.to_string(), "/T", "/F"]);
-            crate::proc::hide_console(&mut command);
-            let _ = command.output();
-        }
+        self.tree.terminate();
         let _ = self.killer.lock().unwrap().kill();
     }
 }
@@ -117,6 +111,7 @@ pub struct ScreenState {
     pub capture: Option<Capture>,
     pub exited: Option<Option<u32>>,
     pub received: u64,
+    pub last_activity: Instant,
 }
 
 impl ScreenState {
@@ -157,6 +152,7 @@ impl ScreenState {
             capture.parser.process(bytes);
         }
         self.received += bytes.len() as u64;
+        self.last_activity = Instant::now();
     }
 
     fn resize(&mut self, rows: u16, cols: u16) {
@@ -180,6 +176,7 @@ impl Screen {
                 capture: None,
                 exited: None,
                 received: 0,
+                last_activity: Instant::now(),
             }),
             changed: Condvar::new(),
         }
@@ -371,6 +368,7 @@ pub fn write_to(app: &AppHandle, id: &str, data: &[u8]) -> Result<(), String> {
     let state = app.state::<TermState>();
     let guard = state.terms.lock().unwrap();
     let term = guard.get(id).ok_or("la terminal ya no existe")?;
+    term.screen.state.lock().unwrap().last_activity = Instant::now();
     let mut writer = term.writer.lock().unwrap();
     writer.write_all(data).map_err(|e| format!("write falló: {}", e))?;
     writer.flush().map_err(|e| format!("flush falló: {}", e))
@@ -413,12 +411,18 @@ fn spawn(app: &AppHandle, owner: &str, args: &TermSpawnArgs, on_event: Channel<T
         .map_err(|e| format!("no se pudo iniciar el shell: {}", e))?;
     drop(pair.slave);
     let killer = child.clone_killer();
-    let pid = child.process_id();
-    let writer = pair.master.take_writer().map_err(|e| format!("take_writer: {}", e))?;
-    let mut reader = pair
-        .master
-        .try_clone_reader()
-        .map_err(|e| format!("try_clone_reader: {}", e))?;
+    let tree = match child.process_id().ok_or_else(|| "el shell no devolvió PID".to_string()).and_then(crate::process_tree::ProcessTree::attach) {
+        Ok(tree) => tree,
+        Err(e) => { let _ = child.kill(); let _ = child.wait(); return Err(e); }
+    };
+    let writer = match pair.master.take_writer() {
+        Ok(writer) => writer,
+        Err(e) => { tree.terminate(); let _ = child.kill(); let _ = child.wait(); return Err(e.to_string()); }
+    };
+    let mut reader = match pair.master.try_clone_reader() {
+        Ok(reader) => reader,
+        Err(e) => { tree.terminate(); let _ = child.kill(); let _ = child.wait(); return Err(e.to_string()); }
+    };
     let screen = Arc::new(Screen::new(rows, cols));
 
     let data_channel = on_event.clone();
@@ -449,6 +453,18 @@ fn spawn(app: &AppHandle, owner: &str, args: &TermSpawnArgs, on_event: Channel<T
     let id = args.id.clone();
     let exit_app = app.clone();
     let exit_screen = Arc::clone(&screen);
+    // Publish before starting the waiter: immediately exiting shells must not
+    // remove an empty slot and then get inserted as an untracked zombie.
+    {
+        let state = app.state::<TermState>();
+        let mut terms = state.terms.lock().unwrap();
+        if terms.contains_key(&id) { tree.terminate(); let _ = child.kill(); let _ = child.wait(); return Err("esa terminal ya existe".into()); }
+        terms.insert(id.clone(), Term {
+            writer: Mutex::new(writer), master: pair.master, killer: Mutex::new(killer), tree,
+            owner: owner.to_string(), cwd: args.cwd.clone(), title: args.title.clone().filter(|t| !t.trim().is_empty()),
+            agent: args.agent.unwrap_or(false), screen,
+        });
+    }
     std::thread::spawn(move || {
         let code = child.wait().ok().map(|s| s.exit_code());
         exit_screen.state.lock().unwrap().exited = Some(code);
@@ -459,21 +475,30 @@ fn spawn(app: &AppHandle, owner: &str, args: &TermSpawnArgs, on_event: Channel<T
         }
     });
 
-    app.state::<TermState>().terms.lock().unwrap().insert(
-        args.id.clone(),
-        Term {
-            writer: Mutex::new(writer),
-            master: pair.master,
-            killer: Mutex::new(killer),
-            pid,
-            owner: owner.to_string(),
-            cwd: args.cwd.clone(),
-            title: args.title.clone().filter(|t| !t.trim().is_empty()),
-            agent: args.agent.unwrap_or(false),
-            screen,
-        },
-    );
     Ok(())
+}
+
+pub fn start_cleanup(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(60));
+        let state = app.state::<TermState>();
+        let ids: Vec<String> = {
+            let terms = state.terms.lock().unwrap();
+            terms.iter().filter_map(|(id, t)| {
+                let screen = t.screen.state.lock().unwrap();
+                (t.agent && !screen.running() && screen.parser.callbacks().prompts > 0 &&
+                    screen.last_activity.elapsed() >= Duration::from_secs(20 * 60) &&
+                    t.tree.active_processes().is_some_and(|n| n <= 1)).then(|| id.clone())
+            }).collect()
+        };
+        for id in ids {
+            if let Some(owner) = kill_one(&app, &id) {
+                use tauri::Emitter;
+                let _ = app.emit_to(owner.as_str(), "terminal://agent-closed", serde_json::json!({ "id": id }));
+            }
+        }
+    });
 }
 
 #[tauri::command]

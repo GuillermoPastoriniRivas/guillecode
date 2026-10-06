@@ -17,13 +17,25 @@ function stateLabel(s: DesktopStatus): { text: string; tone: string } {
   return { text: "Activado", tone: "ok" }
 }
 
-function bridgeLabel(b: BridgeStatus): string {
-  if (b.connecting) return "Conectando con Chrome: aceptá «Permitir» si lo pide…"
-  if (b.state === "ready" && b.connected) return `Conexión con Chrome verificada (${b.tools} herramientas)`
-  if (b.state === "ready") return b.error ? `Chrome no conectado: ${b.error}` : "Chrome DevTools listo; conexión con Chrome sin verificar"
-  if (b.state === "starting") return "Arrancando Chrome DevTools…"
-  if (b.state === "error") return `Error: ${b.error ?? "desconocido"}`
-  return "Sin iniciar: arranca solo cuando opencode lo pide"
+function bridgeError(raw: string): { text: string; detail: string } {
+  const e = raw.toLowerCase()
+  if (e.includes("devtoolsactiveport") || e.includes("could not connect") || e.includes("check if chrome is running"))
+    return {
+      text: "No pude conectar con Chrome. Abrilo, activá la depuración remota en «Abrir configuración de Chrome» y aceptá «Permitir».",
+      detail: raw,
+    }
+  if (e.includes("a tiempo") || e.includes("timed out") || e.includes("timeout"))
+    return { text: "Chrome no respondió. Si quedó un diálogo pidiendo permiso, aceptalo y volvé a probar.", detail: raw }
+  return { text: `Chrome no conectado: ${raw}`, detail: raw }
+}
+
+function bridgeLabel(b: BridgeStatus): { text: string; detail: string | null } {
+  if (b.connecting) return { text: "Conectando con Chrome: aceptá «Permitir» si lo pide…", detail: null }
+  if (b.state === "ready" && b.connected) return { text: `Conexión con Chrome verificada (${b.tools} herramientas)`, detail: null }
+  if (b.state === "ready") return b.error ? bridgeError(b.error) : { text: "Chrome DevTools listo; conexión con Chrome sin verificar", detail: null }
+  if (b.state === "starting") return { text: "Arrancando Chrome DevTools…", detail: null }
+  if (b.state === "error") return b.error ? bridgeError(b.error) : { text: "Error desconocido al arrancar Chrome DevTools", detail: null }
+  return { text: "Sin iniciar: arranca solo cuando opencode lo pide", detail: null }
 }
 
 export function DesktopEditor() {
@@ -65,6 +77,7 @@ export function DesktopEditor() {
     )
 
   const label = stateLabel(status)
+  const bridge = bridgeLabel(status.bridge)
   const m = status.machine
 
   const stopAll = () =>
@@ -150,11 +163,13 @@ export function DesktopEditor() {
             El agente se conecta a tu Chrome abierto, con tus sesiones, mediante Chrome DevTools. Requiere Chrome 144 o posterior. Abrí la configuración de abajo y habilitá la depuración remota;
             después probá la conexión y aceptá «Permitir» en Chrome. Chrome pide permiso en cada nueva conexión, no en cada acción.
           </span>
-          <div className="remote-command">
+          <div className="remote-bridge-row">
             <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void run(() => call("desktop_browser_setup"), "No se pudo abrir Chrome: abrí chrome://inspect/#remote-debugging manualmente")}>
               <Icon name="link-external" /> Abrir configuración de Chrome
             </button>
-            <span className={`routine-pill ${status.bridge.connected ? "ok" : status.bridge.error ? "error" : ""}`}>{bridgeLabel(status.bridge)}</span>
+            <span className={`remote-bridge ${status.bridge.connected ? "ok" : status.bridge.error ? "error" : ""}`} title={bridge.detail ?? undefined}>
+              {bridge.text}
+            </span>
           </div>
           <div className="voice-model desktop-token">
             <button

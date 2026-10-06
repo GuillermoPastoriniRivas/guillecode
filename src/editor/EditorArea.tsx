@@ -34,6 +34,7 @@ import { AiReviewEditor } from "./AiReviewEditor"
 import { RoutineEditor } from "./RoutineEditor"
 import { RemoteEditor } from "./RemoteEditor"
 import { DesktopEditor } from "./DesktopEditor"
+import { MemoryEditor } from "./MemoryEditor"
 import { AccountsEditor } from "./AccountsEditor"
 import { FeatureCreateEditor, FeatureIntegrateEditor } from "./FeatureEditor"
 import { SessionPane } from "../agent/AgentPanel"
@@ -68,6 +69,8 @@ function tabIcon(input: EditorInput) {
       return <Icon name="device-mobile" className="tab-icon" />
     case "desktop":
       return <Icon name="vm" className="tab-icon" />
+    case "memory":
+      return <Icon name="library" className="tab-icon" />
     case "accounts":
       return <Icon name="account" className="tab-icon" />
     case "featureCreate":
@@ -304,6 +307,8 @@ function EditorContent({ tab }: { tab: Tab }) {
       )
     case "aiReview":
       return <AiReviewEditor key={tab.id} input={input} />
+    case "memory":
+      return <MemoryEditor key={tab.id} />
     case "routine":
       return <RoutineEditor key={tab.id} id={input.id} />
     case "remote":

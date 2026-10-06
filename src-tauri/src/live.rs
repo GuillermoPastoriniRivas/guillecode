@@ -201,6 +201,9 @@ fn finish(app: &AppHandle, id: &str, directory: &str) {
         mark.busy = false;
         mark.error.is_some()
     };
+    let capture_app = app.clone();
+    let capture_session = id.to_string();
+    std::thread::spawn(move || crate::memory::capture(&capture_app, &capture_session));
     if !failed {
         notify(app, Kind::Done, id, directory, String::new());
     }
