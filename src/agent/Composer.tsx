@@ -18,6 +18,7 @@ import {
   type ContextItem,
   type ContextUsage,
 } from "../state/agent"
+import { setApprovalForSession, useApprovals } from "../state/approvals"
 import { openEditor, useEditors } from "../state/editors"
 import { CHATGPT } from "../state/accounts"
 import { useProject } from "../state/project"
@@ -30,12 +31,29 @@ import { modelKey } from "../lib/opencode"
 import { formatTokens, percent } from "../lib/format"
 import { FileIcon, Highlighted, Icon, Kbd } from "../components/ui"
 import { openImage } from "../state/lightbox"
+import { useVoiceRecorder } from "../lib/recorder"
+import { call, errorMessage } from "../lib/tauri"
+import { invoke } from "@tauri-apps/api/core"
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024
 const CONNECT_CHATGPT = "__connect_chatgpt__"
 export const PATH_DRAG_TYPE = "application/x-guillecode-path"
 
 const drafts = new Map<string, string>()
+
+async function desktopTranscribe(wav: Blob): Promise<string> {
+  const bytes = new Uint8Array(await wav.arrayBuffer())
+  try {
+    return await invoke<string>("voice_transcribe", bytes)
+  } catch {
+    return await invoke<string>("voice_transcribe", { audio: Array.from(bytes) })
+  }
+}
+
+function clock(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000))
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`
+}
 
 function fileToImage(file: File): Promise<ContextItem | null> {
   return new Promise((resolve) => {
@@ -129,6 +147,8 @@ export function Composer({
   const composerFocus = useAgent((s) => s.composerFocus)
   const draft = useAgent((s) => s.draft)
   const memoryOn = useAgent((s) => s.memoryEnabled[sessionId ?? DRAFT_TAB] !== false)
+  const approveKey = sessionId ?? DRAFT_TAB
+  const approveOn = useApprovals((s) => (approveKey in s.sessions ? s.sessions[approveKey] : s.autoApprove))
   const files = useFileIndex((s) => s.files)
   const activeFile = useEditors((s) => {
     const g = s.groups.find((x) => x.id === s.activeGroupId)
@@ -143,6 +163,44 @@ export function Composer({
   const ref = useRef<HTMLTextAreaElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const draftKey = sessionId ?? ""
+
+  const recorder = useVoiceRecorder({
+    transcribe: desktopTranscribe,
+    onText: (heard) => {
+      const message = text.trim() ? `${text.trim()} ${heard}` : heard
+      setText(message)
+      void submit(false, message)
+    },
+    onError: (message) => notify.error("No se pudo transcribir el audio", message),
+    unsupportedHint: "Para grabar voz abrí la app de escritorio de GuilleCode.",
+  })
+
+  const toggleVoice = async () => {
+    if (recorder.state.status === "recording") {
+      void recorder.stop()
+      return
+    }
+    if (recorder.state.status === "transcribing") return
+    try {
+      const view = await call<{ ready: boolean }>("voice_get")
+      if (!view.ready) {
+        openEditor({ kind: "remote" })
+        return
+      }
+    } catch (e) {
+      notify.error("No se pudo revisar la configuración de voz", errorMessage(e))
+      return
+    }
+    void recorder.start()
+  }
+
+  const recording = recorder.state.status === "recording" ? recorder.state : null
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!recording) return
+    const id = window.setInterval(() => setNow(Date.now()), 500)
+    return () => window.clearInterval(id)
+  }, [recording])
 
   const [prevSession, setPrevSession] = useState(sessionId)
   if (prevSession !== sessionId) {
@@ -224,8 +282,8 @@ export function Composer({
     setPopover(null)
   }
 
-  const submit = async (now = false) => {
-    const value = text.trim()
+  const submit = async (now = false, override?: string) => {
+    const value = (override ?? text).trim()
     if (!value && context.length === 0) return
     if (busy && findCommand(value, commands)) {
       notify.info("El agente está trabajando", "Los comandos se mandan cuando termina. Detenelo con Esc si no querés esperar.")
@@ -494,6 +552,15 @@ export function Composer({
           </button>
           <button
             type="button"
+            className={`composer-pill approval-pill${approveOn ? " on" : ""}`}
+            title={approveOn ? "Aprobación automática ACTIVADA en esta conversación: el agente no te pide permiso. Clic para que vuelva a pedirlo." : "El agente te pide permiso en esta conversación. Clic para que apruebe solo (no te interrumpe)."}
+            onClick={() => setApprovalForSession(approveKey, !approveOn)}
+          >
+            <Icon name={approveOn ? "pass-filled" : "shield"} />
+            <span>{approveOn ? "Aprueba solo" : "Pide permiso"}</span>
+          </button>
+          <button
+            type="button"
             className={`composer-pill memory-pill${memoryOn ? " on" : ""}`}
             title={memoryOn ? "Memoria activada: el agente recuerda el proyecto y esta conversación. Clic para apagarla." : "Memoria apagada: en esta conversación no se inyecta ni se guarda memoria."}
             onClick={() => setMemory(sessionId ?? DRAFT_TAB, !memoryOn)}
@@ -522,7 +589,29 @@ export function Composer({
               <Icon name="debug-stop" />
             </button>
           )}
-          {(!busy || text.trim() || context.length > 0) && (
+          {recording ? (
+            <span className="voice-recording">
+              <span className="voice-rec-dot" />
+              <span className="voice-rec-time">{clock(now - recording.started)}</span>
+              <button type="button" className="composer-icon" title="Descartar audio" onClick={() => recorder.cancel()}>
+                <Icon name="trash" />
+              </button>
+              <button type="button" className="composer-icon voice-stop" title="Terminar y enviar" onClick={() => void recorder.stop()}>
+                <Icon name="check" />
+              </button>
+            </span>
+          ) : (
+            <button
+              type="button"
+              className="composer-icon voice-icon"
+              title={recorder.state.status === "transcribing" ? "Transcribiendo…" : "Grabar voz"}
+              disabled={recorder.state.status === "transcribing"}
+              onClick={() => void toggleVoice()}
+            >
+              <Icon name={recorder.state.status === "transcribing" ? "loading" : "mic"} spin={recorder.state.status === "transcribing"} />
+            </button>
+          )}
+          {!recording && (!busy || text.trim() || context.length > 0) && (
             <button
               type="button"
               className={`composer-send${busy ? " queue" : ""}`}

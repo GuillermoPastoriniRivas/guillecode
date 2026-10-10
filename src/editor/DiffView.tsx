@@ -94,6 +94,64 @@ function stageGutter(onStage: (hunk: HunkInfo) => void): Extension {
   })
 }
 
+const SPLIT_MIN = 0.15
+const SPLIT_MAX = 0.85
+
+function clampRatio(value: number): number {
+  if (!Number.isFinite(value)) return 0.5
+  return Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, value))
+}
+
+function mountSplitDivider(merge: MergeView, ratio: number, onChange: (ratio: number) => void): void {
+  const container = merge.dom.querySelector<HTMLElement>(".cm-mergeViewEditors")
+  const wrapA = merge.a.dom.parentElement
+  const wrapB = merge.b.dom.parentElement
+  if (!container || !wrapA || !wrapB) return
+  const divider = document.createElement("div")
+  divider.className = "cm-merge-divider"
+  divider.setAttribute("role", "separator")
+  divider.setAttribute("aria-label", "Arrastrar para ensanchar cada lado")
+  container.insertBefore(divider, wrapB)
+  let current = clampRatio(ratio)
+  const apply = () => {
+    wrapA.style.flexGrow = String(current)
+    wrapB.style.flexGrow = String(1 - current)
+  }
+  apply()
+  let dragging = false
+  const measure = () => {
+    merge.a.requestMeasure()
+    merge.b.requestMeasure()
+  }
+  const move = (e: PointerEvent) => {
+    if (!dragging) return
+    const rect = container.getBoundingClientRect()
+    const revert = container.querySelector<HTMLElement>(".cm-merge-revert")
+    const fixed = (revert?.getBoundingClientRect().width ?? 0) + divider.offsetWidth
+    const available = rect.width - fixed
+    if (available <= 0) return
+    current = clampRatio((e.clientX - rect.left - fixed + divider.offsetWidth / 2) / available)
+    apply()
+    onChange(current)
+    measure()
+  }
+  const finish = () => {
+    if (!dragging) return
+    dragging = false
+    document.body.classList.remove("resizing-split")
+    window.removeEventListener("pointermove", move)
+    window.removeEventListener("pointerup", finish)
+    saveJson("diff.splitRatio", current)
+  }
+  divider.addEventListener("pointerdown", (e) => {
+    e.preventDefault()
+    dragging = true
+    document.body.classList.add("resizing-split")
+    window.addEventListener("pointermove", move)
+    window.addEventListener("pointerup", finish)
+  })
+}
+
 type Props = {
   path: string
   original: string
@@ -114,6 +172,7 @@ function languageExtension(path: string): Promise<Extension | null> {
 export function DiffView({ path, original, modified, editable, header, onSave, onStageHunk, labelA, labelB }: Props) {
   const host = useRef<HTMLDivElement>(null)
   const [mode, setMode] = useState<DiffMode>(() => loadJson<DiffMode>("diff.mode", "split"))
+  const [ratio, setRatio] = useState(() => clampRatio(loadJson<number>("diff.splitRatio", 0.5)))
   const [dirty, setDirty] = useState(false)
   const [ready, setReady] = useState(false)
   const [chunks, setChunks] = useState<readonly Chunk[]>([])
@@ -157,6 +216,7 @@ export function DiffView({ path, original, modified, editable, header, onSave, o
         })
         viewRef.current = { a: merge.a, b: merge.b, merge }
         setChunks(merge.chunks)
+        mountSplitDivider(merge, clampRatio(loadJson<number>("diff.splitRatio", 0.5)), setRatio)
       } else {
         const b = new EditorView({
           parent: el,
@@ -247,7 +307,7 @@ export function DiffView({ path, original, modified, editable, header, onSave, o
         />
       </div>
       {mode === "split" && (
-        <div className="diff-labels">
+        <div className="diff-labels" style={{ gridTemplateColumns: `${ratio}fr ${1 - ratio}fr` }}>
           <span>{labelA}</span>
           <span>{labelB}</span>
         </div>

@@ -1,3 +1,4 @@
+use crate::whisper;
 use crate::app_data_file;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -9,20 +10,39 @@ pub const MAX_BYTES: usize = 25 * 1024 * 1024;
 #[derive(Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase", default)]
 struct VoiceConfig {
+    /// "local" = Whisper en esta PC; cualquier otra cosa (vacío) = servicio compatible con OpenAI.
+    kind: String,
     base_url: String,
     api_key: String,
     model: String,
     language: String,
+    /// Tamaño del modelo de Whisper local (base/small/medium/large-v3-turbo).
+    local_model: String,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VoiceView {
+    kind: String,
     base_url: String,
     model: String,
     language: String,
+    local_model: String,
     key_hint: Option<String>,
     ready: bool,
+}
+
+fn is_local(config: &VoiceConfig) -> bool {
+    config.kind.trim() == "local"
+}
+
+fn local_size(config: &VoiceConfig) -> String {
+    let size = config.local_model.trim();
+    if size.is_empty() {
+        whisper::DEFAULT_SIZE.to_string()
+    } else {
+        size.to_string()
+    }
 }
 
 fn load(app: &AppHandle) -> VoiceConfig {
@@ -38,23 +58,29 @@ fn save(app: &AppHandle, config: &VoiceConfig) {
     }
 }
 
-fn is_ready(config: &VoiceConfig) -> bool {
-    !config.base_url.trim().is_empty() && !config.model.trim().is_empty()
+fn is_ready(app: &AppHandle, config: &VoiceConfig) -> bool {
+    if is_local(config) {
+        whisper::available(app) && whisper::model_present(app, &local_size(config))
+    } else {
+        !config.base_url.trim().is_empty() && !config.model.trim().is_empty()
+    }
 }
 
-fn view(config: &VoiceConfig) -> VoiceView {
+fn view(app: &AppHandle, config: &VoiceConfig) -> VoiceView {
     let key = config.api_key.trim();
     VoiceView {
+        kind: if is_local(config) { "local".into() } else { "cloud".into() },
         base_url: config.base_url.clone(),
         model: config.model.clone(),
         language: config.language.clone(),
+        local_model: local_size(config),
         key_hint: (!key.is_empty()).then(|| format!("…{}", key.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect::<String>())),
-        ready: is_ready(config),
+        ready: is_ready(app, config),
     }
 }
 
 pub fn ready(app: &AppHandle) -> bool {
-    is_ready(&load(app))
+    is_ready(app, &load(app))
 }
 
 fn extension(mime: &str) -> &'static str {
@@ -94,10 +120,28 @@ fn service_error(code: u16, body: &str) -> String {
     }
 }
 
-fn run(config: &VoiceConfig, audio: &[u8], mime: &str) -> Result<String, String> {
-    if !is_ready(config) {
-        return Err("Falta configurar la transcripción en GuilleCode (comando «Conectar el celular» → Audios)".into());
+/// Resuelve a dónde mandar el audio según el modo. En local levanta (o reusa)
+/// el `whisper-server` de whisper.cpp y devuelve su endpoint compatible OpenAI.
+fn endpoint(app: &AppHandle, config: &VoiceConfig) -> Result<(String, String, String), String> {
+    if is_local(config) {
+        if !whisper::available(app) {
+            return Err("El motor de Whisper no está instalado en esta PC".into());
+        }
+        let size = local_size(config);
+        if !whisper::model_present(app, &size) {
+            return Err(format!("Falta descargar el modelo de Whisper «{}» (GuilleCode → Audios)", size));
+        }
+        let port = whisper::ensure(app, &size)?;
+        Ok((format!("http://127.0.0.1:{}/v1", port), "whisper-1".to_string(), String::new()))
+    } else {
+        if !is_ready(app, config) {
+            return Err("Falta configurar la transcripción en GuilleCode (comando «Conectar el celular» → Audios)".into());
+        }
+        Ok((config.base_url.trim().trim_end_matches('/').to_string(), config.model.trim().to_string(), config.api_key.trim().to_string()))
     }
+}
+
+fn run(app: &AppHandle, config: &VoiceConfig, audio: &[u8], mime: &str) -> Result<String, String> {
     if audio.is_empty() {
         return Err("El audio llegó vacío".into());
     }
@@ -106,19 +150,20 @@ fn run(config: &VoiceConfig, audio: &[u8], mime: &str) -> Result<String, String>
     }
     let mime = mime.split(';').next().unwrap_or("").trim();
     let mime = if mime.starts_with("audio/") { mime } else { "audio/webm" };
-    let mut fields = vec![("model", config.model.trim()), ("response_format", "json")];
+    let (base_url, model, api_key) = endpoint(app, config)?;
+    let mut fields = vec![("model", model.as_str()), ("response_format", "json")];
     if !config.language.trim().is_empty() {
         fields.push(("language", config.language.trim()));
     }
     let boundary = format!("guillecode{}", uuid::Uuid::new_v4().simple());
     let body = multipart(&boundary, &fields, &format!("audio.{}", extension(mime)), mime, audio);
-    let url = format!("{}/audio/transcriptions", config.base_url.trim().trim_end_matches('/'));
+    let url = format!("{}/audio/transcriptions", base_url.trim_end_matches('/'));
     let mut request = ureq::post(&url)
         .set("Content-Type", &format!("multipart/form-data; boundary={}", boundary))
         .set("Accept", "application/json")
         .timeout(Duration::from_secs(180));
-    if !config.api_key.trim().is_empty() {
-        request = request.set("Authorization", &format!("Bearer {}", config.api_key.trim()));
+    if !api_key.is_empty() {
+        request = request.set("Authorization", &format!("Bearer {}", api_key));
     }
     match request.send_bytes(&body) {
         Ok(resp) => {
@@ -130,12 +175,12 @@ fn run(config: &VoiceConfig, audio: &[u8], mime: &str) -> Result<String, String>
             })
         }
         Err(ureq::Error::Status(code, resp)) => Err(service_error(code, &resp.into_string().unwrap_or_default())),
-        Err(e) => Err(format!("No se pudo conectar con {}: {}", config.base_url, e)),
+        Err(e) => Err(format!("No se pudo conectar con {}: {}", base_url, e)),
     }
 }
 
 pub fn transcribe(app: &AppHandle, audio: &[u8], mime: &str) -> Result<String, String> {
-    run(&load(app), audio, mime)
+    run(app, &load(app), audio, mime)
 }
 
 fn silence_wav() -> Vec<u8> {
@@ -161,21 +206,23 @@ fn silence_wav() -> Vec<u8> {
 
 #[tauri::command]
 pub fn voice_get(app: AppHandle) -> VoiceView {
-    view(&load(&app))
+    view(&app, &load(&app))
 }
 
 #[tauri::command]
-pub async fn voice_set(app: AppHandle, base_url: String, model: String, language: String, api_key: Option<String>) -> VoiceView {
+pub async fn voice_set(app: AppHandle, kind: String, base_url: String, model: String, language: String, local_model: String, api_key: Option<String>) -> VoiceView {
     tauri::async_runtime::spawn_blocking(move || {
         let mut config = load(&app);
+        config.kind = if kind.trim() == "local" { "local".into() } else { "cloud".into() };
         config.base_url = base_url.trim().to_string();
         config.model = model.trim().to_string();
         config.language = language.trim().to_string();
+        config.local_model = local_model.trim().to_string();
         if let Some(key) = api_key {
             config.api_key = key.trim().to_string();
         }
         save(&app, &config);
-        view(&config)
+        view(&app, &config)
     })
     .await
     .unwrap()
@@ -183,7 +230,24 @@ pub async fn voice_set(app: AppHandle, base_url: String, model: String, language
 
 #[tauri::command]
 pub async fn voice_test(app: AppHandle) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || run(&load(&app), &silence_wav(), "audio/wav").map(|_| ()))
+    tauri::async_runtime::spawn_blocking(move || run(&app, &load(&app), &silence_wav(), "audio/wav").map(|_| ()))
         .await
         .unwrap()
+}
+
+/// Transcripción desde el chat de escritorio. El frontend manda el WAV crudo
+/// como cuerpo binario (`ArrayBuffer`) para no serializar megabytes en JSON.
+#[tauri::command]
+pub async fn voice_transcribe(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<String, String> {
+    let audio: Vec<u8> = match request.body() {
+        tauri::ipc::InvokeBody::Raw(bytes) => bytes.clone(),
+        tauri::ipc::InvokeBody::Json(value) => value
+            .get("audio")
+            .and_then(|a| a.as_array())
+            .map(|arr| arr.iter().filter_map(|n| n.as_u64().map(|x| x as u8)).collect())
+            .ok_or("El audio llegó en un formato inesperado")?,
+    };
+    tauri::async_runtime::spawn_blocking(move || transcribe(&app, &audio, "audio/wav"))
+        .await
+        .map_err(|e| e.to_string())?
 }

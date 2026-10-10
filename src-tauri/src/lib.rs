@@ -32,6 +32,7 @@ pub mod usage;
 pub mod updates;
 pub mod voice;
 pub mod watch;
+pub mod whisper;
 pub mod windows;
 
 const MAX_RECENT_PROJECTS: usize = 12;
@@ -299,6 +300,7 @@ fn shutdown(app: &tauri::AppHandle) {
     }
     term::kill_all(app);
     watch::stop_all(app);
+    whisper::stop(app);
     desktop::shutdown();
     machine::keep_awake(false);
 }
@@ -340,6 +342,11 @@ pub fn run() {
             voice::voice_get,
             voice::voice_set,
             voice::voice_test,
+            voice::voice_transcribe,
+            whisper::whisper_status,
+            whisper::whisper_download,
+            whisper::whisper_cancel,
+            whisper::whisper_delete_model,
             git::git_root,
             git::git_status,
             git::git_log,
@@ -426,6 +433,7 @@ pub fn run() {
             live::live_busy_sessions,
             approvals::approvals_get,
             approvals::approvals_set,
+            approvals::approvals_set_session,
             memory::memory_status,
             memory::memory_overview,
             memory::memory_write_note,
@@ -474,6 +482,7 @@ pub fn run() {
             approvals::start(app.handle());
             live::start(app.handle());
             hub::setup(app.handle())?;
+            app.manage(whisper::WhisperState::default());
             app.manage(term::TermState::new());
             app.manage(watch::WatchState::default());
             term::start_cleanup(app.handle());

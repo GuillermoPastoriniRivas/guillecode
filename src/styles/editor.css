@@ -566,6 +566,34 @@
   color: var(--del) !important;
   background: var(--del-bg) !important;
 }
+.cm-merge-divider {
+  flex: 0 0 7px;
+  align-self: stretch;
+  position: relative;
+  cursor: col-resize;
+  background: var(--bg-side);
+  touch-action: none;
+}
+.cm-merge-divider::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: var(--border);
+}
+.cm-merge-divider:hover::after {
+  width: 2px;
+  background: var(--fg-faint);
+}
+body.resizing-split {
+  cursor: col-resize;
+  user-select: none;
+}
+body.resizing-split .cm-merge-divider::after {
+  width: 2px;
+  background: var(--info);
+}
 .cm-deletedChunk .cm-chunkButtons {
   font-family: var(--font);
 }

@@ -103,6 +103,20 @@ fn session_of(props: &Value) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+fn root_session(app: &AppHandle, session: &str) -> String {
+    let state = app.state::<LiveState>();
+    let meta = state.meta.lock().unwrap();
+    let mut current = session.to_string();
+    let mut seen = std::collections::HashSet::new();
+    while seen.insert(current.clone()) {
+        match meta.get(&current).and_then(|m| m.parent.clone()) {
+            Some(parent) if !parent.is_empty() => current = parent,
+            _ => break,
+        }
+    }
+    current
+}
+
 fn forward(app: &AppHandle, kind: &str, props: &Value, directory: &str) {
     track(app, kind, props, directory);
     let message = json!({ "directory": directory, "type": kind, "properties": props }).to_string();
@@ -122,9 +136,11 @@ fn handle(app: &AppHandle, event: &Value) {
     if !FORWARDED.contains(&kind) {
         return;
     }
-    if kind == "permission.asked" && crate::approvals::auto_approve(app) {
+    if kind == "permission.asked" {
+        let session = props["sessionID"].as_str().unwrap_or_default();
         let request_id = props["id"].as_str().unwrap_or_default().to_string();
-        if !request_id.is_empty() {
+        let root = root_session(app, session);
+        if crate::approvals::auto_approve(app, &root) && !request_id.is_empty() {
             let app = app.clone();
             let props = props.clone();
             let directory = directory.clone();

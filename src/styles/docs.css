@@ -1052,6 +1052,55 @@
 .voice-lang {
   width: 140px;
 }
+.voice-local-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.voice-progress {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 220px;
+}
+.voice-progress small {
+  color: var(--fg-faint);
+}
+.voice-progress-track {
+  display: block;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--bg-input);
+  overflow: hidden;
+}
+.voice-progress-bar {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+.voice-folder {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 6px;
+  max-width: 640px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-raised);
+  color: var(--fg-dim);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.voice-folder:hover {
+  color: var(--fg);
+  background: var(--bg-hover);
+}
 .chip-btn {
   height: 22px;
   padding: 0 8px;

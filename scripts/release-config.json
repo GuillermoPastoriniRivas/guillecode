@@ -2,5 +2,8 @@
   "repository": "GuillermoPastoriniRivas/guillecode",
   "engineVersion": "1.18.32",
   "engineUrl": "https://github.com/anomalyco/opencode/releases/download/v1.18.32/opencode-windows-x64.zip",
-  "engineSha256": "1483c72d5adced825590a0ecf8cc18b3e87e535960a125dbf539d33bce135d0f"
+  "engineSha256": "1483c72d5adced825590a0ecf8cc18b3e87e535960a125dbf539d33bce135d0f",
+  "whisperVersion": "b5454",
+  "whisperUrl": "https://github.com/ggml-org/whisper.cpp/releases/download/b5454/whisper-bin-x64.zip",
+  "whisperSha256": "6ba69e3482d7826214f90a6a9c84ca07782aec1e1d0c6a7c30c994fd5d816ccb"
 }

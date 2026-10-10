@@ -13,6 +13,7 @@ import {
 } from "../state/project"
 import { activeTab, cycleTab, moveTabToNextGroup, openEditor } from "../state/editors"
 import { newSession, cycleSessionTab, useAgent, abortSession, focusComposer } from "../state/agent"
+import { setAutoApprove, useApprovals } from "../state/approvals"
 import { gitAction, refreshAllRepos, bumpHead, useGit } from "../state/git"
 import { openAiReview } from "../state/aiReview"
 import { closeToTray, requestQuit, setCloseToTray, toggleAutostart } from "../state/hub"
@@ -101,6 +102,22 @@ export function registerBuiltinCommands(): void {
     { id: "workbench.commandPalette", title: "Mostrar todos los comandos", category: "Ver", icon: "symbol-event", keys: ["ctrl+shift+p", "f1"], global: true, run: () => showQuickOpen(">") },
     { id: "workbench.gotoLine", title: "Ir a línea…", category: "Editor", icon: "symbol-number", keys: ["ctrl+g"], run: () => showQuickOpen(":") },
     { id: "workbench.sessions", title: "Ir a sesión del agente…", category: "Agente", icon: "comment-discussion", run: () => showQuickOpen("#") },
+    {
+      id: "agent.autoApprove.on",
+      title: "Aprobación automática por defecto: activar en todas las conversaciones",
+      category: "Agente",
+      icon: "shield",
+      when: () => !useApprovals.getState().autoApprove,
+      run: () => void setAutoApprove(true),
+    },
+    {
+      id: "agent.autoApprove.off",
+      title: "Aprobación automática por defecto: desactivar",
+      category: "Agente",
+      icon: "shield",
+      when: () => useApprovals.getState().autoApprove,
+      run: () => void setAutoApprove(false),
+    },
     { id: "workbench.toggleSidebar", title: "Mostrar/ocultar barra lateral", category: "Ver", icon: "layout-sidebar-left", keys: ["ctrl+b"], global: true, run: () => useLayout.getState().toggleSidebar() },
     { id: "workbench.togglePanel", title: "Mostrar/ocultar panel inferior", category: "Ver", icon: "layout-panel", keys: ["ctrl+j"], global: true, run: () => useLayout.getState().togglePanel() },
     { id: "workbench.toggleAgent", title: "Mostrar/ocultar panel del agente", category: "Ver", icon: "layout-sidebar-right", keys: ["ctrl+alt+b"], global: true, run: () => useLayout.getState().toggleAgent() },

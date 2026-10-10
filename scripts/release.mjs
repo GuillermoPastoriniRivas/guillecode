@@ -82,6 +82,36 @@ async function engine() {
   } finally { rmSync(dir, { recursive: true, force: true }) }
 }
 
+async function whisper() {
+  if (process.platform !== "win32") throw new Error("El motor de Whisper es Windows x64")
+  const dir = mkdtempSync(join(tmpdir(), "guillecode-whisper-"))
+  try {
+    const response = await fetch(config.whisperUrl, { signal: AbortSignal.timeout(10 * 60_000) })
+    if (!response.ok) throw new Error(`Descarga de Whisper: HTTP ${response.status}`)
+    const bytes = Buffer.from(await response.arrayBuffer())
+    if (sha256(bytes) !== config.whisperSha256) throw new Error("El Whisper descargado no coincide con el SHA256 fijado")
+    const archive = join(dir, "whisper.zip")
+    const extracted = join(dir, "extracted")
+    writeFileSync(archive, bytes)
+    execFileSync("powershell.exe", ["-NoProfile", "-Command", "Expand-Archive -LiteralPath $env:GC_WHISPER_ZIP -DestinationPath $env:GC_WHISPER_DIR"], {
+      env: { ...process.env, GC_WHISPER_ZIP: archive, GC_WHISPER_DIR: extracted },
+      stdio: "inherit",
+    })
+    // El zip trae todo dentro de una carpeta Release/; lo aplanamos.
+    const walk = (base) => readdirSync(base, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(base, e.name)) : [join(base, e.name)]))
+    const files = walk(extracted)
+    const pick = (name) => files.find((f) => f.toLowerCase().endsWith(name.toLowerCase()))
+    const needed = [pick("whisper-server.exe"), pick("whisper.dll"), pick("ggml.dll"), pick("ggml-base.dll"), ...files.filter((f) => /ggml-cpu-.*\.dll$/i.test(f))]
+    if (needed.some((f) => !f)) throw new Error("El paquete de Whisper no trae los archivos esperados")
+    const dest = join(root, "src-tauri/binaries/whisper")
+    mkdirSync(dest, { recursive: true })
+    for (const file of needed) writeFileSync(join(dest, file.split(/[\\/]/).pop()), readFileSync(file))
+    console.log(`Whisper ${config.whisperVersion}: descargado y SHA256 verificado (${needed.length} archivos)`)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
 function manifest(bundle = "src-tauri/target/release/bundle/nsis", notesFile = process.env.GC_RELEASE_NOTES_FILE) {
   const version = check()
   if (!notesFile) throw new Error("Indicá el archivo de novedades como segundo argumento o GC_RELEASE_NOTES_FILE")
@@ -141,9 +171,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     if (command === "version") stamp(args[0])
     else if (command === "check") check()
     else if (command === "engine") await engine()
+    else if (command === "whisper") await whisper()
     else if (command === "manifest") manifest(...args)
     else if (command === "prepare") prepare(...args)
     else if (command === "publish") publish(args[0], args.includes("--tested"))
-    else throw new Error("Comandos: version, check, engine, manifest, prepare, publish")
+    else throw new Error("Comandos: version, check, engine, whisper, manifest, prepare, publish")
   } catch (e) { console.error(e.message); process.exitCode = 1 }
 }

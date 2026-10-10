@@ -40,6 +40,12 @@ if (-not (Test-Path (Join-Path $root "dist-pwa\pwa.html"))) {
     if ($LASTEXITCODE -ne 0) { throw "npm run build:pwa falló" }
 }
 
+if (-not (Test-Path (Join-Path $root "src-tauri\binaries\whisper\whisper-server.exe"))) {
+    Write-Host "Descargando el motor de Whisper local..." -ForegroundColor Cyan
+    npm.cmd run release:whisper
+    if ($LASTEXITCODE -ne 0) { throw "npm run release:whisper falló" }
+}
+
 # Compilar siempre (cargo es incremental). Si solo compilamos cuando falta el
 # exe, tras tocar el backend Rust se abre un app.exe viejo y la webview tira
 # "Command <x> not found" para comandos nuevos.

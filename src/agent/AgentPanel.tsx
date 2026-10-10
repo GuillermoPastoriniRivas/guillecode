@@ -10,7 +10,7 @@ import {
   useAgent,
 } from "../state/agent"
 import { notify } from "../state/toasts"
-import { setAutoApprove, useApprovals } from "../state/approvals"
+import { useApprovals } from "../state/approvals"
 import { percent } from "../lib/format"
 import { useLayout } from "../state/layout"
 import { useProject } from "../state/project"
@@ -31,13 +31,26 @@ const SUGGESTIONS = [
   { icon: "git-pull-request", title: "Revisar mis cambios", text: "/review" },
 ]
 
+function rootSessionId(sessions: { id: string; parentID?: string }[], id: string): string {
+  let current = id
+  const seen = new Set<string>()
+  while (!seen.has(current)) {
+    seen.add(current)
+    const parent = sessions.find((s) => s.id === current)?.parentID
+    if (parent) current = parent
+    else break
+  }
+  return current
+}
+
 export function SessionPane({ sessionId, variant }: { sessionId: string | null; variant: "panel" | "editor" }) {
   const session = useAgent((s) => s.sessions.find((x) => x.id === sessionId) ?? null)
   const status = useAgent((s) => (sessionId ? (s.statuses[sessionId]?.type ?? "idle") : "idle"))
   const retry = useAgent((s) => (sessionId ? s.statuses[sessionId] : undefined))
   const permissions = useAgent((s) => s.permissions)
   const questions = useAgent((s) => s.questions)
-  const autoApprove = useApprovals((s) => s.autoApprove)
+  const approvalSessions = useApprovals((s) => s.sessions)
+  const approvalGlobal = useApprovals((s) => s.autoApprove)
   const approvalFailed = useApprovals((s) => s.failed)
   const todos = useAgent((s) => (sessionId ? s.todos[sessionId] : undefined))
   const sessions = useAgent((s) => s.sessions)
@@ -131,7 +144,11 @@ export function SessionPane({ sessionId, variant }: { sessionId: string | null; 
           <QuestionCard key={q.id} request={q} />
         ))}
         {mine.permissions
-          .filter((p) => !autoApprove || approvalFailed.includes(p.id))
+          .filter((p) => {
+            const root = rootSessionId(sessions, p.sessionID)
+            const on = root in approvalSessions ? approvalSessions[root] : approvalGlobal
+            return !on || approvalFailed.includes(p.id)
+          })
           .map((p) => (
             <PermissionCard key={p.id} request={p} />
           ))}
@@ -176,7 +193,6 @@ export function AgentPanel() {
   const activeId = useAgent((s) => s.activeSessionId)
   const connected = useAgent((s) => s.connected)
   const busyCount = useAgent((s) => Object.values(s.statuses).filter((x) => x.type === "busy").length)
-  const autoApprove = useApprovals((s) => s.autoApprove)
   const focusChat = useLayout((s) => s.focusChat)
 
   useEffect(() => {
@@ -193,16 +209,6 @@ export function AgentPanel() {
               <Icon name="loading" spin /> {busyCount}
             </span>
           )}
-          <IconButton
-            icon="shield"
-            title={
-              autoApprove
-                ? "Aprobación automática activada: el agente no te pide permiso (clic para desactivar)"
-                : "Aprobación automática desactivada: el agente te pide permiso (clic para activar)"
-            }
-            active={autoApprove}
-            onClick={() => void setAutoApprove(!autoApprove)}
-          />
           <IconButton icon="add" title="Nueva sesión (Ctrl+Alt+N)" onClick={() => newSession()} />
           <IconButton icon="history" title="Historial de sesiones" onClick={() => useLayout.getState().showView("agents", false)} />
           <IconButton

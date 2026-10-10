@@ -16,7 +16,7 @@ import { loadJson, projectKey, saveJson } from "../lib/persist"
 import { call, isTauri } from "../lib/tauri"
 import { normalizePath, relativePath, samePath, toFileUrl } from "../lib/paths"
 import { notify } from "./toasts"
-import { clearApprovalFailed } from "./approvals"
+import { clearApprovalFailed, setApprovalForSession, useApprovals } from "./approvals"
 import { chooseAvailableModel, hasAccount, modelAvailable, modelVisible } from "../lib/providers"
 import { isArchivedSession, sessionTreeIds } from "../lib/sessions"
 import { AUTO_RETRY_MAX, autoRetryDelayMs, isRetryableProviderError, latestFailedAssistant, retryContext, retryMessageID, retryPromptParts, shouldAutoRetry, type RetryContext } from "../lib/autoretry"
@@ -1195,6 +1195,8 @@ export async function sendPrompt(
       await call("memory_set_session", { session: created.id, enabled: false }).catch(() => undefined)
       useAgent.setState((st) => ({ memoryEnabled: { ...st.memoryEnabled, [created.id]: false } }))
     }
+    const draftApproval = useApprovals.getState().sessions[DRAFT_TAB]
+    if (draftApproval !== undefined) setApprovalForSession(created.id, draftApproval)
     useAgent.setState((st) => {
       const open = st.openSessionIds.map((x) => (x === DRAFT_TAB ? created.id : x))
       if (!open.includes(created.id)) open.push(created.id)

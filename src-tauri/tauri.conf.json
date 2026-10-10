@@ -50,7 +50,8 @@
       "debugApplicationIdSuffix": ".debug"
     },
     "resources": {
-      "../dist-pwa/": "dist-pwa/"
+      "../dist-pwa/": "dist-pwa/",
+      "binaries/whisper/": "whisper/"
     },
     "windows": {
       "nsis": {
