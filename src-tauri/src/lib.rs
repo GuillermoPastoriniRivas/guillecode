@@ -8,6 +8,7 @@ use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
 pub mod accounts;
+pub mod approvals;
 pub mod desktop;
 pub mod features;
 pub mod fs;
@@ -402,6 +403,8 @@ pub fn run() {
             desktop::desktop_browser_restart,
             desktop::desktop_browser_setup,
             live::live_busy_sessions,
+            approvals::approvals_get,
+            approvals::approvals_set,
             memory::memory_status,
             memory::memory_overview,
             memory::memory_write_note,
@@ -409,6 +412,8 @@ pub fn run() {
             memory::memory_write_preferences,
             memory::memory_read_note,
             memory::memory_delete_note,
+            memory::memory_write_task,
+            memory::memory_delete_task,
             memory::memory_search_cmd,
             memory::memory_set_session,
             memory::memory_session_enabled,
@@ -440,6 +445,7 @@ pub fn run() {
             routines::start(app.handle());
             push::start(app.handle());
             remote::start(app.handle());
+            approvals::start(app.handle());
             live::start(app.handle());
             hub::setup(app.handle())?;
             app.manage(term::TermState::new());

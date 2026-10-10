@@ -928,6 +928,7 @@
 }
 .memory-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   padding: 8px 16px;
   border-bottom: 1px solid var(--border);
@@ -980,6 +981,7 @@
 }
 .memory-card-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 8px;
 }
@@ -999,6 +1001,30 @@
   color: var(--fg-faint);
   white-space: nowrap;
 }
+.memory-origin {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10.5px;
+  border-radius: 4px;
+  padding: 0 5px;
+  border: 1px solid var(--border-strong);
+  white-space: nowrap;
+}
+.memory-origin.agent {
+  color: var(--accent-strong);
+}
+.memory-origin.user {
+  color: var(--fg-dim);
+}
+.memory-prose {
+  font-size: 13px;
+  color: var(--fg);
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.55;
+}
 .memory-line {
   font-size: 12px;
   color: var(--fg-dim);
@@ -1013,10 +1039,12 @@
 }
 .memory-new {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 .memory-input {
   flex: 1;
+  min-width: 0;
   background: var(--bg);
   border: 1px solid var(--border-strong);
   color: var(--fg);

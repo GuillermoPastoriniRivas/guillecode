@@ -75,6 +75,49 @@
   font-size: 12.5px;
 }
 
+.memory-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-bottom: 12px;
+}
+.memory-nav-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 14px;
+  background: transparent;
+  border: 0;
+  color: var(--fg-dim);
+  text-align: left;
+  cursor: pointer;
+  font-size: 12px;
+}
+.memory-nav-row:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+.memory-nav-row > span:first-of-type {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.memory-section-row {
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  font-weight: 600;
+}
+.memory-entry-row {
+  padding-left: 28px;
+}
+.memory-nav-origin {
+  font-size: 12px !important;
+  color: var(--fg-faint) !important;
+}
+
 .pane-section {
   display: flex;
   flex-direction: column;

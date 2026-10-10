@@ -2,6 +2,9 @@ import type { Message, Part } from "@opencode-ai/sdk"
 
 export type RetryMessage = { info: Message; parts: Part[] }
 
+export type RetryPromptPart = { type: "text"; text: string } | { type: "file"; mime: string; url: string; filename: string }
+export const CONTINUE_INTERRUPTED_TURN = "La respuesta anterior se interrumpió. Continuá con el trabajo pendiente desde el último paso completado, usando el historial y los resultados de las herramientas. No reinicies la tarea ni repitas acciones que ya se completaron."
+
 export const AUTO_RETRY_MAX = 3
 
 // The engine already retries a provider call five times. These delays are extra
@@ -34,6 +37,34 @@ export function lastVisibleUserMessage(messages: RetryMessage[]): RetryMessage |
     if (hasVisibleUserContent(message)) return message
   }
   return null
+}
+
+export function latestFailedAssistant(messages: RetryMessage[]): RetryMessage | null {
+  const last = messages.at(-1)
+  return last?.info.role === "assistant" && last.info.time.completed && last.info.error ? last : null
+}
+
+export function retryPromptParts(messages: RetryMessage[], parentID: string): RetryPromptPart[] {
+  const parent = messages.find((message) => message.info.id === parentID)
+  const parts: RetryPromptPart[] = []
+  if (parent && shouldAutoRetry(messages, parentID)) {
+    for (const part of parent.parts) {
+      if (part.type === "text" && !part.synthetic && part.text.trim() && !isContextText(part.text))
+        parts.push({ type: "text", text: part.text })
+      else if (part.type === "file")
+        parts.push({ type: "file", mime: part.mime, url: part.url, filename: part.filename ?? "" })
+    }
+  }
+  // A long turn can outlive the message page, and its parent can be synthetic.
+  // In either case resume from the existing history instead of silently doing
+  // nothing or replaying a task that already produced side effects.
+  return parts.length ? parts : [{ type: "text", text: CONTINUE_INTERRUPTED_TURN }]
+}
+
+export function retryMessageID(): string {
+  const time = (BigInt(Date.now()) << 12n).toString(16).padStart(12, "0")
+  const random = Array.from(crypto.getRandomValues(new Uint8Array(7)), (b) => b.toString(16).padStart(2, "0")).join("")
+  return `msg_${time}${random}`
 }
 
 // Replaying a turn that already ran tools could repeat side effects, so only a

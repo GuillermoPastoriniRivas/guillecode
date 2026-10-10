@@ -61,6 +61,7 @@ const VIEWS: Array<{ id: ViewId; icon: string; title: string; keys: string }> = 
   { id: "agents", icon: "comment-discussion", title: "Sesiones del agente", keys: "Ctrl+Shift+A" },
   { id: "prs", icon: "git-pull-request", title: "Pull requests", keys: "" },
   { id: "routines", icon: "calendar", title: "Rutinas", keys: "" },
+  { id: "memory", icon: "library", title: "Memoria", keys: "" },
 ]
 
 export function ActivityBar() {

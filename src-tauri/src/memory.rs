@@ -226,6 +226,7 @@ struct NoteView {
     kind: String,
     updated: String,
     preview: String,
+    source: String,
 }
 
 #[derive(Serialize)]
@@ -237,6 +238,7 @@ struct TaskView {
     directory: String,
     progress: String,
     last_user: String,
+    source: String,
 }
 
 fn note_views(app: &AppHandle, scope: &str) -> Vec<NoteView> {
@@ -255,6 +257,7 @@ fn note_views(app: &AppHandle, scope: &str) -> Vec<NoteView> {
             kind: meta.get("type").cloned().unwrap_or_else(|| "nota".to_string()),
             updated: meta.get("updated").cloned().unwrap_or_default(),
             preview: first_line(&body_of(&content)),
+            source: meta.get("source").cloned().unwrap_or_else(|| "agent".to_string()),
         });
     }
     out.sort_by(|a, b| b.updated.cmp(&a.updated));
@@ -278,6 +281,7 @@ fn task_views(app: &AppHandle, scope: &str) -> Vec<TaskView> {
             directory: value["directory"].as_str().unwrap_or_default().to_string(),
             progress: value["progress"].as_str().unwrap_or_default().chars().take(300).collect(),
             last_user: value["lastUser"].as_str().unwrap_or_default().to_string(),
+            source: value["source"].as_str().unwrap_or("agent").to_string(),
         });
     }
     out.sort_by(|a, b| b.updated.cmp(&a.updated));
@@ -406,6 +410,7 @@ pub fn capture(app: &AppHandle, session: &str) {
         "updatedAt": now(),
         "lastUser": last_user,
         "progress": last_assistant,
+        "source": "agent",
     });
     write_text(
         &tasks_dir(app, &scope).join(format!("{}.json", slug(session))),
@@ -535,6 +540,46 @@ fn inside(root: &Path, candidate: &Path) -> bool {
     }
 }
 
+/// Las ediciones de la UI se resuelven en su colección, nunca por un id global ambiguo.
+fn existing_memory_file(dir: &Path, id: &str, extension: &str) -> Result<PathBuf, String> {
+    if id.is_empty() || id.contains(['/', '\\', ':']) || matches!(id, "." | "..") {
+        return Err("Id de memoria inválido".into());
+    }
+    let path = dir.join(format!("{}.{}", id, extension));
+    if !path.is_file() || !inside(dir, &path) {
+        return Err("No existe esta entrada de memoria en el proyecto".into());
+    }
+    Ok(path)
+}
+
+fn write_memory_file(path: &Path, content: &str) -> Result<(), String> {
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    fs::write(path, content).map_err(|e| e.to_string())
+}
+
+fn note_file(dir: &Path, title: &str, id: Option<&str>) -> Result<PathBuf, String> {
+    match id {
+        Some(id) => existing_memory_file(dir, id, "md"),
+        None => {
+            let id = note_slug(title);
+            let path = dir.join(format!("{}.md", id));
+            if path.exists() { existing_memory_file(dir, &id, "md") } else { Ok(path) }
+        }
+    }
+}
+
+fn task_file(app: &AppHandle, scope: &str, id: &str) -> Result<(PathBuf, Value), String> {
+    let path = existing_memory_file(&tasks_dir(app, scope), &slug(id), "json")?;
+    let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let value: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    if value["id"].as_str() != Some(id) {
+        return Err("El id del trabajo no coincide con el estado guardado".into());
+    }
+    Ok((path, value))
+}
+
 pub fn tool_list() -> Vec<Value> {
     vec![
         json!({
@@ -605,7 +650,7 @@ pub fn call_tool(app: &AppHandle, name: &str, args: &Value) -> Value {
             let kind = args["kind"].as_str().unwrap_or("nota");
             let body = args["body"].as_str().unwrap_or("");
             let id = note_slug(&title);
-            let content = format!("---\ntitle: {}\ntype: {}\nupdated: {}\n---\n\n{}\n", title, kind, now(), truncate_chars(body, BODY_MAX));
+            let content = format!("---\ntitle: {}\ntype: {}\nupdated: {}\nsource: agent\n---\n\n{}\n", title, kind, now(), truncate_chars(body, BODY_MAX));
             ensure_workspace(app, &scope);
             write_text(&notes_dir(app, &scope).join(format!("{}.md", id)), &content);
             render_digest(app, &scope);
@@ -661,8 +706,8 @@ pub fn overview(app: &AppHandle, scope: &str) -> Value {
         "slug": slug(&scope),
         "preferences": body_of(&prefs),
         "overview": body_of(&read_text(&workspace_dir(app, &scope).join("_overview.md"))),
-        "notes": notes.iter().map(|n| json!({ "id": n.id, "title": n.title, "kind": n.kind, "updated": n.updated, "preview": n.preview })).collect::<Vec<_>>(),
-        "tasks": tasks.iter().map(|t| json!({ "id": t.id, "title": t.title, "updated": t.updated, "directory": t.directory, "progress": t.progress, "lastUser": t.last_user })).collect::<Vec<_>>(),
+        "notes": notes.iter().map(|n| json!({ "id": n.id, "title": n.title, "kind": n.kind, "updated": n.updated, "preview": n.preview, "source": n.source })).collect::<Vec<_>>(),
+        "tasks": tasks.iter().map(|t| json!({ "id": t.id, "title": t.title, "updated": t.updated, "directory": t.directory, "progress": t.progress, "lastUser": t.last_user, "source": t.source })).collect::<Vec<_>>(),
     })
 }
 
@@ -678,36 +723,41 @@ pub fn memory_overview(app: AppHandle, scope: String) -> Value {
 }
 
 #[tauri::command]
-pub fn memory_write_note(app: AppHandle, scope: String, title: String, body: String, kind: Option<String>) -> Value {
+pub fn memory_write_note(app: AppHandle, scope: String, title: String, body: String, kind: Option<String>, id: Option<String>) -> Result<Value, String> {
     let scope = if scope.trim().is_empty() { default_scope(&app) } else { scope };
     if title.trim().is_empty() {
-        return json!({ "error": "Falta el título" });
+        return Err("Falta el título".into());
     }
-    let kind = kind.unwrap_or_else(|| "nota".to_string());
-    let id = note_slug(&title);
+    let kind = kind.unwrap_or_else(|| "nota".to_string()).replace(['\n', '\r'], " ");
+    let title = title.trim().replace(['\n', '\r'], " ");
+    let dir = notes_dir(&app, &scope);
+    let path = note_file(&dir, &title, id.as_deref())?;
+    let id = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
     ensure_workspace(&app, &scope);
-    let content = format!("---\ntitle: {}\ntype: {}\nupdated: {}\n---\n\n{}\n", title.trim(), kind, now(), body.chars().take(BODY_MAX).collect::<String>());
-    write_text(&notes_dir(&app, &scope).join(format!("{}.md", id)), &content);
+    let content = format!("---\ntitle: {}\ntype: {}\nupdated: {}\nsource: user\n---\n\n{}\n", title.trim(), kind, now(), body.chars().take(BODY_MAX).collect::<String>());
+    write_memory_file(&path, &content)?;
     render_digest(&app, &scope);
-    json!({ "ok": true, "id": id })
+    Ok(json!({ "ok": true, "id": id }))
 }
 
 #[tauri::command]
-pub fn memory_write_overview(app: AppHandle, scope: String, body: String) -> Value {
+pub fn memory_write_overview(app: AppHandle, scope: String, body: String) -> Result<Value, String> {
     let scope = if scope.trim().is_empty() { default_scope(&app) } else { scope };
     ensure_workspace(&app, &scope);
-    write_text(&workspace_dir(&app, &scope).join("_overview.md"), &format!("# {}\n\n{}\n", slug(&scope), body));
+    let content = if body.trim().is_empty() { String::new() } else { format!("# {}\n\n{}\n", slug(&scope), body) };
+    write_memory_file(&workspace_dir(&app, &scope).join("_overview.md"), &content)?;
     render_digest(&app, &scope);
-    json!({ "ok": true })
+    Ok(json!({ "ok": true }))
 }
 
 #[tauri::command]
-pub fn memory_write_preferences(app: AppHandle, body: String) -> Value {
-    write_text(&root(&app).join("global").join("_preferences.md"), &format!("# Preferencias personales\n\n{}\n", body));
+pub fn memory_write_preferences(app: AppHandle, body: String) -> Result<Value, String> {
+    let content = if body.trim().is_empty() { String::new() } else { format!("# Preferencias personales\n\n{}\n", body) };
+    write_memory_file(&root(&app).join("global").join("_preferences.md"), &content)?;
     for scope in scopes(&app) {
         render_digest(&app, &scope);
     }
-    json!({ "ok": true })
+    Ok(json!({ "ok": true }))
 }
 
 #[tauri::command]
@@ -716,17 +766,40 @@ pub fn memory_read_note(app: AppHandle, id: String) -> Value {
 }
 
 #[tauri::command]
-pub fn memory_delete_note(app: AppHandle, id: String) -> Value {
+pub fn memory_delete_note(app: AppHandle, id: String) -> Result<Value, String> {
     match resolve_note(&app, &id) {
         Some(path) if path.exists() => {
-            let _ = fs::remove_file(&path);
+            fs::remove_file(&path).map_err(|e| e.to_string())?;
             for scope in scopes(&app) {
                 render_digest(&app, &scope);
             }
-            json!({ "ok": true })
+            Ok(json!({ "ok": true }))
         }
-        _ => json!({ "error": "No existe o no es una nota" }),
+        _ => Err("No existe o no es una nota".into()),
     }
+}
+
+#[tauri::command]
+pub fn memory_write_task(app: AppHandle, scope: String, id: String, title: String, last_user: String, progress: String) -> Result<Value, String> {
+    let scope = if scope.trim().is_empty() { default_scope(&app) } else { scope };
+    let (path, mut value) = task_file(&app, &scope, &id)?;
+    value["title"] = json!(truncate_chars(&title, FIELD_MAX));
+    value["lastUser"] = json!(truncate_chars(&last_user, BODY_MAX));
+    value["progress"] = json!(truncate_chars(&progress, BODY_MAX));
+    value["updatedAt"] = json!(now());
+    value["source"] = json!("user");
+    write_memory_file(&path, &serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?)?;
+    render_digest(&app, &scope);
+    Ok(json!({ "ok": true }))
+}
+
+#[tauri::command]
+pub fn memory_delete_task(app: AppHandle, scope: String, id: String) -> Result<Value, String> {
+    let scope = if scope.trim().is_empty() { default_scope(&app) } else { scope };
+    let (path, _) = task_file(&app, &scope, &id)?;
+    fs::remove_file(&path).map_err(|e| e.to_string())?;
+    render_digest(&app, &scope);
+    Ok(json!({ "ok": true }))
 }
 
 #[tauri::command]
@@ -784,5 +857,22 @@ mod tests {
         assert!(!inside(&root, &secret));
         assert!(!inside(&root, &root.join("..").join("secret.txt")));
         let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn edits_keep_note_identity_and_stay_in_the_selected_project() {
+        let base = std::env::temp_dir().join(format!("gc-memory-edit-test-{}", uuid::Uuid::new_v4()));
+        let notes = base.join("demo/notes");
+        let other = base.join("other/notes");
+        fs::create_dir_all(&notes).unwrap();
+        fs::create_dir_all(&other).unwrap();
+        fs::write(notes.join("original.md"), "nota original").unwrap();
+        fs::write(other.join("solo-otro.md"), "nota de otro proyecto").unwrap();
+        assert_eq!(note_file(&notes, "Título nuevo", Some("original")).unwrap(), notes.join("original.md"));
+        assert!(note_file(&notes, "Título nuevo", Some("solo-otro")).is_err());
+        assert!(note_file(&notes, "Título nuevo", Some("../other/notes/solo-otro")).is_err());
+        assert!(existing_memory_file(&notes, "C:\\otra-nota", "md").is_err());
+        assert!(note_file(&notes, "original", Some("borrada")).is_err());
+        fs::remove_dir_all(base).unwrap();
     }
 }

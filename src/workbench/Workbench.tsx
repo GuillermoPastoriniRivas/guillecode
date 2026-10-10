@@ -6,6 +6,7 @@ import { basename } from "../lib/paths"
 import { bindAgentProject, loadAgentMeta, startEventStream, useAgent } from "../state/agent"
 import { AccountsEditor } from "../editor/AccountsEditor"
 import { initAttention } from "../state/attention"
+import { initApprovals } from "../state/approvals"
 import { initUnseen } from "../state/unseen"
 import { startUsagePolling } from "../state/usage"
 import { startRoutines } from "../state/routines"
@@ -30,6 +31,7 @@ import { ScmView } from "../views/ScmView"
 import { AgentsView } from "../views/AgentsView"
 import { PullRequestsView } from "../views/PullRequestsView"
 import { RoutinesView } from "../views/RoutinesView"
+import { MemoryView } from "../views/MemoryView"
 import { Sash } from "../components/Sash"
 import { QuickInput } from "../components/QuickInput"
 import { ContextMenuHost } from "../components/ContextMenu"
@@ -48,6 +50,7 @@ const VIEW_COMPONENTS: Record<ViewId, () => React.ReactElement> = {
   agents: AgentsView,
   prs: PullRequestsView,
   routines: RoutinesView,
+  memory: MemoryView,
 }
 
 let booted = false
@@ -60,6 +63,7 @@ function boot() {
   useZoom.getState().apply()
   startOutputCapture()
   initAttention()
+  initApprovals()
   initUnseen()
   startUpdates()
   void initProject().then(() => {

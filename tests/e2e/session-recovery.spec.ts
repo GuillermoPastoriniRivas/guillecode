@@ -1,4 +1,6 @@
 import { expect, test, type Page } from "@playwright/test"
+import type { Part } from "@opencode-ai/sdk"
+import { CONTINUE_INTERRUPTED_TURN } from "../../src/lib/autoretry"
 
 const root = "C:/qa/recovery"
 const sessionID = "s-recovery"
@@ -9,11 +11,11 @@ const errorText = "Service Unavailable: upstream connect error or disconnect/res
 function messages(failed = false) {
   return [
     { info: { id: userID, sessionID, role: "user", time: { created: now }, agent: "build", model: { providerID: "openai", modelID: "qa" } },
-      parts: [{ id: "p-user", messageID: userID, sessionID, type: "text", text: "Continuá con el trabajo pendiente" }] },
+      parts: [{ id: "p-user", messageID: userID, sessionID, type: "text", text: "Continuá con el trabajo pendiente" }] as Part[] },
     { info: { id: "m-assistant", sessionID, role: "assistant", parentID: userID, time: { created: now + 1, ...(failed ? { completed: now + 2 } : {}) },
       providerID: "openai", modelID: "qa", agent: "build", mode: "build", path: { cwd: root, root }, cost: 0,
       tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-      ...(failed ? { error: { name: "APIError", data: { message: errorText, statusCode: 503, isRetryable: true } } } : {}) }, parts: [] },
+      ...(failed ? { error: { name: "APIError", data: { message: errorText, statusCode: 503, isRetryable: true } } } : {}) }, parts: [] as Part[] },
   ]
 }
 
@@ -23,6 +25,9 @@ async function setup(page: Page, restart = false) {
     failed: false,
     prompts: [] as { path: string; body: Record<string, unknown> }[],
     created: 0,
+    history: null as ReturnType<typeof messages> | null,
+    reply: "accepted" as "accepted" | "failure" | "success",
+    rejectPrompt: false,
   }
   await page.addInitScript(({ root, sessionID, restart }) => {
     localStorage.setItem(`guillecode:agent.openSessions@${root.toLowerCase()}`, JSON.stringify([sessionID]))
@@ -69,9 +74,21 @@ async function setup(page: Page, restart = false) {
     if (path === "/session" && route.request().method() === "POST") state.created++
     if (path === "/session") return route.fulfill({ json: [{ id: sessionID, title: "Conversación recuperable", directory: root, projectID: "qa", version: "1", time: { created: now, updated: now } }] })
     if (path === "/session/status") return route.fulfill({ json: state.status })
-    if (path === `/session/${sessionID}/message`) return route.fulfill({ json: messages(state.failed) })
+    if (path === `/session/${sessionID}/message`) return route.fulfill({ json: state.history ?? messages(state.failed) })
     if (path === `/session/${sessionID}/prompt_async`) {
-      state.prompts.push({ path, body: route.request().postDataJSON() })
+      const body = route.request().postDataJSON()
+      state.prompts.push({ path, body })
+      if (state.rejectPrompt) return route.fulfill({ status: 502, json: { message: "No se pudo admitir el reintento" } })
+      const next = messages(state.reply === "failure")
+      next[0].info.id = body.messageID
+      next[0].parts = body.parts.map((part: Part, i: number) => ({ ...part, id: `p-${body.messageID}-${i}`, messageID: body.messageID, sessionID }))
+      next[1].info.id = `assistant-${body.messageID}`
+      next[1].info.parentID = body.messageID
+      if (state.reply === "success") {
+        next[1].info.time.completed = Date.now()
+        next[1].parts = [{ type: "text", text: "La respuesta se recuperó", id: "p-recovered", messageID: next[1].info.id, sessionID }]
+      }
+      state.history = [...(state.history ?? messages(state.failed)), ...next]
       return route.fulfill({ status: 204 })
     }
     return route.fulfill({ json: [] })
@@ -98,6 +115,7 @@ test("reconcilia reintentos perdidos y permite reintentar un 503 en la misma con
   await page.locator(".msg-error").getByRole("button", { name: "Reintentar" }).click()
   await expect.poll(() => state.prompts.length).toBe(1)
   expect(state.prompts[0]).toEqual({ path: `/session/${sessionID}/prompt_async`, body: {
+    messageID: expect.stringMatching(/^msg_/),
     model: { providerID: "openai", modelID: "qa" }, agent: "build", parts: [{ type: "text", text: "Continuá con el trabajo pendiente" }],
   } })
   expect(state.created).toBe(0)
@@ -110,14 +128,105 @@ test("reintenta automáticamente un 503 que no ejecutó herramientas", async ({ 
 
   // The session starts as "retry"; make it idle so the automatic retry can fire.
   state.status = {}
+  state.failed = true
   await page.evaluate((sid) => (window as unknown as { __qaPush: (event: unknown) => void }).__qaPush({ type: "session.status", properties: { sessionID: sid, status: { type: "idle" } } }), sessionID)
 
   const failed = messages(true)[1].info
   await page.evaluate((info) => (window as unknown as { __qaPush: (event: unknown) => void }).__qaPush({ type: "message.updated", properties: { info } }), failed)
-
+  await expect(page.locator(".msg-error")).toContainText("Reintento automático pendiente (1/3)")
   await page.clock.fastForward(16_000)
   await expect.poll(() => state.prompts.length).toBe(1)
   expect(state.prompts[0].body.parts).toEqual([{ type: "text", text: "Continuá con el trabajo pendiente" }])
+})
+
+test("recupera un 503 por REST aunque no lleguen los eventos del error ni del reintento", async ({ page }) => {
+  await page.clock.install()
+  const state = await setup(page)
+  await expect(page.locator(".retry-banner")).toContainText("Reintentando (1)")
+  state.status = {}
+  state.failed = true
+  state.reply = "success"
+  await page.clock.fastForward(6000)
+  await expect(page.locator(".msg-error")).toContainText("Reintento automático pendiente (1/3)")
+  await page.clock.fastForward(16000)
+  await expect.poll(() => state.prompts.length).toBe(1)
+  await expect(page.locator(".msg-assistant").last()).toContainText("La respuesta se recuperó")
+  await expect(page.locator(".msg-error").getByRole("button", { name: "Reintentar" })).toHaveCount(0)
+  await expect(page.locator(".msg-error")).not.toContainText("Enviando reintento")
+  expect(state.created).toBe(0)
+})
+
+test("acota a tres los reintentos adicionales aunque cada envío genere un padre nuevo", async ({ page }) => {
+  await page.clock.install()
+  const state = await setup(page)
+  await expect(page.locator(".retry-banner")).toContainText("Reintentando (1)")
+  state.status = {}
+  state.failed = true
+  state.reply = "failure"
+  await page.clock.fastForward(6000)
+  await expect(page.locator(".msg-error")).toContainText("Reintento automático pendiente (1/3)")
+  for (const [attempt, delay] of [16000, 46000, 91000].entries()) {
+    await page.clock.fastForward(delay)
+    await expect.poll(() => state.prompts.length).toBe(attempt + 1)
+    await expect(page.locator(".msg-error").last()).toContainText(attempt < 2 ? `pendiente (${attempt + 2}/3)` : "después de 3 reintentos adicionales")
+  }
+  expect(new Set(state.prompts.map((p) => p.body.messageID)).size).toBe(3)
+  await page.clock.fastForward(180000)
+  expect(state.prompts.length).toBe(3)
+})
+
+test("descarta un reintento pendiente si la conversación avanzó en otra ventana", async ({ page }) => {
+  await page.clock.install()
+  const state = await setup(page)
+  await expect(page.locator(".retry-banner")).toContainText("Reintentando (1)")
+  state.status = {}
+  state.failed = true
+  await page.clock.fastForward(6000)
+  await expect(page.locator(".msg-error")).toContainText("Reintento automático pendiente (1/3)")
+  const nextUser = messages()[0]
+  nextUser.info.id = "user-other-window"
+  state.history = [...messages(true), nextUser]
+  await page.clock.fastForward(16000)
+  await expect(page.locator(".msg-error")).not.toContainText("Reintento automático pendiente")
+  expect(state.prompts.length).toBe(0)
+})
+
+test("verifica herramientas con el historial actual y el reintento manual continúa sin reenviar la tarea", async ({ page }) => {
+  await page.clock.install()
+  const state = await setup(page)
+  await expect(page.locator(".msg-user")).toContainText("Continuá con el trabajo pendiente")
+  state.status = {}
+  state.history = messages(true)
+  const failed = state.history[1]
+  failed.parts = [{ type: "tool", id: "p-edit", messageID: failed.info.id, sessionID, callID: "c-edit", tool: "apply_patch", state: { status: "completed", input: {}, output: "Archivo editado", title: "Edit", metadata: {}, time: { start: now, end: now + 1 } } }]
+  await page.evaluate((info) => (window as unknown as { __qaPush: (event: unknown) => void }).__qaPush({ type: "message.updated", properties: { info } }), failed.info)
+  await page.clock.fastForward(22000)
+  await expect(page.locator(".msg-error")).toContainText(errorText)
+  expect(state.prompts.length).toBe(0)
+  await page.locator(".msg-error").getByRole("button", { name: "Reintentar" }).click()
+  await expect.poll(() => state.prompts.length).toBe(1)
+  expect(state.prompts[0].body.parts).toEqual([{ type: "text", text: CONTINUE_INTERRUPTED_TURN }])
+})
+
+test("permite reintentar cuando el padre salió de la página y muestra los errores de admisión", async ({ page }) => {
+  await page.clock.install()
+  const state = await setup(page)
+  await expect(page.locator(".retry-banner")).toContainText("Reintentando (1)")
+  state.status = {}
+  state.history = [messages(true)[1]]
+  state.rejectPrompt = true
+  await page.clock.fastForward(6000)
+  const retry = page.locator(".msg-error").getByRole("button", { name: "Reintentar" })
+  await expect(retry).toBeVisible()
+  await retry.click()
+  await expect(page.getByText("No se pudo admitir el reintento")).toBeVisible()
+  await expect(retry).toBeEnabled()
+  expect(state.prompts[0].body.parts).toEqual([{ type: "text", text: CONTINUE_INTERRUPTED_TURN }])
+  state.rejectPrompt = false
+  state.reply = "success"
+  await retry.click()
+  await expect(page.locator(".msg-assistant").last()).toContainText("La respuesta se recuperó")
+  expect(state.prompts.length).toBe(2)
 })
 
 test("vuelve a resolver el motor y recupera la pestaña cuando cambia la conexión", async ({ page }) => {

@@ -26,6 +26,7 @@ pub mod stream;
 
 const ACTIVITY_MAX: usize = 80;
 const SKILL: &str = include_str!("skill.md");
+const AGENT_POLICY: &str = include_str!("../agent_policy.js");
 
 const DEFAULT_BLOCKED: &[&str] = &[
     "cmd.exe",
@@ -173,6 +174,7 @@ fn write_skill(app: &AppHandle, subagent: bool) -> Option<PathBuf> {
     std::fs::write(root.join("routines.md"), routines::INSTRUCTIONS).ok()?;
     std::fs::write(root.join("terminal.md"), terminal::INSTRUCTIONS).ok()?;
     std::fs::write(root.join("worktrees.md"), worktrees::INSTRUCTIONS).ok()?;
+    std::fs::write(root.join("guillecode-policy.js"), AGENT_POLICY).ok()?;
     Some(root)
 }
 
@@ -251,6 +253,7 @@ fn agent_config(state: &DesktopState) -> Value {
     if let Some(dir) = &state.skills {
         config["skills"] = json!({ "paths": [dir.to_string_lossy()] });
         config["instructions"] = json!([dir.join("routines.md").to_string_lossy(), dir.join("terminal.md").to_string_lossy(), dir.join("worktrees.md").to_string_lossy()]);
+        config["plugin"] = json!([format!("file://{}", dir.join("guillecode-policy.js").to_string_lossy().replace('\\', "/"))]);
     }
     config
 }

@@ -18,7 +18,9 @@ import {
   unrevertSession,
   useAgent,
   type ChatMessage,
+  type ProviderRetry,
 } from "../state/agent"
+import { AUTO_RETRY_MAX, latestFailedAssistant } from "../lib/autoretry"
 import { openFile } from "../state/editors"
 import { useProject } from "../state/project"
 import { notify } from "../state/toasts"
@@ -171,7 +173,7 @@ const PartView = memo(function PartView({ part, live }: { part: Part; live: bool
   }
 })
 
-function AssistantFooter({ message, onRetry, retrying }: { message: ChatMessage; onRetry?: () => void; retrying?: boolean }) {
+function AssistantFooter({ message, onRetry, retrying, recovery }: { message: ChatMessage; onRetry?: () => void; retrying?: boolean; recovery?: ProviderRetry }) {
   const info = message.info
   if (info.role !== "assistant") return null
   const tokens = info.tokens
@@ -182,7 +184,13 @@ function AssistantFooter({ message, onRetry, retrying }: { message: ChatMessage;
     <>
       {error && error.name !== "MessageAbortedError" && (
         <div className="msg-error">
-          <Icon name="error" /> {error.data?.message ?? error.name}
+          <Icon name="error" />
+          <span>
+            {error.data?.message ?? error.name}
+            {recovery && <><br />{recovery.phase === "exhausted"
+              ? `El proveedor sigue sin responder después de ${AUTO_RETRY_MAX} reintentos adicionales.`
+              : `${recovery.phase === "waiting" ? "Reintento automático pendiente" : "Enviando reintento automático"} (${recovery.attempt}/${AUTO_RETRY_MAX}).`}</>}
+          </span>
           {onRetry && (
             <button type="button" className="msg-retry" onClick={onRetry} disabled={retrying}>
               <Icon name={retrying ? "loading" : "refresh"} spin={retrying} /> Reintentar
@@ -265,6 +273,8 @@ function userMenu(session: Session, message: ChatMessage, e: React.MouseEvent) {
 export function Chat({ session, busy }: { session: Session; busy: boolean }) {
   const view = useAgent((s) => s.views[session.id])
   const messages = useMemo(() => view?.messages ?? [], [view])
+  const recovery = useAgent((s) => s.providerRetries[session.id])
+  const failedID = latestFailedAssistant(messages)?.info.id
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const stick = useRef(true)
@@ -275,19 +285,11 @@ export function Chat({ session, busy }: { session: Session; busy: boolean }) {
   const [retrying, setRetrying] = useState<string | null>(null)
   const revert = (session as Session & { revert?: { messageID: string } }).revert
 
-  const userById = useMemo(() => {
-    const map = new Map<string, ChatMessage>()
-    for (const m of messages) if (m.info.role === "user") map.set(m.info.id, m)
-    return map
-  }, [messages])
-
   const retry = (message: ChatMessage) => {
     if (message.info.role !== "assistant" || retrying) return
-    const parent = userById.get(message.info.parentID)
-    if (!parent) return
     setRetrying(message.info.id)
     cancelAutoRetry(session.id)
-    retryMessage(session.id, parent)
+    retryMessage(session.id, message)
       .catch((err) => notify.error("No se pudo reintentar", err instanceof Error ? err.message : String(err)))
       .finally(() => setRetrying(null))
   }
@@ -475,8 +477,9 @@ export function Chat({ session, busy }: { session: Session; busy: boolean }) {
                     </div>
                     <AssistantFooter
                       message={m}
-                      onRetry={!busy && m.info.role === "assistant" && userById.has(m.info.parentID) ? () => retry(m) : undefined}
+                      onRetry={!busy && m.info.id === failedID ? () => retry(m) : undefined}
                       retrying={retrying === m.info.id}
+                      recovery={recovery?.messageID === m.info.id ? recovery : undefined}
                     />
                   </div>
                 )}

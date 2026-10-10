@@ -1,5 +1,6 @@
 import { registerCommands, type Command } from "./registry"
 import { useLayout } from "../state/layout"
+import { openMemory } from "../state/memory"
 import { showQuickOpen } from "../state/quickinput"
 import {
   openInNewWindow,
@@ -400,7 +401,7 @@ export function registerBuiltinCommands(): void {
       title: "Memoria (el agente recuerda el proyecto y las conversaciones)",
       category: "GuilleCode",
       icon: "library",
-      run: () => openEditor({ kind: "memory" }),
+      run: () => openMemory(),
     },
     {
       id: "accounts.chatgpt",

@@ -10,6 +10,7 @@ import {
   useAgent,
 } from "../state/agent"
 import { notify } from "../state/toasts"
+import { setAutoApprove, useApprovals } from "../state/approvals"
 import { percent } from "../lib/format"
 import { useLayout } from "../state/layout"
 import { useProject } from "../state/project"
@@ -36,6 +37,8 @@ export function SessionPane({ sessionId, variant }: { sessionId: string | null; 
   const retry = useAgent((s) => (sessionId ? s.statuses[sessionId] : undefined))
   const permissions = useAgent((s) => s.permissions)
   const questions = useAgent((s) => s.questions)
+  const autoApprove = useApprovals((s) => s.autoApprove)
+  const approvalFailed = useApprovals((s) => s.failed)
   const todos = useAgent((s) => (sessionId ? s.todos[sessionId] : undefined))
   const sessions = useAgent((s) => s.sessions)
   const root = useProject((s) => s.root)
@@ -127,9 +130,11 @@ export function SessionPane({ sessionId, variant }: { sessionId: string | null; 
         {mine.questions.map((q) => (
           <QuestionCard key={q.id} request={q} />
         ))}
-        {mine.permissions.map((p) => (
-          <PermissionCard key={p.id} request={p} />
-        ))}
+        {mine.permissions
+          .filter((p) => !autoApprove || approvalFailed.includes(p.id))
+          .map((p) => (
+            <PermissionCard key={p.id} request={p} />
+          ))}
         {todos && todos.length > 0 && <TodoList key={`${sessionId}-${busy}`} todos={todos} live={busy} />}
         {session && changes.files > 0 && (
           <ChangesBar sessionId={session.id} files={changes.files} additions={changes.additions} deletions={changes.deletions} />
@@ -171,6 +176,7 @@ export function AgentPanel() {
   const activeId = useAgent((s) => s.activeSessionId)
   const connected = useAgent((s) => s.connected)
   const busyCount = useAgent((s) => Object.values(s.statuses).filter((x) => x.type === "busy").length)
+  const autoApprove = useApprovals((s) => s.autoApprove)
   const focusChat = useLayout((s) => s.focusChat)
 
   useEffect(() => {
@@ -187,6 +193,16 @@ export function AgentPanel() {
               <Icon name="loading" spin /> {busyCount}
             </span>
           )}
+          <IconButton
+            icon="shield"
+            title={
+              autoApprove
+                ? "Aprobación automática activada: el agente no te pide permiso (clic para desactivar)"
+                : "Aprobación automática desactivada: el agente te pide permiso (clic para activar)"
+            }
+            active={autoApprove}
+            onClick={() => void setAutoApprove(!autoApprove)}
+          />
           <IconButton icon="add" title="Nueva sesión (Ctrl+Alt+N)" onClick={() => newSession()} />
           <IconButton icon="history" title="Historial de sesiones" onClick={() => useLayout.getState().showView("agents", false)} />
           <IconButton

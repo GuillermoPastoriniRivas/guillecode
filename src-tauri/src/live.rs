@@ -7,7 +7,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::Mutex;
 use std::time::Duration;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tiny_http::Request;
 
 const HEARTBEAT: Duration = Duration::from_secs(15);
@@ -103,6 +103,13 @@ fn session_of(props: &Value) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+fn forward(app: &AppHandle, kind: &str, props: &Value, directory: &str) {
+    track(app, kind, props, directory);
+    let message = json!({ "directory": directory, "type": kind, "properties": props }).to_string();
+    let target = if kind.starts_with("message.") { Some(session_of(props).unwrap_or_default()) } else { None };
+    broadcast(app, target.as_deref(), &message);
+}
+
 fn handle(app: &AppHandle, event: &Value) {
     let payload = &event["payload"];
     let kind = payload["type"].as_str().unwrap_or_default();
@@ -115,10 +122,29 @@ fn handle(app: &AppHandle, event: &Value) {
     if !FORWARDED.contains(&kind) {
         return;
     }
-    track(app, kind, props, &directory);
-    let message = json!({ "directory": directory, "type": kind, "properties": props }).to_string();
-    let target = if kind.starts_with("message.") { Some(session_of(props).unwrap_or_default()) } else { None };
-    broadcast(app, target.as_deref(), &message);
+    if kind == "permission.asked" && crate::approvals::auto_approve(app) {
+        let request_id = props["id"].as_str().unwrap_or_default().to_string();
+        if !request_id.is_empty() {
+            let app = app.clone();
+            let props = props.clone();
+            let directory = directory.clone();
+            std::thread::spawn(move || {
+                if let Err(error) = reply_permission_once(&app, &request_id, &directory) {
+                    log::warn!("[approvals] no se pudo auto-aprobar {}: {}", request_id, error);
+                    let _ = app.emit("approvals://auto-failed", json!({ "id": request_id, "sessionID": props["sessionID"] }));
+                    forward(&app, "permission.asked", &props, &directory);
+                }
+            });
+            return;
+        }
+    }
+    forward(app, kind, props, &directory);
+}
+
+fn reply_permission_once(app: &AppHandle, id: &str, directory: &str) -> Result<(), String> {
+    let server = ensure_server(app)?;
+    Opencode::new(&server, directory).post(&format!("/permission/{}/reply", id), json!({ "reply": "once" }))?;
+    Ok(())
 }
 
 fn track(app: &AppHandle, kind: &str, props: &Value, directory: &str) {
