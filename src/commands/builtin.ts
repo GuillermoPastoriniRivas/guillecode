@@ -1,6 +1,7 @@
 import { registerCommands, type Command } from "./registry"
 import { useLayout } from "../state/layout"
 import { openMemory } from "../state/memory"
+import { openPlane } from "../state/plane"
 import { showQuickOpen } from "../state/quickinput"
 import {
   openInNewWindow,
@@ -402,6 +403,13 @@ export function registerBuiltinCommands(): void {
       category: "GuilleCode",
       icon: "library",
       run: () => openMemory(),
+    },
+    {
+      id: "app.plane",
+      title: "Plano del agente (editar la política y las guías del propio agente)",
+      category: "GuilleCode",
+      icon: "hubot",
+      run: () => openPlane(),
     },
     {
       id: "accounts.chatgpt",

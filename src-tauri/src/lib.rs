@@ -19,6 +19,7 @@ pub mod live;
 pub mod machine;
 pub mod memory;
 pub mod oc;
+pub mod plane;
 pub mod proc;
 pub mod process_tree;
 pub mod push;
@@ -76,6 +77,26 @@ pub fn ensure_server(app: &tauri::AppHandle) -> Result<ServerConfig, String> {
     };
     config.worktree = current_project(app);
     Ok(config)
+}
+
+/// Reinicia el motor para que tome el plano/config nuevos (política, guías de
+/// canales, config). El frontend reconecta solo cuando el sidecar cambia de
+/// puerto: `startEventStream` llama `resetConnection()` y resuelve `server_config`.
+#[tauri::command]
+async fn reload_engine(app: tauri::AppHandle) -> Result<(), String> {
+    let state = app.state::<ServerState>();
+    let old = {
+        // Mismo orden de locks que `spawn_server` y el handler de terminación.
+        let mut config = state.config.lock().unwrap();
+        let mut child = state.child.lock().unwrap();
+        let old = child.take();
+        *config = None;
+        old
+    };
+    if let Some(child) = old {
+        child.kill();
+    }
+    Ok(())
 }
 
 fn current_project(app: &tauri::AppHandle) -> String {
@@ -417,6 +438,11 @@ pub fn run() {
             memory::memory_search_cmd,
             memory::memory_set_session,
             memory::memory_session_enabled,
+            plane::plane_list,
+            plane::plane_read,
+            plane::plane_write,
+            plane::plane_reset,
+            reload_engine,
             windows::window_new,
             windows::windows_list,
             windows::window_focus,

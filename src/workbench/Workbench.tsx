@@ -32,6 +32,7 @@ import { AgentsView } from "../views/AgentsView"
 import { PullRequestsView } from "../views/PullRequestsView"
 import { RoutinesView } from "../views/RoutinesView"
 import { MemoryView } from "../views/MemoryView"
+import { PlaneView } from "../views/PlaneView"
 import { Sash } from "../components/Sash"
 import { QuickInput } from "../components/QuickInput"
 import { ContextMenuHost } from "../components/ContextMenu"
@@ -51,6 +52,7 @@ const VIEW_COMPONENTS: Record<ViewId, () => React.ReactElement> = {
   prs: PullRequestsView,
   routines: RoutinesView,
   memory: MemoryView,
+  plane: PlaneView,
 }
 
 let booted = false

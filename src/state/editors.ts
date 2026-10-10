@@ -18,6 +18,7 @@ export type EditorInput =
   | { kind: "remote" }
   | { kind: "desktop" }
   | { kind: "memory" }
+  | { kind: "plane" }
   | { kind: "accounts" }
   | { kind: "featureCreate"; repo?: string }
   | { kind: "featureIntegrate"; path: string }
@@ -70,6 +71,8 @@ export function tabId(input: EditorInput): string {
       return "desktop"
     case "memory":
       return "memory"
+    case "plane":
+      return "plane"
     case "accounts":
       return "accounts"
     case "aiReview":
@@ -111,6 +114,8 @@ export function inputTitle(input: EditorInput): string {
       return "Control de la PC"
     case "memory":
       return "Memoria"
+    case "plane":
+      return "Plano del agente"
     case "accounts":
       return "Cuentas de IA"
     case "aiReview":

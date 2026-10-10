@@ -10,9 +10,9 @@ use tauri::{AppHandle, Emitter, Manager};
 
 pub mod browser;
 mod mcp;
-mod routines;
+pub(crate) mod routines;
 pub(crate) mod terminal;
-mod worktrees;
+pub(crate) mod worktrees;
 #[cfg(windows)]
 mod ocr;
 #[cfg(windows)]
@@ -26,7 +26,7 @@ pub mod stream;
 
 const ACTIVITY_MAX: usize = 80;
 const SKILL: &str = include_str!("skill.md");
-const AGENT_POLICY: &str = include_str!("../agent_policy.js");
+pub(crate) const AGENT_POLICY: &str = include_str!("../agent_policy.js");
 
 const DEFAULT_BLOCKED: &[&str] = &[
     "cmd.exe",
@@ -60,10 +60,11 @@ pub enum Channel {
     Terminal,
     Worktrees,
     Memory,
+    Plane,
 }
 
 impl Channel {
-    fn name(&self) -> &'static str {
+    pub(crate) fn name(&self) -> &'static str {
         match self {
             Channel::Desktop => "desktop",
             Channel::Browser => "browser",
@@ -71,6 +72,7 @@ impl Channel {
             Channel::Terminal => "terminal",
             Channel::Worktrees => "worktrees",
             Channel::Memory => "memory",
+            Channel::Plane => "self",
         }
     }
 }
@@ -112,6 +114,7 @@ pub struct DesktopState {
     token: String,
     activity: Mutex<VecDeque<Activity>>,
     skills: Option<PathBuf>,
+    plane: Option<PathBuf>,
     browser_injected: bool,
     subagent: bool,
 }
@@ -171,10 +174,6 @@ fn write_skill(app: &AppHandle, subagent: bool) -> Option<PathBuf> {
         std::fs::create_dir_all(&dir).ok()?;
         std::fs::write(dir.join("SKILL.md"), SKILL).ok()?;
     }
-    std::fs::write(root.join("routines.md"), routines::INSTRUCTIONS).ok()?;
-    std::fs::write(root.join("terminal.md"), terminal::INSTRUCTIONS).ok()?;
-    std::fs::write(root.join("worktrees.md"), worktrees::INSTRUCTIONS).ok()?;
-    std::fs::write(root.join("guillecode-policy.js"), AGENT_POLICY).ok()?;
     Some(root)
 }
 
@@ -191,11 +190,12 @@ pub fn start(app: &AppHandle) {
     };
     let subagent = config.subagent;
     let skills = write_skill(app, subagent);
+    let plane = Some(crate::plane::seed(app));
     let browser_injected = config.browser;
     if browser_injected {
         browser::prepare(app);
     }
-    app.manage(DesktopState { config: Mutex::new(config), port, token, activity: Mutex::new(VecDeque::new()), skills, browser_injected, subagent });
+    app.manage(DesktopState { config: Mutex::new(config), port, token, activity: Mutex::new(VecDeque::new()), skills, plane, browser_injected, subagent });
 }
 
 const PC_DESCRIPTION: &str = "Maneja la PC del usuario: apps de Windows (Excel, el Explorador de archivos, instaladores, apps de escritorio) y su Chrome con las sesiones iniciadas (Gmail, Meta Business, consolas web). Usalo para cualquier tarea que necesite una interfaz gráfica, ver la pantalla o una web donde el usuario ya inició sesión: vos no tenés esas herramientas. Pasale la tarea completa, con los datos que necesita, y qué tiene que devolverte. Si antes de algo irreversible hace falta que el usuario confirme, te lo devuelve para que le preguntes vos.";
@@ -234,7 +234,7 @@ fn agent_config(state: &DesktopState) -> Value {
             "timeout": timeout,
         })
     };
-    let mut mcp = json!({ "desktop": server("desktop", 120_000), "routines": server("routines", 120_000), "terminal": server("terminal", 660_000), "worktrees": server("worktrees", 120_000), "memory": server("memory", 120_000) });
+    let mut mcp = json!({ "desktop": server("desktop", 120_000), "routines": server("routines", 120_000), "terminal": server("terminal", 660_000), "worktrees": server("worktrees", 120_000), "memory": server("memory", 120_000), "self": server("self", 120_000) });
     if state.browser_injected {
         mcp["browser"] = server("browser", 180_000);
     }
@@ -246,14 +246,17 @@ fn agent_config(state: &DesktopState) -> Value {
                 "mode": "subagent",
                 "description": PC_DESCRIPTION,
                 "prompt": pc_prompt(),
-                "permission": { "desktop_*": "allow", "browser_*": "allow", "task": "deny" },
+                "permission": { "desktop_*": "allow", "browser_*": "allow", "task": "deny", "self_*": "deny" },
             }
         });
     }
     if let Some(dir) = &state.skills {
         config["skills"] = json!({ "paths": [dir.to_string_lossy()] });
-        config["instructions"] = json!([dir.join("routines.md").to_string_lossy(), dir.join("terminal.md").to_string_lossy(), dir.join("worktrees.md").to_string_lossy()]);
-        config["plugin"] = json!([format!("file://{}", dir.join("guillecode-policy.js").to_string_lossy().replace('\\', "/"))]);
+    }
+    if let Some(plane) = &state.plane {
+        let file = |name: &str| plane.join(name).to_string_lossy().to_string();
+        config["instructions"] = json!([file("routines.md"), file("terminal.md"), file("worktrees.md")]);
+        config["plugin"] = json!([format!("file://{}", plane.join("policy.js").to_string_lossy().replace('\\', "/"))]);
     }
     config
 }
@@ -335,6 +338,7 @@ fn instructions(channel: Channel) -> &'static str {
         Channel::Terminal => terminal::INSTRUCTIONS,
         Channel::Worktrees => worktrees::INSTRUCTIONS,
         Channel::Memory => crate::memory::instructions(),
+        Channel::Plane => crate::plane::INSTRUCTIONS,
     }
 }
 
@@ -349,6 +353,7 @@ fn tool_list(channel: Channel) -> Vec<Value> {
         Channel::Terminal => terminal::definitions(),
         Channel::Worktrees => worktrees::definitions(),
         Channel::Memory => crate::memory::tool_list(),
+        Channel::Plane => crate::plane::tool_list(),
     }
 }
 
@@ -367,6 +372,7 @@ fn call_tool(app: &AppHandle, channel: Channel, name: &str, args: &Value) -> Val
         Channel::Terminal => terminal::call(app, name, args),
         Channel::Worktrees => worktrees::call(app, name, args),
         Channel::Memory => crate::memory::call_tool(app, name, args),
+        Channel::Plane => crate::plane::call_tool(app, name, args),
         #[cfg(windows)]
         Channel::Desktop => {
             let r = tools::call(app, name, args);
@@ -569,6 +575,7 @@ mod tests {
             token: "t".into(),
             activity: Mutex::new(VecDeque::new()),
             skills: None,
+            plane: None,
             browser_injected: true,
             subagent,
         }

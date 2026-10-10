@@ -115,6 +115,7 @@ mod tests {
             token: "test-token".into(),
             activity: std::sync::Mutex::new(std::collections::VecDeque::new()),
             skills: Some(std::path::PathBuf::from("skills")),
+            plane: Some(std::path::PathBuf::from("plane")),
             browser_injected: false,
             subagent: false,
         };

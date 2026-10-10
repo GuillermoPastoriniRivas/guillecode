@@ -35,6 +35,7 @@ import { RoutineEditor } from "./RoutineEditor"
 import { RemoteEditor } from "./RemoteEditor"
 import { DesktopEditor } from "./DesktopEditor"
 import { MemoryEditor } from "./MemoryEditor"
+import { PlaneEditor } from "./PlaneEditor"
 import { AccountsEditor } from "./AccountsEditor"
 import { FeatureCreateEditor, FeatureIntegrateEditor } from "./FeatureEditor"
 import { SessionPane } from "../agent/AgentPanel"
@@ -71,6 +72,8 @@ function tabIcon(input: EditorInput) {
       return <Icon name="vm" className="tab-icon" />
     case "memory":
       return <Icon name="library" className="tab-icon" />
+    case "plane":
+      return <Icon name="hubot" className="tab-icon" />
     case "accounts":
       return <Icon name="account" className="tab-icon" />
     case "featureCreate":
@@ -309,6 +312,8 @@ function EditorContent({ tab }: { tab: Tab }) {
       return <AiReviewEditor key={tab.id} input={input} />
     case "memory":
       return <MemoryEditor key={tab.id} />
+    case "plane":
+      return <PlaneEditor key={tab.id} />
     case "routine":
       return <RoutineEditor key={tab.id} id={input.id} />
     case "remote":
