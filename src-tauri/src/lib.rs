@@ -24,6 +24,7 @@ pub mod proc;
 pub mod process_tree;
 pub mod push;
 pub mod remote;
+mod responses;
 pub mod routines;
 pub mod search;
 pub mod term;
@@ -153,16 +154,15 @@ fn spawn_server(app: &tauri::AppHandle, state: &ServerState, worktree: &str) -> 
         .map_err(|e| format!("no hay puertos libres: {}", e))?;
     let password = uuid::Uuid::new_v4().simple().to_string();
     let sidecar = resolve_sidecar_path()?;
-    let mut command = app
+    let config = responses::configure(app, desktop::opencode_config(app))?;
+    let command = app
         .shell()
         .command(sidecar.to_string_lossy().into_owned())
         .args(["serve", "--port", &port.to_string()])
         .current_dir(worktree)
         .env("OPENCODE_SERVER_USERNAME", "opencode")
-        .env("OPENCODE_SERVER_PASSWORD", &password);
-    if let Some(extra) = desktop::opencode_config(app) {
-        command = command.env("OPENCODE_CONFIG_CONTENT", extra);
-    }
+        .env("OPENCODE_SERVER_PASSWORD", &password)
+        .env("OPENCODE_CONFIG_CONTENT", config);
     let (mut rx, child) = command
         .spawn()
         .map_err(|e| format!("no se pudo iniciar opencode: {}", e))?;

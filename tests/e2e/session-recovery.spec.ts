@@ -28,6 +28,9 @@ async function setup(page: Page, restart = false) {
     history: null as ReturnType<typeof messages> | null,
     reply: "accepted" as "accepted" | "failure" | "success",
     rejectPrompt: false,
+    historyStatus: 200,
+    reads: 0,
+    readGate: null as Promise<void> | null,
   }
   await page.addInitScript(({ root, sessionID, restart }) => {
     localStorage.setItem(`guillecode:agent.openSessions@${root.toLowerCase()}`, JSON.stringify([sessionID]))
@@ -67,23 +70,34 @@ async function setup(page: Page, restart = false) {
       return originalFetch(input, init)
     }
   }, { root, sessionID, restart })
-  await page.route(/\/(?:old-oc|test-oc)\//, (route) => {
+  await page.route(/\/(?:old-oc|test-oc)\//, async (route) => {
     const path = new URL(route.request().url()).pathname.replace(/^\/(old-oc|test-oc)/, "")
     if (path === "/global/event") return route.fulfill({ status: 503, body: "engine restarted" })
-    if (path === "/config/providers") return route.fulfill({ json: { providers: [{ id: "openai", name: "ChatGPT", source: "api", options: { apiKey: "test" }, models: { qa: { id: "qa", name: "Modelo QA" } } }] } })
+    if (path === "/config/providers") return route.fulfill({ json: { providers: [{ id: "openai", name: "ChatGPT", source: "api", options: { apiKey: "test" }, models: { qa: { id: "qa", name: "Modelo QA" }, other: { id: "other", name: "Otro modelo" } } }] } })
+    if (path === "/agent") return route.fulfill({ json: [{ name: "build", mode: "primary" }, { name: "plan", mode: "primary" }] })
     if (path === "/session" && route.request().method() === "POST") state.created++
     if (path === "/session") return route.fulfill({ json: [{ id: sessionID, title: "Conversación recuperable", directory: root, projectID: "qa", version: "1", time: { created: now, updated: now } }] })
     if (path === "/session/status") return route.fulfill({ json: state.status })
-    if (path === `/session/${sessionID}/message`) return route.fulfill({ json: state.history ?? messages(state.failed) })
+    if (path === `/session/${sessionID}/message`) {
+      state.reads++
+      const snapshot = structuredClone(state.history ?? messages(state.failed))
+      const gate = state.readGate
+      state.readGate = null
+      if (gate) await gate
+      if (state.historyStatus !== 200) return route.fulfill({ status: state.historyStatus, json: { message: "Historial temporalmente no disponible" } })
+      return route.fulfill({ json: snapshot })
+    }
     if (path === `/session/${sessionID}/prompt_async`) {
       const body = route.request().postDataJSON()
       state.prompts.push({ path, body })
       if (state.rejectPrompt) return route.fulfill({ status: 502, json: { message: "No se pudo admitir el reintento" } })
       const next = messages(state.reply === "failure")
       next[0].info.id = body.messageID
+      next[0].info.time.created = Date.now()
       next[0].parts = body.parts.map((part: Part, i: number) => ({ ...part, id: `p-${body.messageID}-${i}`, messageID: body.messageID, sessionID }))
       next[1].info.id = `assistant-${body.messageID}`
       next[1].info.parentID = body.messageID
+      next[1].info.time.created = Date.now() + 1
       if (state.reply === "success") {
         next[1].info.time.completed = Date.now()
         next[1].parts = [{ type: "text", text: "La respuesta se recuperó", id: "p-recovered", messageID: next[1].info.id, sessionID }]
@@ -96,6 +110,109 @@ async function setup(page: Page, restart = false) {
   await page.goto("/")
   return state
 }
+
+test("un 503 de historial conserva mensajes y ofrece recargar", async ({ page }) => {
+  await page.clock.install()
+  const state = await setup(page)
+  await expect(page.locator(".msg-user")).toContainText("Continuá con el trabajo pendiente")
+  await expect(page.locator(".retry-banner")).toContainText("Reintentando (1)")
+  state.historyStatus = 503
+  state.status = {}
+  await page.evaluate((sessionID) => (window as unknown as { __qaPush: (event: unknown) => void }).__qaPush({ type: "session.status", properties: { sessionID, status: { type: "idle" } } }), sessionID)
+  await expect(page.getByRole("alert")).toContainText("Historial temporalmente no disponible")
+  await expect(page.locator(".msg-user")).toContainText("Continuá con el trabajo pendiente")
+  state.historyStatus = 200
+  await page.getByRole("button", { name: "Recargar historial" }).click()
+  await expect(page.getByRole("alert")).toHaveCount(0)
+})
+
+test("REST lento conserva texto SSE nuevo y no resucita mensajes eliminados", async ({ page }) => {
+  const state = await setup(page)
+  await expect(page.locator(".msg-user")).toContainText("Continuá con el trabajo pendiente")
+  await expect(page.locator(".retry-banner")).toContainText("Reintentando (1)")
+  let release!: () => void
+  state.readGate = new Promise((done) => { release = done })
+  const reads = state.reads
+  state.status = {}
+  await page.evaluate((sessionID) => (window as unknown as { __qaPush: (event: unknown) => void }).__qaPush({ type: "session.status", properties: { sessionID, status: { type: "idle" } } }), sessionID)
+  await expect.poll(() => state.reads).toBeGreaterThan(reads)
+  await page.evaluate(({ sessionID, now }) => {
+    const push = (window as unknown as { __qaPush: (event: unknown) => void }).__qaPush
+    push({ type: "message.part.updated", properties: { part: { type: "text", id: "p-stream", messageID: "m-assistant", sessionID, text: "Texto SSE nuevo", time: { start: now } } } })
+    push({ type: "message.removed", properties: { sessionID, messageID: "m-user" } })
+  }, { sessionID, now })
+  await expect(page.locator(".msg-assistant")).toContainText("Texto SSE nuevo")
+  state.history = [messages()[1]]
+  state.history[0].parts = [{ type: "text", id: "p-stream", messageID: "m-assistant", sessionID, text: "Texto SSE nuevo", time: { start: now } }]
+  const response = page.waitForResponse((response) => response.url().includes(`/session/${sessionID}/message`))
+  release()
+  await response
+  await page.evaluate(async () => { await new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))) })
+  await expect(page.locator(".msg-assistant")).toContainText("Texto SSE nuevo")
+  await expect(page.locator(".msg-user")).toHaveCount(0)
+})
+
+test("el reintento automático conserva modelo, agente y variante del turno original", async ({ page }) => {
+  await page.clock.install()
+  const state = await setup(page)
+  await expect(page.locator(".retry-banner")).toContainText("Reintentando (1)")
+  state.status = {}
+  state.history = messages(true)
+  Object.assign(state.history[0].info.model, { variant: "high" })
+  await page.clock.fastForward(6000)
+  await expect(page.locator(".msg-error")).toContainText("Reintento automático pendiente (1/3)")
+  await page.getByTitle("Elegir modelo", { exact: true }).click()
+  await page.locator(".quick-row", { hasText: "Otro modelo" }).click()
+  await expect(page.getByTitle("Elegir modelo", { exact: true })).toContainText("Otro modelo")
+  await page.getByTitle("Modo del agente", { exact: true }).click()
+  await expect(page.getByTitle("Modo del agente", { exact: true })).toContainText("plan")
+  await page.clock.fastForward(16000)
+  await expect.poll(() => state.prompts.length).toBe(1)
+  expect(state.prompts[0].body).toMatchObject({ model: { providerID: "openai", modelID: "qa" }, agent: "build", variant: "high" })
+})
+
+test("conserva partes SSE recibidas antes de que REST entregue el mensaje", async ({ page }) => {
+  await page.clock.install()
+  const state = await setup(page)
+  await expect(page.locator(".msg-user")).toContainText("Continuá con el trabajo pendiente")
+  await expect(page.locator(".retry-banner")).toContainText("Reintentando (1)")
+  const newer = messages()[1]
+  newer.info.id = "new-assistant"
+  newer.info.time.created = now + 100
+  newer.parts = [{ type: "text", id: "new-part", messageID: newer.info.id, sessionID, text: "REST anterior" }]
+  state.history = [...messages(), newer]
+  let release!: () => void
+  state.readGate = new Promise((done) => { release = done })
+  const before = state.reads
+  state.status = {}
+  await page.evaluate((sessionID) => (window as unknown as { __qaPush: (event: unknown) => void }).__qaPush({ type: "session.status", properties: { sessionID, status: { type: "idle" } } }), sessionID)
+  await expect.poll(() => state.reads).toBeGreaterThan(before)
+  const part = { ...newer.parts[0], text: "Parte nueva antes del mensaje" }
+  await page.evaluate((part) => (window as unknown as { __qaPush: (event: unknown) => void }).__qaPush({ type: "message.part.updated", properties: { part } }), part)
+  await page.evaluate(async () => { await new Promise<void>((done) => requestAnimationFrame(() => done())) })
+  newer.parts = [part]
+  release()
+  await expect(page.locator(".msg-assistant").last()).toContainText("Parte nueva antes del mensaje")
+})
+
+test("el cierre prematuro muestra texto parcial y el manual continúa desde el historial", async ({ page }) => {
+  await page.clock.install()
+  const state = await setup(page)
+  await expect(page.locator(".msg-user")).toContainText("Continuá con el trabajo pendiente")
+  state.status = {}
+  state.history = messages(true)
+  state.history[1].parts = [{ type: "text", id: "partial", messageID: "m-assistant", sessionID, text: "Respuesta parcial conservada" }]
+  state.history[1].info.error = { name: "UnknownError", data: { message: JSON.stringify({ type: "response.failed", response: { error: { code: "guillecode_interrupted_stream", message: "La respuesta se interrumpió antes de recibir su final" } } }) } } as typeof state.history[1]["info"]["error"]
+  await page.clock.fastForward(6000)
+  await expect(page.locator(".msg-assistant")).toContainText("Respuesta parcial conservada")
+  await expect(page.locator(".msg-error")).toContainText("La respuesta se interrumpió")
+  await expect(page.locator(".msg-error")).not.toContainText("guillecode_interrupted_stream")
+  await page.clock.fastForward(180000)
+  expect(state.prompts).toHaveLength(0)
+  await page.locator(".msg-error").getByRole("button", { name: "Reintentar" }).click()
+  await expect.poll(() => state.prompts.length).toBe(1)
+  expect(state.prompts[0].body.parts).toEqual([{ type: "text", text: CONTINUE_INTERRUPTED_TURN }])
+})
 
 test("reconcilia reintentos perdidos y permite reintentar un 503 en la misma conversación", async ({ page }) => {
   const state = await setup(page)

@@ -66,7 +66,7 @@ function clientFor(directory: string): Promise<OpencodeClient> {
   let found = clients.get(key)
   if (!found) {
     found = connection().then((c) =>
-      createOpencodeClient({ baseUrl: c.baseUrl, headers: c.headers, directory: directory || undefined }),
+      createOpencodeClient({ baseUrl: c.baseUrl, headers: c.headers, directory: directory || undefined, throwOnError: true }),
     )
     clients.set(key, found)
   }

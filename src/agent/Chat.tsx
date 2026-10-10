@@ -8,6 +8,7 @@ import { openImage } from "../state/lightbox"
 import { openContextMenu } from "../components/ContextMenu"
 import {
   cancelAutoRetry,
+  ensureSessionView,
   focusComposer,
   forkSession,
   loadOlderMessages,
@@ -20,7 +21,7 @@ import {
   type ChatMessage,
   type ProviderRetry,
 } from "../state/agent"
-import { AUTO_RETRY_MAX, latestFailedAssistant } from "../lib/autoretry"
+import { AUTO_RETRY_MAX, latestFailedAssistant, providerErrorMessage } from "../lib/autoretry"
 import { openFile } from "../state/editors"
 import { useProject } from "../state/project"
 import { notify } from "../state/toasts"
@@ -186,7 +187,7 @@ function AssistantFooter({ message, onRetry, retrying, recovery }: { message: Ch
         <div className="msg-error">
           <Icon name="error" />
           <span>
-            {error.data?.message ?? error.name}
+            {providerErrorMessage(error)}
             {recovery && <><br />{recovery.phase === "exhausted"
               ? `El proveedor sigue sin responder después de ${AUTO_RETRY_MAX} reintentos adicionales.`
               : `${recovery.phase === "waiting" ? "Reintento automático pendiente" : "Enviando reintento automático"} (${recovery.attempt}/${AUTO_RETRY_MAX}).`}</>}
@@ -197,6 +198,9 @@ function AssistantFooter({ message, onRetry, retrying, recovery }: { message: Ch
             </button>
           )}
         </div>
+      )}
+      {!error && info.finish === "length" && (
+        <div className="msg-error" role="status"><Icon name="warning" /><span>La respuesta alcanzó el límite de salida y quedó incompleta. Podés pedirle que continúe.</span></div>
       )}
       {error?.name === "MessageAbortedError" && (
         <div className="msg-aborted">
@@ -405,6 +409,13 @@ export function Chat({ session, busy }: { session: Session; busy: boolean }) {
         </div>
       )}
       <div className="chat-messages" ref={contentRef}>
+        {view.error && (
+          <div className="msg-error" role="alert">
+            <Icon name="warning" />
+            <span>No se pudo actualizar el historial: {view.error}</span>
+            <button type="button" className="btn btn-xs" onClick={() => void ensureSessionView(session.id, true)}>Recargar historial</button>
+          </div>
+        )}
         <div ref={topRef} className="chat-top-sentinel">
           {view.hasMore && <span>cargando historia…</span>}
         </div>

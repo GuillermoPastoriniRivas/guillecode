@@ -21,6 +21,8 @@ import { pipOpen, ScreenPip, setPipOpen } from "./ScreenPip"
 import { QuotaBar, type QuotaBarHandle } from "./Quota"
 import type { Route } from "./Home"
 import { Icon, Md, OfflineBanner, useLive, usePoll } from "./ui"
+import { reconcileHistory } from "../lib/history"
+import { providerErrorMessage } from "../lib/autoretry"
 
 const PAGE = 60
 const STICK_PX = 160
@@ -256,7 +258,8 @@ function MessageView({ message, live }: { message: Message; live: boolean }) {
       <div className="msg-parts">{renderParts(parts, live)}</div>
       <Captures tools={tools} />
       <Files parts={files} />
-      {error && error.name !== "MessageAbortedError" && <div className="alert">{error.data?.message ?? error.name}</div>}
+      {error && error.name !== "MessageAbortedError" && <div className="alert">{providerErrorMessage(error)}</div>}
+      {!error && message.info.finish === "length" && <div className="alert">La respuesta alcanzó el límite de salida y quedó incompleta. Podés pedirle que continúe.</div>}
       {error?.name === "MessageAbortedError" && <small className="muted">Detenido</small>}
     </div>
   )
@@ -376,12 +379,8 @@ export function SessionScreen({ route, back }: { route: Extract<Route, { kind: "
       // A slow refresh must not erase a newer SSE update or an accepted prompt
       // that prompt_async has not persisted yet.
       setMessages((current) => {
-        const latest = new Map(current.map((m) => [m.info.id, m]))
         const changed = (id: string) => (messageRevisions.current.get(id) ?? 0) > started
-        return [
-          ...snapshot.flatMap((m) => changed(m.info.id) ? (latest.has(m.info.id) ? [latest.get(m.info.id)!] : []) : [m]),
-          ...current.filter((m) => !fetched.has(m.info.id) && (changed(m.info.id) || pending.current.has(m.info.id))),
-        ].sort(byTime)
+        return reconcileHistory(snapshot, current, changed, (id) => pending.current.has(id))
       })
       if (statusRevision.current === statusStarted) setBusy(!!status?.[route.id] && status[route.id].type !== "idle")
       setPermissions((perms ?? []).filter((p) => p.sessionID === route.id || ids.has(p.sessionID)))

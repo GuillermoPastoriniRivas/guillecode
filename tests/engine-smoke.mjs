@@ -15,7 +15,7 @@ await new Promise((done) => listener.close(done))
 const env = Object.fromEntries(["PATH", "SystemRoot", "WINDIR", "COMSPEC", "TEMP", "TMP"].filter((key) => process.env[key]).map((key) => [key, process.env[key]]))
 Object.assign(env, { USERPROFILE: root, HOME: root, APPDATA: root, LOCALAPPDATA: root,
   XDG_DATA_HOME: join(root, "data"), XDG_CONFIG_HOME: join(root, "config"), XDG_CACHE_HOME: join(root, "cache"), XDG_STATE_HOME: join(root, "state"),
-  OPENCODE_CONFIG_DIR: join(root, "config"), OPENCODE_CONFIG_CONTENT: '{"enabled_providers":["openai","opencode","opencode-go"]}',
+  OPENCODE_CONFIG_DIR: join(root, "config", "opencode"), OPENCODE_CONFIG_CONTENT: '{"enabled_providers":["openai","opencode","opencode-go"]}',
   OPENCODE_DISABLE_EXTERNAL_SKILLS: "true", OPENCODE_DISABLE_PROJECT_CONFIG: "true", OPENCODE_SERVER_PASSWORD: "test-password",
 })
 await mkdir(env.OPENCODE_CONFIG_DIR, { recursive: true })

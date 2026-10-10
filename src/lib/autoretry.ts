@@ -1,11 +1,42 @@
 import type { Message, Part } from "@opencode-ai/sdk"
 
 export type RetryMessage = { info: Message; parts: Part[] }
+export type RetryContext = { model: { providerID: string; modelID: string }; agent: string; variant?: string; directory: string }
+
+export function retryContext(messages: RetryMessage[], failed: RetryMessage): RetryContext {
+  if (failed.info.role !== "assistant") throw new Error("La respuesta no pertenece al agente.")
+  const parentID = failed.info.parentID
+  const parent = messages.find((message) => message.info.id === parentID)?.info
+  // User metadata is persisted by the engine. Never borrow the picker from
+  // another tab, including when the original parent has left the history page.
+  const original = parent?.role === "user" ? parent : null
+  const variant = (original?.model as { variant?: string } | undefined)?.variant ?? (original as (typeof original & { variant?: string }))?.variant
+  const agent = original?.agent ?? (failed.info as Message & { agent?: string }).agent ?? failed.info.mode
+  if (!agent) throw new Error("No se pudo recuperar el agente original de la respuesta.")
+  return {
+    model: { providerID: original?.model.providerID ?? failed.info.providerID, modelID: original?.model.modelID ?? failed.info.modelID },
+    agent, ...(variant ? { variant } : {}), directory: failed.info.path.cwd,
+  }
+}
 
 export type RetryPromptPart = { type: "text"; text: string } | { type: "file"; mime: string; url: string; filename: string }
 export const CONTINUE_INTERRUPTED_TURN = "La respuesta anterior se interrumpió. Continuá con el trabajo pendiente desde el último paso completado, usando el historial y los resultados de las herramientas. No reinicies la tarea ni repitas acciones que ya se completaron."
 
 export const AUTO_RETRY_MAX = 3
+
+function interruptedStream(error: unknown): string | null {
+  if (!error || typeof error !== "object") return null
+  const message = (error as { data?: { message?: string } }).data?.message
+  if (!message) return null
+  try {
+    const event = JSON.parse(message)
+    return event?.response?.error?.code === "guillecode_interrupted_stream" ? event.response.error.message : null
+  } catch { return null }
+}
+
+export function providerErrorMessage(error: { name?: string; data?: { message?: string } }): string | undefined {
+  return interruptedStream(error) ?? error.data?.message ?? error.name
+}
 
 // The engine already retries a provider call five times. These delays are extra
 // breathing room after it gives up, so a transient 503 has time to clear.
@@ -45,6 +76,8 @@ export function latestFailedAssistant(messages: RetryMessage[]): RetryMessage | 
 }
 
 export function retryPromptParts(messages: RetryMessage[], parentID: string): RetryPromptPart[] {
+  const last = messages.at(-1)?.info
+  if (last?.role === "assistant" && interruptedStream(last.error)) return [{ type: "text", text: CONTINUE_INTERRUPTED_TURN }]
   const parent = messages.find((message) => message.info.id === parentID)
   const parts: RetryPromptPart[] = []
   if (parent && shouldAutoRetry(messages, parentID)) {

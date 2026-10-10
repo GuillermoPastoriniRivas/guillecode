@@ -92,7 +92,7 @@ async function connect() {
 
 const env = { ...process.env, USERPROFILE: profile, HOME: profile, APPDATA: profile, LOCALAPPDATA: profile,
   XDG_DATA_HOME: join(profile, "data"), XDG_CONFIG_HOME: join(profile, "config"), XDG_CACHE_HOME: join(profile, "cache"), XDG_STATE_HOME: join(profile, "state"),
-  OPENCODE_CONFIG_DIR: join(profile, "config"), OPENCODE_DISABLE_EXTERNAL_SKILLS: "true", OPENCODE_DISABLE_PROJECT_CONFIG: "true",
+  OPENCODE_CONFIG_DIR: join(profile, "config", "opencode"), OPENCODE_DISABLE_EXTERNAL_SKILLS: "true", OPENCODE_DISABLE_PROJECT_CONFIG: "true",
   WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${cdpPort}`, WEBVIEW2_USER_DATA_FOLDER: join(profile, "webview"),
 }
 // Do not inherit any provider/API credentials into the isolated engine.

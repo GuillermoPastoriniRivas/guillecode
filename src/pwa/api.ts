@@ -28,6 +28,7 @@ export type MessageInfo = {
   model?: ModelRef
   providerID?: string
   modelID?: string
+  finish?: string
   time: { created: number; completed?: number }
   error?: { name?: string; data?: { message?: string } }
 }

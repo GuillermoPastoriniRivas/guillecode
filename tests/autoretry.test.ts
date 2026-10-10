@@ -7,6 +7,8 @@ import {
   lastVisibleUserMessage,
   latestFailedAssistant,
   retryPromptParts,
+  retryContext,
+  providerErrorMessage,
   CONTINUE_INTERRUPTED_TURN,
   shouldAutoRetry,
   turnExecutedTools,
@@ -16,6 +18,16 @@ const user = (id, parts) => ({ info: { id, role: "user" }, parts })
 const assistant = (id, parentID, parts = []) => ({ info: { id, role: "assistant", parentID, time: {} }, parts })
 const text = (value, synthetic = false) => ({ type: "text", text: value, synthetic })
 const tool = () => ({ type: "tool" })
+
+test("recupera modelo, agente, variante y directorio del turno, incluso sin padre visible", () => {
+  const parent = user("u1", [text("trabajo")])
+  Object.assign(parent.info, { agent: "build", model: { providerID: "openai", modelID: "original", variant: "high" } })
+  const failed = assistant("a1", "u1")
+  Object.assign(failed.info, { providerID: "openai", modelID: "original", agent: "build", mode: "build", path: { cwd: "C:/qa/turn" } })
+  const model = { providerID: "openai", modelID: "original" }
+  assert.deepEqual(retryContext([parent, failed], failed), { model, agent: "build", variant: "high", directory: "C:/qa/turn" })
+  assert.deepEqual(retryContext([failed], failed), { model, agent: "build", directory: "C:/qa/turn" })
+})
 
 test("reconoce solo el error de proveedor reintentable", () => {
   assert.equal(isRetryableProviderError({ name: "APIError", data: { isRetryable: true } }), true)
@@ -73,4 +85,13 @@ test("reintento manual continúa el trabajo si hubo herramientas o falta el padr
   assert.deepEqual(retryPromptParts([...clean, assistant("a2", "u1", [tool()])], "u1"), continuation)
   assert.deepEqual(retryPromptParts([assistant("a1", "u1")], "u1"), continuation)
   assert.deepEqual(retryPromptParts([user("ctx", [text("# Memoria fluws", true)]), assistant("a1", "ctx")], "ctx"), continuation)
+})
+
+test("un stream interrumpido muestra el error legible y continúa sin repetir la tarea", () => {
+  const error = { name: "UnknownError", data: { message: JSON.stringify({ type: "response.failed", response: { error: { code: "guillecode_interrupted_stream", message: "Se interrumpió la respuesta" } } }) } }
+  const failed = assistant("a1", "u1")
+  Object.assign(failed.info, { error })
+  assert.equal(providerErrorMessage(error), "Se interrumpió la respuesta")
+  assert.deepEqual(retryPromptParts([user("u1", [text("tarea original")]), failed], "u1"), [{ type: "text", text: CONTINUE_INTERRUPTED_TURN }])
+  assert.equal(isRetryableProviderError(error), false)
 })

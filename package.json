@@ -1,7 +1,7 @@
 {
   "name": "guillecode",
   "private": true,
-  "version": "0.9.0",
+  "version": "0.10.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,7 +9,7 @@
     "lint": "oxlint",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "test:e2e": "playwright test",
-    "test:engine": "node --experimental-strip-types tests/engine-smoke.mjs",
+    "test:engine": "node --experimental-strip-types tests/engine-smoke.mjs && node tests/responses-engine.mjs",
     "test:fleet": "node tests/fleet-smoke.mjs",
     "test:upgrade": "node tests/windows-upgrade.mjs",
     "preview": "vite preview",
