@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import {
   abortSession,
   addContext,
+  BUBBLE_AGENT,
   currentModelInfo,
   DRAFT_TAB,
   findCommand,
@@ -28,6 +29,7 @@ import { notify } from "../state/toasts"
 import { rankFuzzy } from "../lib/fuzzy"
 import { basename, joinPath, relativePath } from "../lib/paths"
 import { modelKey } from "../lib/opencode"
+import { isBubbleWindow } from "../lib/windows"
 import { formatTokens, percent } from "../lib/format"
 import { FileIcon, Highlighted, Icon, Kbd } from "../components/ui"
 import { openImage } from "../state/lightbox"
@@ -143,6 +145,8 @@ export function Composer({
   const modelVariants = useAgent((s) => currentModelInfo(s)?.variants)
   const agentName = useAgent((s) => s.agentName)
   const agents = useAgent((s) => s.agents)
+  const isBubble = isBubbleWindow()
+  const shownAgent = isBubble ? BUBBLE_AGENT : agentName
   const commands = useAgent((s) => s.commands)
   const composerFocus = useAgent((s) => s.composerFocus)
   const draft = useAgent((s) => s.draft)
@@ -337,6 +341,7 @@ export function Composer({
   }
 
   const chooseAgent = async () => {
+    if (isBubble) return
     if (agents.length === 0) return
     if (agents.length === 2) {
       const other = agents.find((a) => a.name !== agentName)
@@ -508,9 +513,9 @@ export function Composer({
       />
       <div className="composer-footer">
         <div className="composer-options">
-          <button type="button" className="composer-pill agent-pill" onClick={() => void chooseAgent()} title="Modo del agente">
-            <Icon name={agentName === "plan" ? "checklist" : "hubot"} />
-            <span>{agentName}</span>
+          <button type="button" className="composer-pill agent-pill" onClick={() => void chooseAgent()} title={isBubble ? "La burbuja maneja la PC" : "Modo del agente"}>
+            <Icon name={shownAgent === "plan" ? "checklist" : "hubot"} />
+            <span>{shownAgent}</span>
           </button>
           <button type="button" className="composer-pill" onClick={() => void chooseModel()} title="Elegir modelo">
             <Icon name="sparkle" />

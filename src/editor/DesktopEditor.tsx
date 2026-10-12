@@ -193,8 +193,6 @@ export function DesktopEditor() {
           <span className="desktop-note">Sin extensión ni token. Se usa el perfil elegido por Chrome; si tenés varios, comprobá que sea el correcto. El control de escritorio queda disponible para la barra, los menús y los diálogos nativos.</span>
           <Toggle checked={status.browser} onChange={(v) => void run(() => update({ browser: v }), "No se pudo cambiar")} label="Ofrecerle al agente las herramientas del navegador" />
           {status.browser !== status.browserActive && <span className="desktop-note">Se aplica cuando reinicies GuilleCode.</span>}
-          <Toggle checked={status.subagent} onChange={(v) => void run(() => update({ subagent: v }), "No se pudo cambiar")} label="Delegar el manejo de la PC en un subagente (recomendado: las conversaciones de código no cargan estas herramientas)" />
-          {status.subagent !== status.subagentActive && <span className="desktop-note">Se aplica cuando reinicies GuilleCode.</span>}
         </div>
         <div className="remote-steps">
           <strong>

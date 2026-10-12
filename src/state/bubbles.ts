@@ -1,7 +1,9 @@
 import { emitTo } from "@tauri-apps/api/event"
 import { getCurrentWindow } from "@tauri-apps/api/window"
+import type { Session } from "@opencode-ai/sdk"
 import { isTauri, onWindowEvent } from "../lib/tauri"
 import { windowBubble } from "../lib/windows"
+import { client, rememberSessionDirectory } from "../lib/opencode"
 import { closeSessionTab, ensureSessionView, selectSession, useAgent } from "./agent"
 import { notify } from "./toasts"
 
@@ -18,6 +20,30 @@ export async function bubbleOut(sessionId: string): Promise<void> {
     return
   }
   closeSessionTab(sessionId)
+}
+
+// Saca la conversación todavía "nueva" (sin sesión) como burbuja: crea la sesión
+// y la abre directo ahí, para poder empezar a escribir en la burbuja. La ventana
+// principal queda en una conversación nueva vacía.
+export async function bubbleDraft(): Promise<void> {
+  if (!isTauri) return
+  let created: Session | undefined
+  try {
+    created = (await client.session.create({ body: {} })).data as Session | undefined
+  } catch (e) {
+    notify.error("No se pudo abrir la conversación en una burbuja", e instanceof Error ? e.message : String(e))
+    return
+  }
+  if (!created) {
+    notify.error("No se pudo abrir la conversación en una burbuja", "El motor no devolvió la conversación")
+    return
+  }
+  rememberSessionDirectory(created.id, created.directory)
+  try {
+    await windowBubble(created.id, created.title ?? null)
+  } catch (e) {
+    notify.error("No se pudo sacar el chat como burbuja", e instanceof Error ? e.message : String(e))
+  }
 }
 
 // La burbuja avisa a la ventana de la que salió y se destruye: la conversación

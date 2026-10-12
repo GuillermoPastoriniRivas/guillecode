@@ -84,12 +84,11 @@ pub struct DesktopConfig {
     pub paused: bool,
     pub browser: bool,
     pub blocked: Vec<String>,
-    pub subagent: bool,
 }
 
 impl Default for DesktopConfig {
     fn default() -> Self {
-        DesktopConfig { enabled: false, paused: false, browser: true, blocked: DEFAULT_BLOCKED.iter().map(|s| s.to_string()).collect(), subagent: true }
+        DesktopConfig { enabled: false, paused: false, browser: true, blocked: DEFAULT_BLOCKED.iter().map(|s| s.to_string()).collect() }
     }
 }
 
@@ -113,10 +112,8 @@ pub struct DesktopState {
     port: u16,
     token: String,
     activity: Mutex<VecDeque<Activity>>,
-    skills: Option<PathBuf>,
     plane: Option<PathBuf>,
     browser_injected: bool,
-    subagent: bool,
 }
 
 #[derive(Serialize)]
@@ -126,8 +123,6 @@ pub struct DesktopStatus {
     paused: bool,
     browser: bool,
     browser_active: bool,
-    subagent: bool,
-    subagent_active: bool,
     bridge: browser::BridgeStatus,
     blocked: Vec<String>,
     activity: Vec<Activity>,
@@ -142,7 +137,6 @@ pub struct DesktopPatch {
     paused: Option<bool>,
     browser: Option<bool>,
     blocked: Option<Vec<String>>,
-    subagent: Option<bool>,
 }
 
 static BLOCKED: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -164,19 +158,6 @@ fn set_blocked(list: &[String]) {
     *BLOCKED.lock().unwrap() = list.iter().map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()).collect();
 }
 
-fn write_skill(app: &AppHandle, subagent: bool) -> Option<PathBuf> {
-    let root = app.path().app_data_dir().ok()?.join("skills");
-    let dir = root.join("escritorio");
-    if subagent {
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&root).ok()?;
-    } else {
-        std::fs::create_dir_all(&dir).ok()?;
-        std::fs::write(dir.join("SKILL.md"), SKILL).ok()?;
-    }
-    Some(root)
-}
-
 pub fn start(app: &AppHandle) {
     let config = load(app);
     set_blocked(&config.blocked);
@@ -188,28 +169,25 @@ pub fn start(app: &AppHandle) {
             0
         }
     };
-    let subagent = config.subagent;
-    let skills = write_skill(app, subagent);
     let plane = Some(crate::plane::seed(app));
     let browser_injected = config.browser;
     if browser_injected {
         browser::prepare(app);
     }
-    app.manage(DesktopState { config: Mutex::new(config), port, token, activity: Mutex::new(VecDeque::new()), skills, plane, browser_injected, subagent });
+    app.manage(DesktopState { config: Mutex::new(config), port, token, activity: Mutex::new(VecDeque::new()), plane, browser_injected });
 }
 
-const PC_DESCRIPTION: &str = "Maneja la PC del usuario: apps de Windows (Excel, el Explorador de archivos, instaladores, apps de escritorio) y su Chrome con las sesiones iniciadas (Gmail, Meta Business, consolas web). Usalo para cualquier tarea que necesite una interfaz gráfica, ver la pantalla o una web donde el usuario ya inició sesión: vos no tenés esas herramientas. Pasale la tarea completa, con los datos que necesita, y qué tiene que devolverte. Si antes de algo irreversible hace falta que el usuario confirme, te lo devuelve para que le preguntes vos.";
+const PC_DESCRIPTION: &str = "Control de la PC: apps de Windows (Excel, el Explorador de archivos, instaladores) y tu Chrome con las sesiones iniciadas (Gmail, Meta Business, consolas web). Elegí este modo para tareas que necesiten ver la pantalla o una web donde ya iniciaste sesión.";
 
-const PC_PROMPT: &str = "Sos el subagente de GuilleCode que maneja la PC del usuario. Recibís una tarea del agente principal; el usuario no ve esta conversación ni te puede contestar.
+const PC_PROMPT: &str = "Sos el agente de GuilleCode que maneja la PC del usuario. Tenés el control de la PC: podés usar las apps de Windows y su Chrome real con las sesiones iniciadas, siguiendo la guía de abajo. El usuario ve esta conversación y puede contestarte.
 
-- Hacé la tarea con las herramientas desktop_* y browser_*, siguiendo la guía de abajo.
-- Antes de algo irreversible (enviar, pagar, borrar, publicar, comprar) que la tarea no autorice de forma explícita, no lo hagas: terminá y devolvé qué falta confirmar y qué vas a hacer, para que el agente principal le pregunte al usuario. Esto reemplaza la regla de la guía sobre la herramienta de preguntas.
-- Si el control está apagado o pausado, o algo falla dos veces de la misma forma, pará y explicá qué viste.
-- Al terminar, respondé con un resumen corto: qué hiciste, cómo quedó la pantalla y los datos que te pidieron. Es lo único que ve el agente principal.
+- Antes de algo irreversible (enviar, pagar, borrar, publicar, comprar) que el usuario no te haya pedido de forma explícita, preguntale antes de hacerlo.
+- Si el control está apagado o pausado, decíselo y pará.
+- Si algo falla dos veces de la misma forma, pará y contale al usuario qué ves.
 
 ";
 
-fn pc_prompt() -> String {
+fn escritorio_prompt() -> String {
     let guide = SKILL.trim_start().strip_prefix("---").and_then(|rest| rest.split_once("---")).map(|(_, body)| body).unwrap_or(SKILL);
     format!("{}{}", PC_PROMPT, guide.trim())
 }
@@ -238,21 +216,21 @@ fn agent_config(state: &DesktopState) -> Value {
     if state.browser_injected {
         mcp["browser"] = server("browser", 180_000);
     }
-    let mut config = json!({ "mcp": mcp });
-    if state.subagent {
-        config["permission"] = json!({ "desktop_*": "deny", "browser_*": "deny" });
-        config["agent"] = json!({
-            "pc": {
-                "mode": "subagent",
+    // Las conversaciones normales no cargan las herramientas de la PC (son muchas
+    // y sus salidas son pesadas): se usan desde el agente «escritorio», que la
+    // burbuja elige solo y que también se puede elegir en el selector del chat.
+    let mut config = json!({
+        "mcp": mcp,
+        "permission": { "desktop_*": "deny", "browser_*": "deny" },
+        "agent": {
+            "escritorio": {
+                "mode": "primary",
                 "description": PC_DESCRIPTION,
-                "prompt": pc_prompt(),
-                "permission": { "desktop_*": "allow", "browser_*": "allow", "task": "deny", "self_*": "deny" },
+                "prompt": escritorio_prompt(),
+                "permission": { "desktop_*": "allow", "browser_*": "allow", "self_*": "deny" },
             }
-        });
-    }
-    if let Some(dir) = &state.skills {
-        config["skills"] = json!({ "paths": [dir.to_string_lossy()] });
-    }
+        },
+    });
     if let Some(plane) = &state.plane {
         let file = |name: &str| plane.join(name).to_string_lossy().to_string();
         config["instructions"] = json!([file("routines.md"), file("terminal.md"), file("worktrees.md")]);
@@ -412,8 +390,6 @@ pub fn status(app: &AppHandle) -> DesktopStatus {
         paused: c.paused,
         browser: c.browser,
         browser_active: state.browser_injected,
-        subagent: c.subagent,
-        subagent_active: state.subagent,
         bridge: browser::status(),
         blocked: c.blocked.clone(),
         activity,
@@ -437,9 +413,6 @@ pub fn apply(app: &AppHandle, patch: DesktopPatch) -> DesktopStatus {
         }
         if let Some(v) = patch.browser {
             c.browser = v;
-        }
-        if let Some(v) = patch.subagent {
-            c.subagent = v;
         }
         if let Some(list) = patch.blocked {
             let mut clean: Vec<String> = list.iter().map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()).collect();
@@ -568,45 +541,38 @@ pub async fn desktop_browser_setup() -> Result<(), String> {
 mod tests {
     use super::*;
 
-    fn state(subagent: bool) -> DesktopState {
+    fn state() -> DesktopState {
         DesktopState {
             config: Mutex::new(DesktopConfig::default()),
             port: 4242,
             token: "t".into(),
             activity: Mutex::new(VecDeque::new()),
-            skills: None,
             plane: None,
             browser_injected: true,
-            subagent,
         }
     }
 
     #[test]
-    fn subagent_gets_the_pc_tools_and_the_rest_do_not() {
-        let config = agent_config(&state(true));
+    fn pc_tools_are_reserved_for_the_escritorio_agent() {
+        let config = agent_config(&state());
         assert_eq!(config["permission"]["desktop_*"], "deny");
         assert_eq!(config["permission"]["browser_*"], "deny");
-        let pc = &config["agent"]["pc"];
-        assert_eq!(pc["mode"], "subagent");
-        assert_eq!(pc["permission"]["desktop_*"], "allow");
-        assert_eq!(pc["permission"]["browser_*"], "allow");
-        let prompt = pc["prompt"].as_str().unwrap();
-        assert!(prompt.starts_with("Sos el subagente"));
+        assert!(config["agent"].get("pc").is_none());
+        let esc = &config["agent"]["escritorio"];
+        assert_eq!(esc["mode"], "primary");
+        assert_eq!(esc["permission"]["desktop_*"], "allow");
+        assert_eq!(esc["permission"]["browser_*"], "allow");
+        let prompt = esc["prompt"].as_str().unwrap();
+        assert!(prompt.starts_with("Sos el agente"));
         assert!(prompt.contains("# Manejar la PC del usuario"));
         assert!(!prompt.contains("name: escritorio"));
         assert!(config["mcp"]["desktop"].is_object());
     }
 
     #[test]
-    fn without_subagent_the_tools_stay_with_every_agent() {
-        let config = agent_config(&state(false));
-        assert!(config.get("permission").is_none());
-        assert!(config.get("agent").is_none());
-    }
-
-    #[test]
-    fn old_configs_turn_the_subagent_on() {
-        let config: DesktopConfig = serde_json::from_str(r#"{"enabled":true,"browser":false}"#).unwrap();
-        assert!(config.subagent);
+    fn old_configs_ignore_the_removed_subagent_flag() {
+        let config: DesktopConfig = serde_json::from_str(r#"{"enabled":true,"browser":false,"subagent":false}"#).unwrap();
+        assert!(config.enabled);
+        assert!(!config.browser);
     }
 }

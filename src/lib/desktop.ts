@@ -20,8 +20,6 @@ export type DesktopStatus = {
   paused: boolean
   browser: boolean
   browserActive: boolean
-  subagent: boolean
-  subagentActive: boolean
   bridge: BridgeStatus
   blocked: string[]
   activity: DesktopActivity[]
@@ -29,7 +27,7 @@ export type DesktopStatus = {
   available: boolean
 }
 
-export type DesktopPatch = Partial<{ enabled: boolean; paused: boolean; browser: boolean; blocked: string[]; subagent: boolean }>
+export type DesktopPatch = Partial<{ enabled: boolean; paused: boolean; browser: boolean; blocked: string[] }>
 
 const ACTIVE_MS = 20000
 

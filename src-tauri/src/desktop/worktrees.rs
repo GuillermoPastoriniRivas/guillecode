@@ -81,10 +81,8 @@ mod tests {
             port: 12345,
             token: "test-token".into(),
             activity: std::sync::Mutex::new(std::collections::VecDeque::new()),
-            skills: Some(std::path::PathBuf::from("skills")),
             plane: Some(std::path::PathBuf::from("plane")),
             browser_injected: false,
-            subagent: true,
         };
         let config = super::super::agent_config(&state);
         assert_eq!(config["mcp"]["worktrees"]["url"], "http://127.0.0.1:12345/mcp/worktrees");

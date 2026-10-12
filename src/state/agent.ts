@@ -21,8 +21,13 @@ import { chooseAvailableModel, hasAccount, modelAvailable, modelVisible } from "
 import { isArchivedSession, sessionTreeIds } from "../lib/sessions"
 import { CONTINUE_INTERRUPTED_TURN, isRetryableProviderError, latestFailedAssistant, retryContext, retryMessageID, retryPromptParts } from "../lib/autoretry"
 import { reconcileHistory } from "../lib/history"
+import { isBubbleWindow } from "../lib/windows"
 
 export type ChatMessage = { info: Message; parts: Part[] }
+
+// El chat flotante (burbuja) trabaja siempre con el agente que maneja la PC: el
+// usuario ve la pantalla y el agente actúa directo, sin delegar en un subagente.
+export const BUBBLE_AGENT = "escritorio"
 
 export type PermissionRequest = {
   id: string
@@ -1118,11 +1123,12 @@ export async function sendPrompt(
   const trimmed = text.trim()
   const command = findCommand(trimmed, s.commands)
   const variant = selectedVariant(s)
+  const agentName = isBubbleWindow() ? BUBBLE_AGENT : s.agentName
   if (command) {
     await api("POST", `/session/${id}/command`, {
       command: command.name,
       arguments: command.args,
-      agent: s.agentName,
+      agent: agentName,
       model: modelKey(s.model),
       ...(variant ? { variant } : {}),
       parts: contextParts.filter((p) => p.type === "file"),
@@ -1134,7 +1140,7 @@ export async function sendPrompt(
     await api("POST", `/session/${id}/prompt_async`, {
       messageID: retryMessageID(),
       model: s.model,
-      agent: s.agentName,
+      agent: agentName,
       ...(variant ? { variant } : {}),
       parts,
     })

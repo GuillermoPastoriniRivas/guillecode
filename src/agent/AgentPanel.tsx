@@ -10,7 +10,7 @@ import {
   useAgent,
 } from "../state/agent"
 import { notify } from "../state/toasts"
-import { bubbleOut } from "../state/bubbles"
+import { bubbleDraft, bubbleOut } from "../state/bubbles"
 import { permissionNeedsResponse, useApprovals } from "../state/approvals"
 import { percent } from "../lib/format"
 import { useLayout } from "../state/layout"
@@ -193,11 +193,17 @@ export function AgentPanel() {
               <Icon name="loading" spin /> {busyCount}
             </span>
           )}
-          {activeId && (
+          {activeId ? (
             <IconButton
               icon="multiple-windows"
               title="Sacar el chat como burbuja flotante"
               onClick={() => void bubbleOut(activeId)}
+            />
+          ) : (
+            <IconButton
+              icon="multiple-windows"
+              title="Abrir una conversación nueva en una burbuja flotante"
+              onClick={() => void bubbleDraft()}
             />
           )}
           <IconButton icon="add" title="Nueva sesión (Ctrl+Alt+N)" onClick={() => newSession()} />
