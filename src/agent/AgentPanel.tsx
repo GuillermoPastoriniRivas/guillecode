@@ -10,6 +10,7 @@ import {
   useAgent,
 } from "../state/agent"
 import { notify } from "../state/toasts"
+import { bubbleOut } from "../state/bubbles"
 import { permissionNeedsResponse, useApprovals } from "../state/approvals"
 import { percent } from "../lib/format"
 import { useLayout } from "../state/layout"
@@ -191,6 +192,13 @@ export function AgentPanel() {
             <span className="agent-busy-count" title="Sesiones trabajando">
               <Icon name="loading" spin /> {busyCount}
             </span>
+          )}
+          {activeId && (
+            <IconButton
+              icon="multiple-windows"
+              title="Sacar el chat como burbuja flotante"
+              onClick={() => void bubbleOut(activeId)}
+            />
           )}
           <IconButton icon="add" title="Nueva sesión (Ctrl+Alt+N)" onClick={() => newSession()} />
           <IconButton icon="history" title="Historial de sesiones" onClick={() => useLayout.getState().showView("agents", false)} />

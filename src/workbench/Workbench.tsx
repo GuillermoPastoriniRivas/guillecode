@@ -20,6 +20,7 @@ import { isTauri, onWindowEvent } from "../lib/tauri"
 import { isMainWindow } from "../lib/windows"
 import { startWindowTitle } from "../state/windowTitle"
 import { closeThisWindow, closeToTray, hideToTray, hubAvailable, listenWindowClose, requestQuit } from "../state/hub"
+import { listenBubbleDock } from "../state/bubbles"
 import { useZoom } from "../state/zoom"
 import { ActivityBar, StatusBar, TitleBar } from "./Chrome"
 import { Panel } from "./Panel"
@@ -92,6 +93,7 @@ function boot() {
       else await requestQuit()
     })
     if (isMainWindow()) onWindowEvent("hub://quit", () => void requestQuit())
+    listenBubbleDock()
     listenWindowClose()
     startWindowTitle()
   }

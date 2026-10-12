@@ -1671,3 +1671,97 @@
 .session-archived-banner span {
   flex: 1;
 }
+
+/* Burbuja flotante de chat: ventana sin bordes y siempre encima. La
+   transparencia del webview deja ver el escritorio en las esquinas redondeadas. */
+html.is-bubble,
+html.is-bubble body,
+html.is-bubble #root {
+  background: transparent;
+}
+.bubble {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-side);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+}
+.bubble-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 6px 0 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-raised);
+  border-radius: 12px 12px 0 0;
+  user-select: none;
+}
+.bubble-head-icon {
+  flex-shrink: 0;
+  font-size: 13px;
+  color: var(--accent-strong);
+}
+.bubble-head-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.bubble-dock {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--fg-dim);
+  background: var(--bg-hover);
+}
+.bubble-dock:hover {
+  background: var(--bg-active);
+  color: var(--fg);
+}
+.bubble-dock .codicon {
+  font-size: 12px;
+}
+.bubble-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.bubble-loading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+.bubble-offline {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(227, 179, 65, 0.15);
+  color: var(--warn);
+  font-size: 11px;
+}

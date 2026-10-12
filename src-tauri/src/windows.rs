@@ -11,7 +11,30 @@ const FILE: &str = "windows.json";
 #[derive(Default)]
 pub struct WindowsState {
     projects: Mutex<Vec<(String, String)>>,
+    bubbles: Mutex<Vec<Bubble>>,
     exiting: AtomicBool,
+}
+
+// Burbuja de chat: una vista de una sola conversación en su propia ventana sin
+// bordes y siempre encima. No se persiste: es efímera y no debe reaparecer como
+// ventana normal al reabrir. `origin` es la ventana de la que salió, a la que
+// vuelve el chat al acoplarla.
+#[derive(Clone)]
+struct Bubble {
+    label: String,
+    project: String,
+    session: String,
+    origin: String,
+}
+
+fn bubble_of(app: &AppHandle, label: &str) -> Option<Bubble> {
+    app.state::<WindowsState>()
+        .bubbles
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|b| b.label == label)
+        .cloned()
 }
 
 #[derive(Serialize, Clone)]
@@ -21,20 +44,27 @@ pub struct WindowInfo {
     pub project: String,
     pub focused: bool,
     pub main: bool,
+    pub bubble: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct BubbleInfo {
+    pub session: String,
+    pub origin: String,
 }
 
 pub fn project_of(app: &AppHandle, label: &str) -> String {
     if label == MAIN {
         return current_project(app);
     }
-    app.state::<WindowsState>()
-        .projects
-        .lock()
-        .unwrap()
-        .iter()
-        .find(|(l, _)| l == label)
-        .map(|(_, p)| p.clone())
-        .unwrap_or_default()
+    let state = app.state::<WindowsState>();
+    if let Some((_, path)) = state.projects.lock().unwrap().iter().find(|(l, _)| l == label) {
+        return path.clone();
+    }
+    bubble_of(app, label).map(|b| b.project).unwrap_or_default()
 }
 
 pub fn set_project(app: &AppHandle, label: &str, path: &str) {
@@ -65,6 +95,9 @@ pub fn all_projects(app: &AppHandle) -> Vec<String> {
     push(current_project(app));
     for (_, p) in app.state::<WindowsState>().projects.lock().unwrap().iter() {
         push(p.clone());
+    }
+    for b in app.state::<WindowsState>().bubbles.lock().unwrap().iter() {
+        push(b.project.clone());
     }
     out
 }
@@ -125,14 +158,48 @@ pub fn create(app: &AppHandle, path: Option<String>) -> Result<String, String> {
     Ok(label)
 }
 
+// Ventana "burbuja": una sola conversación, sin bordes y siempre encima, que
+// sigue visible aunque la ventana principal esté minimizada u oculta en la
+// bandeja. El proyecto se fija al crearla para que server_config devuelva el
+// worktree correcto y el chat se conecte al mismo motor.
+pub fn create_bubble(app: &AppHandle, project: String, session: String, origin: String, title: Option<String>) -> Result<String, String> {
+    let label = format!("bubble-{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
+    app.state::<WindowsState>()
+        .bubbles
+        .lock()
+        .unwrap()
+        .push(Bubble { label: label.clone(), project, session, origin });
+    let window_title = title.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
+    let built = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
+        .title(window_title.unwrap_or_else(|| "GuilleCode".to_string()))
+        .inner_size(380.0, 620.0)
+        .min_inner_size(300.0, 340.0)
+        .resizable(true)
+        .decorations(false)
+        .transparent(true)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .shadow(false)
+        .theme(Some(tauri::Theme::Dark))
+        .disable_drag_drop_handler()
+        .visible(true)
+        .build();
+    if let Err(e) = built {
+        app.state::<WindowsState>().bubbles.lock().unwrap().retain(|b| b.label != label);
+        return Err(format!("no se pudo abrir la burbuja: {}", e));
+    }
+    Ok(label)
+}
+
 pub fn forget(app: &AppHandle, label: &str) {
     if label == MAIN {
         return;
     }
     term::kill_owned(app, label);
     watch::stop_window(app, label);
+    let state = app.state::<WindowsState>();
+    state.bubbles.lock().unwrap().retain(|b| b.label != label);
     let removed = {
-        let state = app.state::<WindowsState>();
         let mut projects = state.projects.lock().unwrap();
         let before = projects.len();
         projects.retain(|(l, _)| l != label);
@@ -175,6 +242,8 @@ pub fn windows_list(app: AppHandle) -> Vec<WindowInfo> {
             project: project_of(&app, &label),
             focused: window.is_focused().unwrap_or(false),
             main: label == MAIN,
+            bubble: label.starts_with("bubble-"),
+            session: bubble_of(&app, &label).map(|b| b.session),
             label,
         });
     }
@@ -202,4 +271,23 @@ pub fn window_quit_cancel(app: AppHandle) {
         state.exiting.store(false, Ordering::SeqCst);
     }
     persist(&app);
+}
+
+#[tauri::command]
+pub async fn window_bubble(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    session: String,
+    title: Option<String>,
+) -> Result<String, String> {
+    let project = project_of(&app, window.label());
+    if project.trim().is_empty() {
+        return Err("esta ventana no tiene un proyecto abierto".to_string());
+    }
+    create_bubble(&app, project, session, window.label().to_string(), title)
+}
+
+#[tauri::command]
+pub fn window_bubble_info(app: AppHandle, window: tauri::WebviewWindow) -> Option<BubbleInfo> {
+    bubble_of(&app, window.label()).map(|b| BubbleInfo { session: b.session, origin: b.origin })
 }

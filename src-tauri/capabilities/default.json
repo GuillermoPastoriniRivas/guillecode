@@ -4,7 +4,8 @@
   "description": "permisos de las ventanas de GuilleCode",
   "windows": [
     "main",
-    "w-*"
+    "w-*",
+    "bubble-*"
   ],
   "permissions": [
     "core:default",
@@ -23,6 +24,7 @@
     "core:window:allow-show",
     "core:window:allow-set-focus",
     "core:window:allow-hide",
+    "core:window:allow-start-dragging",
     "core:webview:allow-set-webview-zoom"
   ]
 }

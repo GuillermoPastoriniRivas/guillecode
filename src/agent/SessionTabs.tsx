@@ -13,6 +13,7 @@ import {
   useAgent,
 } from "../state/agent"
 import { openEditor } from "../state/editors"
+import { bubbleOut } from "../state/bubbles"
 import { sessionMark, useUnseen } from "../state/unseen"
 import { useApprovals } from "../state/approvals"
 import { promptInput } from "../state/quickinput"
@@ -36,6 +37,7 @@ function tabMenu(e: React.MouseEvent, id: string, session: Session | null) {
         },
       },
       { label: "Abrir en una pestaña del editor", icon: "go-to-file", run: () => openEditor({ kind: "chat", sessionId: session.id }) },
+      { label: "Sacar como burbuja flotante", icon: "multiple-windows", run: () => void bubbleOut(session.id) },
       { label: "Revisar cambios de la sesión", icon: "diff-multiple", run: () => openEditor({ kind: "review", sessionId: session.id }) },
       {
         label: "Compactar conversación",

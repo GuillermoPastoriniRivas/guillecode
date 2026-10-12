@@ -457,6 +457,8 @@ pub fn run() {
             windows::window_new,
             windows::windows_list,
             windows::window_focus,
+            windows::window_bubble,
+            windows::window_bubble_info,
             windows::window_quit_begin,
             windows::window_quit_cancel
         ])
