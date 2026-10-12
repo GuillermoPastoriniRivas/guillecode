@@ -22,8 +22,6 @@ export function retryContext(messages: RetryMessage[], failed: RetryMessage): Re
 export type RetryPromptPart = { type: "text"; text: string } | { type: "file"; mime: string; url: string; filename: string }
 export const CONTINUE_INTERRUPTED_TURN = "La respuesta anterior se interrumpió. Continuá con el trabajo pendiente desde el último paso completado, usando el historial y los resultados de las herramientas. No reinicies la tarea ni repitas acciones que ya se completaron."
 
-export const AUTO_RETRY_MAX = 3
-
 function interruptedStream(error: unknown): string | null {
   if (!error || typeof error !== "object") return null
   const message = (error as { data?: { message?: string } }).data?.message
@@ -37,10 +35,6 @@ function interruptedStream(error: unknown): string | null {
 export function providerErrorMessage(error: { name?: string; data?: { message?: string } }): string | undefined {
   return interruptedStream(error) ?? error.data?.message ?? error.name
 }
-
-// The engine already retries a provider call five times. These delays are extra
-// breathing room after it gives up, so a transient 503 has time to clear.
-const DELAYS_MS = [15_000, 45_000, 90_000]
 
 export function isRetryableProviderError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false
@@ -115,8 +109,4 @@ export function turnExecutedTools(messages: RetryMessage[], parentID: string): b
 
 export function shouldAutoRetry(messages: RetryMessage[], parentID: string): boolean {
   return !turnExecutedTools(messages, parentID)
-}
-
-export function autoRetryDelayMs(attempt: number): number {
-  return DELAYS_MS[Math.min(attempt, DELAYS_MS.length - 1)]
 }

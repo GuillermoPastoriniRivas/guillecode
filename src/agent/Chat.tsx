@@ -7,7 +7,7 @@ import { Icon, Spinner } from "../components/ui"
 import { openImage } from "../state/lightbox"
 import { openContextMenu } from "../components/ContextMenu"
 import {
-  cancelAutoRetry,
+  compactAndContinue,
   ensureSessionView,
   focusComposer,
   forkSession,
@@ -19,9 +19,8 @@ import {
   unrevertSession,
   useAgent,
   type ChatMessage,
-  type ProviderRetry,
 } from "../state/agent"
-import { AUTO_RETRY_MAX, latestFailedAssistant, providerErrorMessage } from "../lib/autoretry"
+import { isRetryableProviderError, latestFailedAssistant, providerErrorMessage } from "../lib/autoretry"
 import { openFile } from "../state/editors"
 import { useProject } from "../state/project"
 import { notify } from "../state/toasts"
@@ -174,7 +173,7 @@ const PartView = memo(function PartView({ part, live }: { part: Part; live: bool
   }
 })
 
-function AssistantFooter({ message, onRetry, retrying, recovery }: { message: ChatMessage; onRetry?: () => void; retrying?: boolean; recovery?: ProviderRetry }) {
+function AssistantFooter({ message, onRetry, onCompact, working }: { message: ChatMessage; onRetry?: () => void; onCompact?: () => void; working?: boolean }) {
   const info = message.info
   if (info.role !== "assistant") return null
   const tokens = info.tokens
@@ -186,16 +185,19 @@ function AssistantFooter({ message, onRetry, retrying, recovery }: { message: Ch
       {error && error.name !== "MessageAbortedError" && (
         <div className="msg-error">
           <Icon name="error" />
-          <span>
-            {providerErrorMessage(error)}
-            {recovery && <><br />{recovery.phase === "exhausted"
-              ? `El proveedor sigue sin responder después de ${AUTO_RETRY_MAX} reintentos adicionales.`
-              : `${recovery.phase === "waiting" ? "Reintento automático pendiente" : "Enviando reintento automático"} (${recovery.attempt}/${AUTO_RETRY_MAX}).`}</>}
-          </span>
-          {onRetry && (
-            <button type="button" className="msg-retry" onClick={onRetry} disabled={retrying}>
-              <Icon name={retrying ? "loading" : "refresh"} spin={retrying} /> Reintentar
-            </button>
+          <span>{providerErrorMessage(error)}</span>
+          {isRetryableProviderError(error) ? (
+            onCompact && (
+              <button type="button" className="msg-retry" onClick={onCompact} disabled={working}>
+                <Icon name={working ? "loading" : "fold"} spin={working} /> Compactar y continuar
+              </button>
+            )
+          ) : (
+            onRetry && (
+              <button type="button" className="msg-retry" onClick={onRetry} disabled={working}>
+                <Icon name={working ? "loading" : "refresh"} spin={working} /> Reintentar
+              </button>
+            )
           )}
         </div>
       )}
@@ -207,8 +209,8 @@ function AssistantFooter({ message, onRetry, retrying, recovery }: { message: Ch
           <Icon name="debug-stop" />
           <span>Detenido</span>
           {onRetry && (
-            <button type="button" className="msg-retry" onClick={onRetry} disabled={retrying}>
-              <Icon name={retrying ? "loading" : "refresh"} spin={retrying} /> Reintentar
+            <button type="button" className="msg-retry" onClick={onRetry} disabled={working}>
+              <Icon name={working ? "loading" : "refresh"} spin={working} /> Reintentar
             </button>
           )}
         </div>
@@ -277,7 +279,6 @@ function userMenu(session: Session, message: ChatMessage, e: React.MouseEvent) {
 export function Chat({ session, busy }: { session: Session; busy: boolean }) {
   const view = useAgent((s) => s.views[session.id])
   const messages = useMemo(() => view?.messages ?? [], [view])
-  const recovery = useAgent((s) => s.providerRetries[session.id])
   const failedID = latestFailedAssistant(messages)?.info.id
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
@@ -289,14 +290,15 @@ export function Chat({ session, busy }: { session: Session; busy: boolean }) {
   const [retrying, setRetrying] = useState<string | null>(null)
   const revert = (session as Session & { revert?: { messageID: string } }).revert
 
-  const retry = (message: ChatMessage) => {
+  const recover = (message: ChatMessage, action: (id: string, failed: ChatMessage) => Promise<void>, problem: string) => {
     if (message.info.role !== "assistant" || retrying) return
     setRetrying(message.info.id)
-    cancelAutoRetry(session.id)
-    retryMessage(session.id, message)
-      .catch((err) => notify.error("No se pudo reintentar", err instanceof Error ? err.message : String(err)))
+    action(session.id, message)
+      .catch((err) => notify.error(problem, err instanceof Error ? err.message : String(err)))
       .finally(() => setRetrying(null))
   }
+  const retry = (message: ChatMessage) => recover(message, retryMessage, "No se pudo reintentar")
+  const compact = (message: ChatMessage) => recover(message, compactAndContinue, "No se pudo compactar y continuar")
 
   const revertIndex = revert ? messages.findIndex((m) => m.info.id === revert.messageID) : -1
   const runningId = useMemo(() => runningAssistantId(messages, busy), [messages, busy])
@@ -489,8 +491,8 @@ export function Chat({ session, busy }: { session: Session; busy: boolean }) {
                     <AssistantFooter
                       message={m}
                       onRetry={!busy && m.info.id === failedID ? () => retry(m) : undefined}
-                      retrying={retrying === m.info.id}
-                      recovery={recovery?.messageID === m.info.id ? recovery : undefined}
+                      onCompact={!busy && m.info.id === failedID ? () => compact(m) : undefined}
+                      working={retrying === m.info.id}
                     />
                   </div>
                 )}

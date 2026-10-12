@@ -2,6 +2,7 @@ import { create } from "zustand"
 import type { Session, SessionStatus } from "@opencode-ai/sdk"
 import { loadJson, saveJson } from "../lib/persist"
 import { sessionWaiting, subscribeSessionFinished, useAgent, type PermissionRequest, type QuestionRequest } from "./agent"
+import { useApprovals } from "./approvals"
 import { tabId, useEditors } from "./editors"
 import { useLayout } from "./layout"
 
@@ -68,8 +69,8 @@ type MarkSource = {
   statuses: Record<string, SessionStatus>
 }
 
-export function sessionMark(s: MarkSource, unseen: Unseen, id: string): SessionMark {
-  if (sessionWaiting(s, id)) return "attention"
+export function sessionMark(s: MarkSource, unseen: Unseen, id: string, approvals = useApprovals.getState()): SessionMark {
+  if (sessionWaiting(s, id, approvals)) return "attention"
   const status = s.statuses[id]?.type ?? "idle"
   if (status !== "idle") return status
   return id in unseen ? "unseen" : "idle"
@@ -77,7 +78,8 @@ export function sessionMark(s: MarkSource, unseen: Unseen, id: string): SessionM
 
 export function useSessionMark(id: string): SessionMark {
   const unseen = useUnseen((s) => s.ids)
-  return useAgent((s) => sessionMark(s, unseen, id))
+  const approvals = useApprovals()
+  return useAgent((s) => sessionMark(s, unseen, id, approvals))
 }
 
 let off: (() => void) | null = null

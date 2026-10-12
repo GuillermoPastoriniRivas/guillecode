@@ -14,6 +14,7 @@ import {
 } from "../state/agent"
 import { openEditor } from "../state/editors"
 import { sessionMark, useUnseen } from "../state/unseen"
+import { useApprovals } from "../state/approvals"
 import { promptInput } from "../state/quickinput"
 import { notify } from "../state/toasts"
 import { confirmAction } from "../components/Dialog"
@@ -79,6 +80,7 @@ export function SessionTabs() {
   const permissions = useAgent((s) => s.permissions)
   const questions = useAgent((s) => s.questions)
   const unseen = useUnseen((s) => s.ids)
+  const approvals = useApprovals()
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -100,7 +102,7 @@ export function SessionTabs() {
         const draft = id === DRAFT_TAB
         const session = draft ? null : sessions.find((x) => x.id === id) ?? null
         const active = draft ? activeId === null : activeId === id
-        const mark = draft ? "idle" : sessionMark({ allSessions, permissions, questions, statuses }, unseen, id)
+        const mark = draft ? "idle" : sessionMark({ allSessions, permissions, questions, statuses }, unseen, id, approvals)
         const title = draft ? "Nueva conversación" : session?.title || "Sin título"
         const archived = archivedSessionOwner(session, allSessions)
         const hint = (archived ? " · archivada" : "") + (mark === "attention" ? " · espera tu respuesta" : mark === "unseen" ? " · terminó, sin ver" : "")

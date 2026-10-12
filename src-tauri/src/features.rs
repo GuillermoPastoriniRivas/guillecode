@@ -41,6 +41,10 @@ struct Entry {
     base_oid: Option<String>,
     created_at: i64,
     archived: bool,
+    /// Id compartido por los worktrees de un mismo trabajo a través de varios repos.
+    group: Option<String>,
+    /// Nombre visible del trabajo, común a todos sus repos.
+    group_label: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -91,6 +95,10 @@ pub struct FeatureInfo {
     pub merging: bool,
     pub ahead: Option<u32>,
     pub behind: Option<u32>,
+    /// Id del espacio de trabajo (trabajo) al que pertenece esta copia.
+    pub workspace: Option<String>,
+    /// Nombre visible del trabajo, común a todos sus repos.
+    pub workspace_label: Option<String>,
 }
 
 #[derive(Serialize, Clone, Default)]
@@ -111,6 +119,44 @@ pub struct RepoGroup {
 
 #[derive(Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
+pub struct WorkspaceRepo {
+    /// Ruta de la copia principal del repositorio (identidad estable del repo).
+    pub repo: String,
+    /// Nombre visible del repositorio (por ejemplo «v2GQL»).
+    pub name: String,
+    /// Carpeta de esta copia dentro del espacio de trabajo.
+    pub path: String,
+    /// Raíz de trabajo (la carpeta o su subcarpeta en un monorepo).
+    pub root: String,
+    pub branch: Option<String>,
+    pub head: Option<String>,
+    pub detached: bool,
+    pub base: Option<String>,
+    pub base_source: String,
+    /// «main» cuando es la copia principal, «feature» cuando es un worktree del trabajo.
+    pub kind: String,
+    pub missing: bool,
+    pub changes: Option<Changes>,
+    pub merging: bool,
+    pub ahead: Option<u32>,
+    pub behind: Option<u32>,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Workspace {
+    /// «main» para la copia principal; el id del grupo para un trabajo.
+    pub id: String,
+    pub label: String,
+    /// «main» | «feature».
+    pub kind: String,
+    pub repos: Vec<WorkspaceRepo>,
+    pub created_at: Option<i64>,
+    pub archived: bool,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct FeatureList {
     pub git: bool,
     pub multi: bool,
@@ -120,6 +166,7 @@ pub struct FeatureList {
     pub worktrees_dir: String,
     pub features: Vec<FeatureInfo>,
     pub repos: Vec<RepoGroup>,
+    pub workspaces: Vec<Workspace>,
     pub settings: ProjectSettings,
 }
 
@@ -616,6 +663,8 @@ fn collect(reg: &Registry, ctx: &RepoCtx, scope: &str, group: Option<&str>, with
             base_source: base.source.to_string(),
             base_oid: base.oid,
             created_at: entry.map(|e| e.created_at),
+            workspace: entry.and_then(|e| e.group.clone()),
+            workspace_label: entry.and_then(|e| e.group_label.clone()),
             ..Default::default()
         });
     }
@@ -636,6 +685,8 @@ fn collect(reg: &Registry, ctx: &RepoCtx, scope: &str, group: Option<&str>, with
             base_source: e.base_source.clone().unwrap_or_else(|| "unknown".into()),
             base_oid: e.base_oid.clone(),
             created_at: Some(e.created_at),
+            workspace: e.group.clone(),
+            workspace_label: e.group_label.clone(),
             ..Default::default()
         });
     }
@@ -700,6 +751,103 @@ fn sub_repos(project: &str) -> Vec<(String, RepoCtx)> {
     out
 }
 
+fn workspace_repo_from_feature(f: &FeatureInfo) -> WorkspaceRepo {
+    WorkspaceRepo {
+        repo: f.repo.clone(),
+        name: f.group.clone().unwrap_or_else(|| basename(&f.repo)),
+        path: f.path.clone(),
+        root: f.root.clone(),
+        branch: f.branch.clone(),
+        head: f.head.clone(),
+        detached: f.detached,
+        base: f.base.clone(),
+        base_source: f.base_source.clone(),
+        kind: if f.kind == "main" { "main".to_string() } else { "feature".to_string() },
+        missing: f.missing,
+        changes: f.changes.clone(),
+        merging: f.merging,
+        ahead: f.ahead,
+        behind: f.behind,
+    }
+}
+
+/// Agrupa las copias en espacios de trabajo: la principal y un trabajo por cada
+/// conjunto de worktrees que comparten un mismo id de grupo (o etiqueta, para los
+/// worktrees creados por fuera). El humano ve «Principal» y «feature/x»; la
+/// correspondencia con un worktree por repositorio es responsabilidad del producto.
+fn build_workspaces(features: &[FeatureInfo], repos: &[RepoGroup], multi: bool, project: &str) -> Vec<Workspace> {
+    let mut out: Vec<Workspace> = Vec::new();
+    let main_repos: Vec<WorkspaceRepo> = if multi {
+        repos
+            .iter()
+            .map(|g| WorkspaceRepo {
+                repo: g.main.clone(),
+                name: g.name.clone(),
+                path: g.main.clone(),
+                root: g.main.clone(),
+                branch: g.branch.clone(),
+                head: g.head.clone(),
+                detached: g.detached,
+                base: None,
+                base_source: String::new(),
+                kind: "main".to_string(),
+                missing: !exists(&g.main),
+                changes: g.changes.clone(),
+                merging: g.merging,
+                ahead: None,
+                behind: None,
+            })
+            .collect()
+    } else {
+        features
+            .iter()
+            .filter(|f| f.kind == "main")
+            .map(|f| workspace_main_repo(f, project))
+            .collect()
+    };
+    out.push(Workspace { id: "main".to_string(), label: "Principal".to_string(), kind: "main".to_string(), repos: main_repos, created_at: None, archived: false });
+
+    let mut groups: Vec<(String, String, Vec<&FeatureInfo>)> = Vec::new();
+    for f in features.iter().filter(|f| f.kind != "main") {
+        let id = f.workspace.clone().filter(|g| !g.is_empty()).unwrap_or_else(|| format!("label:{}", f.label.to_lowercase()));
+        match groups.iter_mut().find(|(gid, _, _)| *gid == id) {
+            Some((_, _, list)) => list.push(f),
+            None => {
+                let label = f.workspace_label.clone().filter(|l| !l.is_empty()).unwrap_or_else(|| f.label.clone());
+                groups.push((id, label, vec![f]));
+            }
+        }
+    }
+    for (id, label, list) in groups {
+        let repos: Vec<WorkspaceRepo> = list.iter().map(|f| workspace_repo_from_feature(f)).collect();
+        let archived = list.iter().all(|f| f.archived);
+        let created_at = list.iter().filter_map(|f| f.created_at).min();
+        out.push(Workspace { id, label, kind: "feature".to_string(), repos, created_at, archived });
+    }
+    out
+}
+
+/// Copia principal de un proyecto de un solo repositorio.
+fn workspace_main_repo(f: &FeatureInfo, project: &str) -> WorkspaceRepo {
+    WorkspaceRepo {
+        repo: f.repo.clone(),
+        name: basename(project),
+        path: f.path.clone(),
+        root: f.root.clone(),
+        branch: f.branch.clone(),
+        head: f.head.clone(),
+        detached: f.detached,
+        base: None,
+        base_source: String::new(),
+        kind: "main".to_string(),
+        missing: f.missing,
+        changes: f.changes.clone(),
+        merging: f.merging,
+        ahead: None,
+        behind: None,
+    }
+}
+
 fn single_list(reg: &Registry, ctx: RepoCtx) -> FeatureList {
     let canonical = join(&ctx.main, &ctx.rel);
     if exists(&worktrees_dir(&ctx.main)) {
@@ -723,6 +871,7 @@ fn single_list(reg: &Registry, ctx: RepoCtx) -> FeatureList {
         changes: main.and_then(|f| f.changes.clone()),
         merging: main.map(|f| f.merging).unwrap_or(false),
     };
+    let workspaces = build_workspaces(&features, std::slice::from_ref(&group), false, &canonical);
     FeatureList {
         git: true,
         multi: false,
@@ -732,6 +881,7 @@ fn single_list(reg: &Registry, ctx: RepoCtx) -> FeatureList {
         worktrees_dir: worktrees_dir(&ctx.main),
         features,
         repos: vec![group],
+        workspaces,
         settings,
     }
 }
@@ -786,7 +936,8 @@ fn multi_list(reg: &Registry, project: &str) -> FeatureList {
             ..Default::default()
         },
     );
-    FeatureList { git: true, multi: true, project, features, repos: groups, settings, ..Default::default() }
+    let workspaces = build_workspaces(&features, &groups, true, &project);
+    FeatureList { git: true, multi: true, project, features, repos: groups, workspaces, settings, ..Default::default() }
 }
 
 type ListSlot = Arc<Mutex<Option<(Instant, Result<FeatureList, String>)>>>;
@@ -968,6 +1119,10 @@ pub struct CreateArgs {
     pub existing: bool,
     #[serde(default)]
     pub copy: Vec<String>,
+    #[serde(default)]
+    pub group: Option<String>,
+    #[serde(default)]
+    pub group_label: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -981,11 +1136,36 @@ pub struct CreateResult {
 pub(crate) fn create_sync(app: &AppHandle, args: CreateArgs) -> Result<CreateResult, String> {
     let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let ctx = require_ctx(&args.project)?;
-    let label = args.label.trim().to_string();
+    create_in(app, &ctx, &args.label, &args.branch, &args.base, args.existing, &args.copy, args.group.as_deref(), args.group_label.as_deref())
+}
+
+/// Resultado de crear un worktree en un repositorio, sin tocar el registro.
+struct NewWorktree {
+    entry: Entry,
+    feature: FeatureInfo,
+    copied: Vec<String>,
+    skipped: Vec<String>,
+}
+
+/// Crea el worktree en un repositorio ya resuelto y deja el `Entry` listo para
+/// registrar. No toca el registro ni emite eventos: sirve para un repo suelto o
+/// para cada repo de un trabajo, y se puede probar con git real.
+#[allow(clippy::too_many_arguments)]
+fn create_worktree(
+    ctx: &RepoCtx,
+    label_raw: &str,
+    branch_req: &str,
+    base_req: &str,
+    existing: bool,
+    copy: &[String],
+    group: Option<&str>,
+    group_label: Option<&str>,
+) -> Result<NewWorktree, String> {
+    let label = label_raw.trim().to_string();
     if label.is_empty() {
         return Err("poné un nombre para la feature".to_string());
     }
-    let requested = args.branch.trim();
+    let requested = branch_req.trim();
     if requested.is_empty() || requested.starts_with('-') {
         return Err("el nombre de la rama no es válido".to_string());
     }
@@ -996,10 +1176,10 @@ pub(crate) fn create_sync(app: &AppHandle, args: CreateArgs) -> Result<CreateRes
         return Err(format!("la rama {} ya está abierta en {}", branch, w.path));
     }
     let branch_exists = local_branch_exists(&ctx.main, &branch);
-    if branch_exists && !args.existing {
+    if branch_exists && !existing {
         return Err(format!("la rama {} ya existe: elegí «usar la rama existente» o cambiá el nombre", branch));
     }
-    let base = args.base.trim().to_string();
+    let base = base_req.trim().to_string();
     if base.is_empty() || base.starts_with('-') {
         return Err("elegí desde qué rama arranca la feature".to_string());
     }
@@ -1022,10 +1202,9 @@ pub(crate) fn create_sync(app: &AppHandle, args: CreateArgs) -> Result<CreateRes
     } else {
         git(&ctx.main, &["worktree", "add", "-b", &branch, &native, &base_oid])?;
     }
-    let (copied, skipped) = copy_into(&ctx.main, &dir, &args.copy);
+    let (copied, skipped) = copy_into(&ctx.main, &dir, copy);
     let creation_oid = if branch_exists { branch_creation(&ctx.main, &branch).map(|c| c.0) } else { Some(base_oid) };
     write_base_metadata(&ctx.main, &branch, &base, creation_oid.as_deref())?;
-    let mut reg = load(app);
     let entry = Entry {
         id: uuid::Uuid::new_v4().to_string(),
         repo: ctx.main.clone(),
@@ -1037,40 +1216,170 @@ pub(crate) fn create_sync(app: &AppHandle, args: CreateArgs) -> Result<CreateRes
         base_oid: creation_oid.clone(),
         created_at: now_ms(),
         archived: false,
+        group: group.map(str::to_string),
+        group_label: group_label.map(str::to_string),
     };
-    reg.features.retain(|e| !same(&e.path, &dir));
-    reg.features.push(entry.clone());
     let canonical = join(&ctx.main, &ctx.rel);
-    let mut settings = settings_of(&reg, &canonical);
-    if settings.copy != args.copy {
-        settings.copy = args.copy.clone();
+    let head = git_quiet(&dir, &["rev-parse", "HEAD"]).map(|h| h.trim().to_string()).ok();
+    let feature = FeatureInfo {
+        id: Some(entry.id.clone()),
+        path: dir.clone(),
+        root: join(&dir, &ctx.rel),
+        repo: canonical,
+        label,
+        kind: "managed".to_string(),
+        branch: Some(branch),
+        head,
+        base: Some(base),
+        base_source: "registered".into(),
+        base_oid: creation_oid,
+        created_at: Some(entry.created_at),
+        changes: Some(Changes::default()),
+        ahead: Some(0),
+        behind: Some(0),
+        workspace: group.map(str::to_string),
+        workspace_label: group_label.map(str::to_string),
+        ..Default::default()
+    };
+    Ok(NewWorktree { entry, feature, copied, skipped })
+}
+
+/// Registra en `reg` el worktree creado y recuerda los archivos copiados del repo.
+fn register_worktree(reg: &mut Registry, ctx: &RepoCtx, nw: &NewWorktree, copy: &[String]) {
+    reg.features.retain(|e| !same(&e.path, &nw.entry.path));
+    reg.features.push(nw.entry.clone());
+    let canonical = join(&ctx.main, &ctx.rel);
+    let mut settings = settings_of(reg, &canonical);
+    if settings.copy.as_slice() != copy {
+        settings.copy = copy.to_vec();
         reg.projects.insert(key(&canonical), settings);
+    }
+}
+
+fn create_in(
+    app: &AppHandle,
+    ctx: &RepoCtx,
+    label_raw: &str,
+    branch_req: &str,
+    base_req: &str,
+    existing: bool,
+    copy: &[String],
+    group: Option<&str>,
+    group_label: Option<&str>,
+) -> Result<CreateResult, String> {
+    let nw = create_worktree(ctx, label_raw, branch_req, base_req, existing, copy, group, group_label)?;
+    let mut reg = load(app);
+    register_worktree(&mut reg, ctx, &nw, copy);
+    save(app, &mut reg)?;
+    changed(app);
+    Ok(CreateResult { feature: nw.feature, copied: nw.copied, skipped: nw.skipped })
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceCreateArgs {
+    pub project: String,
+    pub label: String,
+    pub branch: Option<String>,
+    pub base: Option<String>,
+    #[serde(default)]
+    pub bases: HashMap<String, String>,
+    #[serde(default)]
+    pub repos: Vec<String>,
+    #[serde(default)]
+    pub existing: bool,
+    #[serde(default)]
+    pub copy: Option<Vec<String>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceRepoError {
+    pub repo: String,
+    pub name: String,
+    pub error: String,
+}
+
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceCreateResult {
+    pub workspace: String,
+    pub label: String,
+    pub repos: Vec<CreateResult>,
+    pub failed: Vec<WorkspaceRepoError>,
+}
+
+/// Crea el mismo trabajo en todos los repositorios indicados (o en todos los del
+/// proyecto) con una rama y una base por repositorio, y los agrupa bajo un id
+/// común. El humano pide un trabajo; GuilleCode resuelve el worktree de cada repo.
+pub(crate) fn workspace_create_sync(app: &AppHandle, args: WorkspaceCreateArgs) -> Result<WorkspaceCreateResult, String> {
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let label = args.label.trim().to_string();
+    if label.is_empty() {
+        return Err("poné un nombre para el trabajo".to_string());
+    }
+    let ctxs: Vec<(String, RepoCtx)> = match repo_ctx(&args.project)? {
+        Some(ctx) => vec![(basename(&ctx.main), ctx)],
+        None => sub_repos(&args.project),
+    };
+    if ctxs.is_empty() {
+        return Err("no encontré repositorios en el proyecto".to_string());
+    }
+    let wanted: Vec<String> = args.repos.iter().map(|r| key(r)).filter(|r| !r.is_empty()).collect();
+    let selected: Vec<(String, RepoCtx)> = if wanted.is_empty() {
+        ctxs
+    } else {
+        ctxs.into_iter().filter(|(name, ctx)| wanted.iter().any(|w| *w == key(&ctx.main) || *w == key(name))).collect()
+    };
+    if selected.is_empty() {
+        return Err("ninguno de los repositorios indicados pertenece al proyecto".to_string());
+    }
+    let group = uuid::Uuid::new_v4().to_string();
+    let branch = args
+        .branch
+        .as_ref()
+        .map(|b| b.trim().to_string())
+        .filter(|b| !b.is_empty())
+        .unwrap_or_else(|| format!("feature/{}", slugify(&label)));
+    let mut result = WorkspaceCreateResult { workspace: group.clone(), label: label.clone(), ..Default::default() };
+    let mut reg = load(app);
+    for (name, ctx) in &selected {
+        let base = args
+            .bases
+            .get(&ctx.main)
+            .or_else(|| args.bases.get(name))
+            .cloned()
+            .or_else(|| args.base.clone())
+            .or_else(|| default_base(&ctx.main));
+        let Some(base) = base else {
+            result.failed.push(WorkspaceRepoError {
+                repo: ctx.main.clone(),
+                name: name.clone(),
+                error: "no se pudo determinar la rama base: pasala explícitamente".to_string(),
+            });
+            continue;
+        };
+        let copy = match &args.copy {
+            Some(c) => c.clone(),
+            None => candidates_sync(&ctx.main)
+                .map(|list| list.into_iter().filter(|c| c.suggested).map(|c| c.path).collect())
+                .unwrap_or_default(),
+        };
+        match create_worktree(ctx, &label, &branch, &base, args.existing, &copy, Some(&group), Some(&label)) {
+            Ok(nw) => {
+                register_worktree(&mut reg, ctx, &nw, &copy);
+                result.repos.push(CreateResult { feature: nw.feature, copied: nw.copied, skipped: nw.skipped });
+            }
+            Err(error) => result.failed.push(WorkspaceRepoError { repo: ctx.main.clone(), name: name.clone(), error }),
+        }
+    }
+    if result.repos.is_empty() {
+        let first = result.failed.first().map(|f| f.error.clone()).unwrap_or_else(|| "no se pudo crear el trabajo".to_string());
+        return Err(first);
     }
     save(app, &mut reg)?;
     changed(app);
-    let head = git_quiet(&dir, &["rev-parse", "HEAD"]).map(|h| h.trim().to_string()).ok();
-    Ok(CreateResult {
-        feature: FeatureInfo {
-            id: Some(entry.id),
-            path: dir.clone(),
-            root: join(&dir, &ctx.rel),
-            repo: canonical.clone(),
-            label,
-            kind: "managed".to_string(),
-            branch: Some(branch),
-            head,
-            base: Some(base),
-            base_source: "registered".into(),
-            base_oid: creation_oid,
-            created_at: Some(entry.created_at),
-            changes: Some(Changes::default()),
-            ahead: Some(0),
-            behind: Some(0),
-            ..Default::default()
-        },
-        copied,
-        skipped,
-    })
+    Ok(result)
 }
 
 #[derive(Deserialize)]
@@ -1110,6 +1419,8 @@ pub(crate) fn update_sync(app: &AppHandle, args: UpdateArgs) -> Result<(), Strin
                 base_oid: None,
                 created_at: now_ms(),
                 archived: false,
+                group: None,
+                group_label: None,
             });
             reg.features.len() - 1
         }
@@ -1298,16 +1609,22 @@ pub struct RemoveResult {
 
 fn remove_sync(app: &AppHandle, args: RemoveArgs) -> Result<RemoveResult, String> {
     let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let ctx = require_ctx(&args.project)?;
-    if same(&args.path, &ctx.main) {
+    remove_one(app, &args.project, &args.path, args.delete_branch, args.force, args.force_branch)
+}
+
+/// Elimina una copia (worktree) de un repositorio. No toma el lock: el llamador
+/// decide si trabaja sobre uno o sobre todos los repositorios de un trabajo.
+fn remove_one(app: &AppHandle, project: &str, path: &str, delete_branch: bool, force: bool, force_branch: bool) -> Result<RemoveResult, String> {
+    let ctx = require_ctx(project)?;
+    if same(path, &ctx.main) {
         return Err("la copia principal no se elimina desde acá".to_string());
     }
-    let worktree = ctx.worktrees.iter().find(|w| same(&w.path, &args.path)).cloned();
+    let worktree = ctx.worktrees.iter().find(|w| same(&w.path, path)).cloned();
     let mut reg = load(app);
     let branch = worktree
         .as_ref()
         .and_then(|w| w.branch.clone())
-        .or_else(|| reg.features.iter().find(|e| same(&e.path, &args.path)).and_then(|e| e.branch.clone()));
+        .or_else(|| reg.features.iter().find(|e| same(&e.path, path)).and_then(|e| e.branch.clone()));
     match &worktree {
         Some(w) if w.locked.is_some() => {
             return Err(format!(
@@ -1318,7 +1635,7 @@ fn remove_sync(app: &AppHandle, args: RemoveArgs) -> Result<RemoveResult, String
         Some(w) if w.prunable.is_none() && Path::new(&w.path).is_dir() => {
             let native = w.path.replace('/', std::path::MAIN_SEPARATOR_STR);
             let mut cmd: Vec<&str> = vec!["worktree", "remove"];
-            if args.force {
+            if force {
                 cmd.push("--force");
             }
             cmd.push(&native);
@@ -1335,9 +1652,9 @@ fn remove_sync(app: &AppHandle, args: RemoveArgs) -> Result<RemoveResult, String
         }
     }
     let mut result = RemoveResult::default();
-    if args.delete_branch {
+    if delete_branch {
         if let Some(branch) = branch {
-            let flag = if args.force_branch { "-D" } else { "-d" };
+            let flag = if force_branch { "-D" } else { "-d" };
             match git(&ctx.main, &["branch", flag, &branch]) {
                 Ok(_) => result.branch_deleted = true,
                 Err(e) => {
@@ -1350,10 +1667,76 @@ fn remove_sync(app: &AppHandle, args: RemoveArgs) -> Result<RemoveResult, String
             }
         }
     }
-    reg.features.retain(|e| !same(&e.path, &args.path));
+    reg.features.retain(|e| !same(&e.path, path));
     save(app, &mut reg)?;
     changed(app);
     Ok(result)
+}
+
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceRemoveCheck {
+    pub repos: Vec<RemoveCheck>,
+    pub tracked: u32,
+    pub untracked: u32,
+    pub dirty: Vec<String>,
+    pub ignored_total: u32,
+    pub ignored: Vec<String>,
+    pub unmerged: u32,
+    pub merging: bool,
+}
+
+pub(crate) fn workspace_remove_check_sync(app: &AppHandle, project: &str, workspace: &str) -> Result<WorkspaceRemoveCheck, String> {
+    let list = build_list(app, project)?;
+    let ws = list.workspaces.iter().find(|w| w.id == workspace).ok_or("ese trabajo ya no existe")?;
+    let mut out = WorkspaceRemoveCheck::default();
+    for repo in ws.repos.iter().filter(|r| r.kind != "main") {
+        let check = remove_check_sync(app, &repo.repo, &repo.path).unwrap_or_default();
+        out.tracked += check.changes.tracked();
+        out.untracked += check.changes.untracked;
+        out.unmerged += check.unmerged;
+        out.ignored_total += check.ignored_total;
+        out.merging = out.merging || check.merging;
+        for d in check.dirty.iter() {
+            if out.dirty.len() >= 15 {
+                break;
+            }
+            out.dirty.push(format!("{}: {}", repo.name, d));
+        }
+        for i in check.ignored.iter() {
+            if out.ignored.len() >= 15 {
+                break;
+            }
+            out.ignored.push(format!("{}: {}", repo.name, i));
+        }
+        out.repos.push(check);
+    }
+    Ok(out)
+}
+
+pub(crate) fn workspace_remove_sync(
+    app: &AppHandle,
+    project: &str,
+    workspace: &str,
+    delete_branch: bool,
+    force: bool,
+    force_branch: bool,
+) -> Result<Vec<RemoveResult>, String> {
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let list = build_list(app, project)?;
+    let ws = list.workspaces.iter().find(|w| w.id == workspace).ok_or("ese trabajo ya no existe")?.clone();
+    let mut results = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
+    for repo in ws.repos.iter().filter(|r| r.kind != "main") {
+        match remove_one(app, &repo.repo, &repo.path, delete_branch, force, force_branch) {
+            Ok(r) => results.push(r),
+            Err(e) => errors.push(format!("{}: {}", repo.name, e)),
+        }
+    }
+    if results.is_empty() && !errors.is_empty() {
+        return Err(errors.join("; "));
+    }
+    Ok(results)
 }
 
 #[derive(Serialize, Default)]
@@ -1640,6 +2023,28 @@ pub async fn features_create(app: AppHandle, args: CreateArgs) -> Result<CreateR
 }
 
 #[tauri::command]
+pub async fn workspace_create(app: AppHandle, args: WorkspaceCreateArgs) -> Result<WorkspaceCreateResult, String> {
+    blocking(move || workspace_create_sync(&app, args)).await
+}
+
+#[tauri::command]
+pub async fn workspace_remove_check(app: AppHandle, project: String, workspace: String) -> Result<WorkspaceRemoveCheck, String> {
+    blocking(move || workspace_remove_check_sync(&app, &project, &workspace)).await
+}
+
+#[tauri::command]
+pub async fn workspace_remove(
+    app: AppHandle,
+    project: String,
+    workspace: String,
+    delete_branch: bool,
+    force: bool,
+    force_branch: bool,
+) -> Result<Vec<RemoveResult>, String> {
+    blocking(move || workspace_remove_sync(&app, &project, &workspace, delete_branch, force, force_branch)).await
+}
+
+#[tauri::command]
 pub async fn features_update(app: AppHandle, args: UpdateArgs) -> Result<(), String> {
     blocking(move || update_sync(&app, args)).await
 }
@@ -1773,6 +2178,71 @@ mod tests {
         std::fs::create_dir_all(join(&dir.path, "docs")).unwrap();
         let list = multi_list(&Registry::default(), &dir.path);
         assert!(!list.git && !list.multi && list.features.is_empty());
+        assert!(list.workspaces.is_empty());
+    }
+
+    #[test]
+    fn workspaces_group_worktrees_of_several_repos_by_shared_id() {
+        let repos = vec![RepoGroup { main: "C:/p/a".into(), name: "a".into(), ..Default::default() }];
+        let features = vec![
+            FeatureInfo { path: "C:/p".into(), root: "C:/p".into(), label: "Principal".into(), kind: "main".into(), ..Default::default() },
+            FeatureInfo { path: "C:/p/a/.worktrees/test".into(), repo: "C:/p/a".into(), group: Some("a".into()), label: "test".into(), kind: "external".into(), workspace: Some("g1".into()), workspace_label: Some("test".into()), ..Default::default() },
+            FeatureInfo { path: "C:/p/b/.worktrees/test".into(), repo: "C:/p/b".into(), group: Some("b".into()), label: "test".into(), kind: "external".into(), workspace: Some("g1".into()), workspace_label: Some("test".into()), ..Default::default() },
+        ];
+        let workspaces = build_workspaces(&features, &repos, true, "C:/p");
+        assert_eq!(workspaces.len(), 2);
+        assert_eq!(workspaces[0].id, "main");
+        assert_eq!(workspaces[0].repos.len(), 1);
+        assert_eq!(workspaces[1].label, "test");
+        assert_eq!(workspaces[1].kind, "feature");
+        assert_eq!(workspaces[1].repos.len(), 2);
+        assert_eq!(workspaces[1].repos[0].name, "a");
+        assert_eq!(workspaces[1].repos[1].name, "b");
+    }
+
+    #[test]
+    fn worktrees_without_a_group_fall_back_to_their_label() {
+        let features = vec![
+            FeatureInfo { path: "C:/p".into(), kind: "main".into(), ..Default::default() },
+            FeatureInfo { path: "C:/p/a/.worktrees/login".into(), repo: "C:/p/a".into(), label: "login".into(), kind: "external".into(), ..Default::default() },
+            FeatureInfo { path: "C:/p/a/.worktrees/otra".into(), repo: "C:/p/a".into(), label: "otra".into(), kind: "external".into(), ..Default::default() },
+        ];
+        let workspaces = build_workspaces(&features, &[], true, "C:/p");
+        assert_eq!(workspaces.len(), 3);
+        assert_eq!(workspaces[1].label, "login");
+        assert_eq!(workspaces[2].label, "otra");
+    }
+
+    #[test]
+    fn workspace_creates_one_worktree_per_repo_and_registers_the_group() {
+        let dir = tempdir::Dir::new();
+        let back = join(&dir.path, "backend");
+        let front = join(&dir.path, "frontend");
+        init_repo(&back);
+        init_repo(&front);
+        let ctxs = sub_repos(&dir.path);
+        assert_eq!(ctxs.len(), 2);
+        let group = "g-demo";
+        let branch = "feature/demo";
+        let mut features = Vec::new();
+        for (_name, ctx) in &ctxs {
+            let base = default_base(&ctx.main).unwrap_or_else(|| "main".to_string());
+            let nw = create_worktree(ctx, "demo", branch, &base, false, &[], Some(group), Some("demo")).unwrap();
+            assert!(exists(&nw.entry.path), "el worktree debería existir en disco");
+            assert!(is_worktrees_entry(&relative(&nw.entry.path, &ctx.main)));
+            assert_eq!(git_quiet(&nw.entry.path, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap().trim(), branch);
+            assert_eq!(nw.feature.workspace.as_deref(), Some(group));
+            // El worktree vive dentro de .worktrees y no ensucia la copia principal.
+            assert_eq!(changes_of(&ctx.main).unwrap().untracked, 0);
+            features.push(nw.feature);
+        }
+        let workspaces = build_workspaces(&features, &[], true, &dir.path);
+        assert_eq!(workspaces.len(), 2, "Principal + el trabajo demo");
+        let demo = workspaces.iter().find(|w| w.kind == "feature").unwrap();
+        assert_eq!(demo.label, "demo");
+        assert_eq!(demo.repos.len(), 2);
+        assert!(demo.repos.iter().all(|r| r.kind == "feature"));
+        assert!(demo.repos.iter().all(|r| r.branch.as_deref() == Some(branch)));
     }
 
     fn repo_with_feature() -> (tempdir::Dir, String, String) {

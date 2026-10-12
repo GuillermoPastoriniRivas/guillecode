@@ -24,7 +24,7 @@ import { bumpHead, gitAction, refreshAllRepos, setActiveRepo, useGit } from "../
 import { openEditor } from "../state/editors"
 import { openAiReview } from "../state/aiReview"
 import { refreshFeatures, useFeatures } from "../state/features"
-import { FeaturesSection } from "./FeaturesSection"
+import { WorkspaceSelector } from "./WorkspaceSelector"
 import { StatusRow } from "./StatusRow"
 import { pickOne, promptInput } from "../state/quickinput"
 import { notify } from "../state/toasts"
@@ -239,7 +239,7 @@ export function ScmView() {
           <IconButton icon="ellipsis" title="Más acciones" onClick={(e) => moreMenu(e.currentTarget)} />
         </span>
       </div>
-      <FeaturesSection />
+      <WorkspaceSelector />
       {repos.length > 1 && (
         <div className="scm-repos">
           {repos.map((r) => (

@@ -244,20 +244,19 @@ export function Workbench() {
         )}
         {agentVisible && (
           <>
-            {!focusChat && (
-              <Sash
-                orientation="vertical"
-                onDrag={(delta) => {
-                  if (start.current === 0) start.current = useLayout.getState().agentWidth
-                  useLayout.getState().setAgentWidth(start.current - delta)
-                }}
-                onDragEnd={() => {
-                  start.current = 0
-                }}
-                onDoubleClick={() => useLayout.getState().applyPreset(agentWidth > window.innerWidth * 0.5 ? "balanced" : "agent")}
-              />
-            )}
-            <div className="agent-slot" style={focusChat ? { flex: 1 } : root ? { width: agentWidth } : { flex: 1 }}>
+            {focusChat && <div className="focus-filler" />}
+            <Sash
+              orientation="vertical"
+              onDrag={(delta) => {
+                if (start.current === 0) start.current = useLayout.getState().agentWidth
+                useLayout.getState().setAgentWidth(start.current - delta)
+              }}
+              onDragEnd={() => {
+                start.current = 0
+              }}
+              onDoubleClick={() => useLayout.getState().applyPreset(agentWidth > window.innerWidth * 0.5 ? "balanced" : "agent")}
+            />
+            <div className="agent-slot" style={focusChat || root ? { width: agentWidth } : { flex: 1 }}>
               <AgentPanel />
             </div>
           </>

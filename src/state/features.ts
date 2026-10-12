@@ -7,17 +7,21 @@ import {
   featuresSetSettings,
   featuresUpdate,
   featuresUpdateFromBase,
+  workspaceCreate as workspaceCreateCall,
+  workspaceRemove as workspaceRemoveCall,
+  workspaceRemoveCheck,
   type Feature,
   type FeatureList,
   type MergeResult,
   type ProjectSettings,
   type RepoGroup,
+  type Workspace,
 } from "../lib/features"
 import { gitBranches } from "../lib/git"
 import { api } from "../lib/opencode"
 import { readFile, stat } from "../lib/fs"
 import { joinPath, samePath } from "../lib/paths"
-import { debounce } from "../lib/persist"
+import { debounce, loadJson, projectKey, saveJson } from "../lib/persist"
 import { coalescedByKey } from "../lib/coalesced"
 import { errorMessage, isTauri, onEvent } from "../lib/tauri"
 import { useProject } from "./project"
@@ -33,7 +37,7 @@ import {
   useAgent,
 } from "./agent"
 import { killTerminal, runInTerminal, useTerminals } from "./terminals"
-import { repoForPath, setActiveRepo, useGit } from "./git"
+import { refreshAllRepos, repoForPath, setActiveRepo, useGit } from "./git"
 import { useLayout } from "./layout"
 import { openEditor } from "./editors"
 import { pickOne, promptInput } from "./quickinput"
@@ -41,12 +45,16 @@ import { notify } from "./toasts"
 import { ask } from "../components/Dialog"
 import { dirtyPaths } from "../editor/documents"
 
+type PrepareState = { status: "preparing" | "ready" | "error"; terminals: string[]; detail?: string }
+
 type FeaturesState = {
   list: FeatureList | null
   loading: boolean
   error: string | null
   runTerminalId: string | null
   showArchived: boolean
+  activeWorkspace: string
+  prepare: Record<string, PrepareState>
 }
 
 export const useFeatures = create<FeaturesState>(() => ({
@@ -55,6 +63,8 @@ export const useFeatures = create<FeaturesState>(() => ({
   error: null,
   runTerminalId: null,
   showArchived: false,
+  activeWorkspace: "main",
+  prepare: {},
 }))
 
 export function featureTitle(f: Pick<Feature, "kind" | "label" | "group">): string {
@@ -70,6 +80,102 @@ export function findFeature(root: string | null, list: FeatureList | null = useF
 export function activeFeature(): Feature | null {
   return findFeature(useProject.getState().root)
 }
+
+const WORKSPACE_KEY = "features.workspace"
+
+export function workspaceById(id: string, list: FeatureList | null = useFeatures.getState().list): Workspace | null {
+  return list?.workspaces.find((w) => w.id === id) ?? null
+}
+
+export function activeWorkspace(): Workspace | null {
+  const list = useFeatures.getState().list
+  if (!list) return null
+  const id = useFeatures.getState().activeWorkspace
+  return list.workspaces.find((w) => w.id === id) ?? list.workspaces[0] ?? null
+}
+
+export function workspaceTitle(w: Pick<Workspace, "kind" | "label">): string {
+  return w.kind === "main" ? "Principal" : w.label
+}
+
+/** Cambia qué copia de cada repositorio usa Control de código, sin cerrar
+ *  terminales ni cambiar la carpeta de trabajo: solo reapunta el contexto de Git. */
+export function applyWorkspaceRepos(): void {
+  const list = useFeatures.getState().list
+  const ws = activeWorkspace()
+  if (!list || !ws) return
+  const paths = ws.repos.filter((r) => !r.missing).map((r) => r.path)
+  if (paths.length === 0) return
+  const current = useGit.getState().activeRepo
+  const active = paths.find((p) => samePath(p, current ?? "")) ?? paths[0]
+  useGit.setState({ repos: paths, activeRepo: active })
+  void refreshAllRepos()
+}
+
+export async function selectWorkspace(id: string): Promise<void> {
+  const list = useFeatures.getState().list
+  const ws = workspaceById(id, list)
+  if (!ws) return
+  useFeatures.setState({ activeWorkspace: id })
+  const project = useProject.getState().project
+  if (project) saveJson(projectKey(project, WORKSPACE_KEY), id)
+  applyWorkspaceRepos()
+  if (ws.kind === "feature") notify.info(`Trabajando en ${ws.label}`, ws.repos.length === 1 ? ws.repos[0].name : `${ws.repos.length} repositorios`)
+}
+
+function restoreWorkspace(list: FeatureList): void {
+  const project = useProject.getState().project
+  const saved = project ? loadJson<string | null>(projectKey(project, WORKSPACE_KEY), null) : null
+  const wanted = saved && list.workspaces.some((w) => w.id === saved) ? saved : "main"
+  if (useFeatures.getState().activeWorkspace !== wanted) useFeatures.setState({ activeWorkspace: wanted })
+  applyWorkspaceRepos()
+}
+
+/** Ejecuta la receta de preparación (settings.setup) de cada repositorio del
+ *  trabajo en su propia copia, y sigue el resultado para marcar listo o error. */
+export async function prepareWorkspace(ws: Workspace): Promise<void> {
+  const list = useFeatures.getState().list
+  if (!list) return
+  const terminals: string[] = []
+  const repos = ws.repos.filter((r) => !r.missing)
+  for (const r of repos) {
+    const command = (findGroup(r.repo, list)?.settings ?? list.settings)?.setup
+    if (!command) continue
+    const id = await runInTerminal(command, { newTerminal: true, cwd: r.path, title: `preparar ${r.name}` })
+    if (id) terminals.push(id)
+  }
+  if (terminals.length === 0) {
+    useFeatures.setState((s) => ({ prepare: { ...s.prepare, [ws.id]: { status: "ready", terminals: [], detail: "Sin pasos de preparación" } } }))
+    notify.info(`«${ws.label}» lista`, "El proyecto no tiene una receta de preparación: se usa el entorno existente")
+    return
+  }
+  useFeatures.setState((s) => ({ prepare: { ...s.prepare, [ws.id]: { status: "preparing", terminals } } }))
+}
+
+function reconcilePrepare(terminals: { id: string; exited: boolean; exitCode: number | null }[]): void {
+  const prepare = useFeatures.getState().prepare
+  let changed = false
+  const next: Record<string, PrepareState> = { ...prepare }
+  for (const [id, state] of Object.entries(prepare)) {
+    if (state.status !== "preparing" || state.terminals.length === 0) continue
+    const mine = state.terminals.map((t) => terminals.find((x) => x.id === t)).filter(Boolean) as typeof terminals
+    if (mine.length < state.terminals.length || mine.some((t) => !t.exited)) continue
+    const failed = mine.some((t) => (t.exitCode ?? 1) !== 0)
+    next[id] = { ...state, status: failed ? "error" : "ready", detail: failed ? "La preparación terminó con errores" : undefined }
+    changed = true
+  }
+  if (changed) useFeatures.setState({ prepare: next })
+}
+
+export function setWorkspacePrepare(id: string, state: PrepareState | null): void {
+  useFeatures.setState((s) => {
+    const prepare = { ...s.prepare }
+    if (state) prepare[id] = state
+    else delete prepare[id]
+    return { prepare }
+  })
+}
+
 
 function requireProject(): string {
   const project = useProject.getState().project
@@ -105,7 +211,7 @@ export async function openFeatureCreate(repo?: string): Promise<void> {
   const group = repo ? findGroup(repo, list) : null
   useLayout.getState().toggleAgent(true)
   newSession()
-  focusComposer(`Quiero trabajar en un worktree separado${group ? ` del repositorio ${group.name} (${group.path})` : ""}. Crealo o reutilizá uno adecuado con las herramientas de worktrees de GuilleCode, registrá su rama base real y prepará el entorno. No asumas main ni me pidas configurar ramas o carpetas. Trabajá con las rutas y el cwd de ese worktree.\n\nLo que quiero hacer: `)
+  focusComposer(`Quiero trabajar en un trabajo separado (worktree) que incluya la copia de trabajo de todos los repositorios del proyecto${group ? `, empezando por ${group.name} (${group.path})` : ""}. Crealo con la herramienta worktree_create de GuilleCode, que hace un worktree por repositorio con la misma etiqueta; elegí por repo la base real (no asumas main) y registrala. Después prepará el entorno completo de cada repo siguiendo la receta del proyecto y verificá que la app arranca; no inventes un entorno reducido ni me pidas configurar ramas, carpetas o entornos. Trabajá con las rutas y el cwd que devuelva el tool.\n\nLo que quiero hacer: `)
 }
 
 export async function openFeatureCreateForm(repo?: string): Promise<void> {
@@ -140,6 +246,7 @@ const refreshProject = coalescedByKey(async (project) => {
     if (!samePath(project, useProject.getState().project ?? "")) return
     useFeatures.setState({ list, loading: false, error: null })
     setKnownDirectories(list.features.filter((f) => !f.missing).map((f) => f.root))
+    restoreWorkspace(list)
     void loadOtherSessions()
     keepActiveRootValid(list)
   } catch (e) {
@@ -201,6 +308,29 @@ export async function switchToFeature(feature: Feature): Promise<boolean> {
   const ok = await activateRoot(feature.root, { label: featureTitle(feature) })
   if (ok) notify.info(`Ahora en ${featureTitle(feature)}`, feature.branch ?? undefined)
   return ok
+}
+
+export async function pickWorkspace(): Promise<void> {
+  const list = useFeatures.getState().list
+  if (!list?.git) {
+    notify.info("Los espacios de trabajo necesitan un repositorio git", "Abrí un repo, o una carpeta que tenga repos adentro")
+    return
+  }
+  const active = useFeatures.getState().activeWorkspace
+  const items: Array<{ id: string; label: string; description?: string; icon: string }> = (list.workspaces ?? []).map((w) => ({
+    id: w.id,
+    label: workspaceTitle(w),
+    description: w.kind === "main" ? `${w.repos.length} repositorio(s)` : w.repos.map((r) => r.name).join(", "),
+    icon: w.id === active ? "check" : w.kind === "main" ? "home" : "worktree",
+  }))
+  items.push({ id: "__new__", label: "Trabajo nuevo…", icon: "add" })
+  const choice = await pickOne(items, { title: "Espacios de trabajo", placeholder: "Elegí Principal o un trabajo" })
+  if (!choice) return
+  if (choice.id === "__new__") {
+    await openFeatureCreate()
+    return
+  }
+  await selectWorkspace(choice.id)
 }
 
 export async function pickFeature(): Promise<void> {
@@ -280,6 +410,102 @@ export async function createFeature(input: CreateInput): Promise<Feature | null>
     notify.error("No se pudo crear la feature", errorMessage(e))
     return null
   }
+}
+
+export async function createWorkspace(input: { label: string; base?: string | null; repos?: string[]; copy?: string[] | null }): Promise<Workspace | null> {
+  try {
+    const project = requireProject()
+    const result = await workspaceCreateCall({
+      project,
+      label: input.label,
+      base: input.base ?? null,
+      repos: input.repos,
+      copy: input.copy ?? null,
+    })
+    await refreshFeatures()
+    if (result.failed.length > 0) notify.warning("Algunos repositorios no se crearon", result.failed.map((f) => `${f.name}: ${f.error}`).join("\n"))
+    notify.success(`Trabajo «${result.label}» creado`, result.repos.length === 1 ? (result.repos[0].feature.branch ?? undefined) : `${result.repos.length} repositorios`)
+    await selectWorkspace(result.workspace)
+    return workspaceById(result.workspace)
+  } catch (e) {
+    notify.error("No se pudo crear el trabajo", errorMessage(e))
+    return null
+  }
+}
+
+function workspaceBusy(ws: Workspace): number {
+  const s = useAgent.getState()
+  return ws.repos.reduce(
+    (n, r) => n + s.allSessions.filter((x) => sessionInRoot(x, r.root) && s.statuses[x.id] && s.statuses[x.id].type !== "idle").length,
+    0,
+  )
+}
+
+export async function removeWorkspace(ws: Workspace): Promise<void> {
+  if (ws.kind === "main") return
+  const project = requireProject()
+  if (workspaceBusy(ws) > 0) {
+    notify.warning("Hay agentes trabajando en este trabajo", "Esperá a que terminen o detenelos antes de eliminarlo")
+    return
+  }
+  let check
+  try {
+    check = await workspaceRemoveCheck(project, ws.id)
+  } catch (e) {
+    notify.error("No se pudo revisar el trabajo", errorMessage(e))
+    return
+  }
+  const risks: string[] = []
+  if (check.tracked > 0) risks.push(`${plural(check.tracked, "archivo con cambios sin commitear", "archivos con cambios sin commitear")}`)
+  if (check.untracked > 0) risks.push(plural(check.untracked, "archivo nuevo sin commitear", "archivos nuevos sin commitear"))
+  if (check.ignoredTotal > 0) risks.push(`${plural(check.ignoredTotal, "archivo ignorado por git", "archivos ignorados por git")}`)
+  if (check.unmerged > 0) risks.push(`${plural(check.unmerged, "commit sin integrar", "commits sin integrar")}`)
+  const dirty = check.tracked > 0 || check.untracked > 0
+  const choice = await ask(`Eliminar «${ws.label}»`, {
+    message: `${risks.length > 0 ? `Ojo: ${risks.join("; ")}. ` : "No tiene cambios sin commitear. "}Se eliminan los worktrees de sus repositorios. Las conversaciones quedan en el historial.`,
+    icon: risks.length > 0 ? "warning" : "question",
+    buttons: [
+      { id: "cancel", label: "Cancelar" },
+      { id: "folder", label: "Solo las carpetas" },
+      { id: "branch", label: "Carpetas y ramas", danger: true },
+    ],
+  })
+  if (choice !== "folder" && choice !== "branch") return
+  let force = false
+  if (dirty) {
+    const sure = await ask("Se pierden los cambios sin commitear", {
+      message: `${check.dirty.slice(0, 6).join(", ")}${check.dirty.length > 6 ? "…" : ""}. Esto no se puede deshacer.`,
+      icon: "warning",
+      buttons: [
+        { id: "cancel", label: "Cancelar" },
+        { id: "force", label: "Eliminar igual", danger: true },
+      ],
+    })
+    if (sure !== "force") return
+    force = true
+  }
+  let forceBranch = false
+  if (choice === "branch" && check.unmerged > 0) {
+    const sure = await ask(`El trabajo tiene ${plural(check.unmerged, "commit", "commits")} sin integrar`, {
+      message: "Si borrás las ramas, esos commits quedan sin rama. ¿Borrarlas igual o conservarlas?",
+      icon: "warning",
+      buttons: [
+        { id: "cancel", label: "Cancelar" },
+        { id: "keep", label: "Conservar las ramas" },
+        { id: "force", label: "Borrarlas igual", danger: true },
+      ],
+    })
+    if (sure === "cancel" || !sure) return
+    forceBranch = sure === "force"
+  }
+  try {
+    await workspaceRemoveCall({ project, workspace: ws.id, deleteBranch: choice === "branch" && (check.unmerged === 0 || forceBranch), force, forceBranch })
+    notify.success(`Trabajo «${ws.label}» eliminado`)
+  } catch (e) {
+    notify.error("No se pudo eliminar el trabajo", errorMessage(e))
+  }
+  if (useFeatures.getState().activeWorkspace === ws.id) await selectWorkspace("main")
+  await refreshFeatures()
 }
 
 export function settingsOf(scope: string, list: FeatureList | null = useFeatures.getState().list): ProjectSettings | null {
@@ -609,8 +835,18 @@ export function isAppRunning(runTerminalId: string | null, terminals = useTermin
   return !!runTerminalId && terminals.some((t) => t.id === runTerminalId && !t.exited)
 }
 
+function runRoot(): string | null {
+  const ws = activeWorkspace()
+  if (ws && ws.kind === "feature") {
+    const active = useGit.getState().activeRepo
+    const repo = ws.repos.find((r) => samePath(r.path, active ?? "")) ?? ws.repos[0]
+    if (repo && !repo.missing) return repo.root
+  }
+  return useProject.getState().root
+}
+
 export async function runApp(): Promise<void> {
-  const root = useProject.getState().root
+  const root = runRoot()
   if (!root) return
   const command = contextSettings()?.run ?? (await configureRunCommand())
   if (!command) return
@@ -631,4 +867,5 @@ export async function stopApp(): Promise<void> {
 useTerminals.subscribe((s) => {
   const id = useFeatures.getState().runTerminalId
   if (id && !s.terminals.some((t) => t.id === id)) useFeatures.setState({ runTerminalId: null })
+  reconcilePrepare(s.terminals)
 })

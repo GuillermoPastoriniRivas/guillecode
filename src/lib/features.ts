@@ -35,6 +35,33 @@ export type Feature = {
 
 export type ProjectSettings = { run: string | null; setup: string | null; copy: string[] }
 
+export type WorkspaceRepo = {
+  repo: string
+  name: string
+  path: string
+  root: string
+  branch: string | null
+  head: string | null
+  detached: boolean
+  base: string | null
+  baseSource: string
+  kind: "main" | "feature"
+  missing: boolean
+  changes: Changes | null
+  merging: boolean
+  ahead: number | null
+  behind: number | null
+}
+
+export type Workspace = {
+  id: string
+  label: string
+  kind: "main" | "feature"
+  repos: WorkspaceRepo[]
+  createdAt: number | null
+  archived: boolean
+}
+
 export type RepoGroup = {
   path: string
   main: string
@@ -58,7 +85,15 @@ export type FeatureList = {
   worktreesDir: string
   features: Feature[]
   repos: RepoGroup[]
+  workspaces: Workspace[]
   settings: ProjectSettings
+}
+
+export type WorkspaceCreateResult = {
+  workspace: string
+  label: string
+  repos: CreateResult[]
+  failed: Array<{ repo: string; name: string; error: string }>
 }
 
 export type CopyCandidate = { path: string; dir: boolean; suggested: boolean }
@@ -108,6 +143,18 @@ function normalizeGroup(g: RepoGroup): RepoGroup {
   return { ...g, path: normalizePath(g.path), main: normalizePath(g.main), worktreesDir: normalizePath(g.worktreesDir) }
 }
 
+function normalizeWorkspace(w: Workspace): Workspace {
+  return {
+    ...w,
+    repos: (w.repos ?? []).map((r) => ({
+      ...r,
+      repo: normalizePath(r.repo),
+      path: normalizePath(r.path),
+      root: normalizePath(r.root),
+    })),
+  }
+}
+
 export async function featuresList(project: string): Promise<FeatureList> {
   const list = await call<FeatureList>("features_list", { project })
   return {
@@ -117,6 +164,7 @@ export async function featuresList(project: string): Promise<FeatureList> {
     worktreesDir: list.worktreesDir ? normalizePath(list.worktreesDir) : list.worktreesDir,
     features: list.features.map(normalizeFeature),
     repos: list.repos.map(normalizeGroup),
+    workspaces: (list.workspaces ?? []).map(normalizeWorkspace),
   }
 }
 
@@ -164,6 +212,45 @@ export const featuresUpdateFromBase = (project: string, path: string) =>
 export type FeatureDiff = { base: string | null; mergeBase: string | null; head: string | null; commits: number; files: CommitFile[] }
 
 export const featuresDiff = (project: string, path: string, base?: string) => call<FeatureDiff>("features_diff", { project, path, base: base || null })
+
+export type WorkspaceCreateInput = {
+  project: string
+  label: string
+  branch?: string | null
+  base?: string | null
+  bases?: Record<string, string>
+  repos?: string[]
+  existing?: boolean
+  copy?: string[] | null
+}
+
+export async function workspaceCreate(input: WorkspaceCreateInput): Promise<WorkspaceCreateResult> {
+  const result = await call<WorkspaceCreateResult>("workspace_create", { args: input })
+  return { ...result, repos: result.repos.map((r) => ({ ...r, feature: normalizeFeature(r.feature) })) }
+}
+
+export type WorkspaceRemoveCheck = {
+  repos: RemoveCheck[]
+  tracked: number
+  untracked: number
+  dirty: string[]
+  ignoredTotal: number
+  ignored: string[]
+  unmerged: number
+  merging: boolean
+}
+
+export const workspaceRemoveCheck = (project: string, workspace: string) =>
+  call<WorkspaceRemoveCheck>("workspace_remove_check", { project, workspace })
+
+export const workspaceRemove = (args: { project: string; workspace: string; deleteBranch: boolean; force: boolean; forceBranch: boolean }) =>
+  call<RemoveResult[]>("workspace_remove", {
+    project: args.project,
+    workspace: args.workspace,
+    deleteBranch: args.deleteBranch,
+    force: args.force,
+    forceBranch: args.forceBranch,
+  })
 
 export const gitMergeAbort = (worktree: string) => call<void>("git_merge_abort", { worktree })
 export const gitMergeContinue = (worktree: string) => call<string>("git_merge_continue", { worktree })

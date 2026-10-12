@@ -15,6 +15,8 @@ type LayoutData = {
   agentWidth: number
   panelMaximized: boolean
   focusChat: boolean
+  /** Ancho del agente antes de entrar en foco-chat, para restaurarlo al salir. */
+  agentWidthBeforeFocus: number | null
 }
 
 type LayoutState = LayoutData & {
@@ -45,6 +47,7 @@ const DEFAULTS: LayoutData = {
   agentWidth: 460,
   panelMaximized: false,
   focusChat: false,
+  agentWidthBeforeFocus: null,
 }
 
 export const SIDEBAR_MIN = 180
@@ -63,6 +66,20 @@ const clamp = (v: number, min: number, max: number) => Math.min(Math.max(v, min)
 
 type Widths = Pick<LayoutData, "sidebarWidth" | "agentWidth" | "panelHeight">
 
+// Rango permitido del ancho del agente. En foco-chat el centro no se renderiza,
+// así que el chat puede ocupar todo lo que sobra a la derecha del sidebar; su
+// mínimo baja si la ventana es angosta, dejando siempre margen para moverlo.
+function agentRange(s: Pick<LayoutData, "focusChat" | "sidebarVisible" | "sidebarWidth">, winW: number): [number, number] {
+  const chrome = ACTIVITY_W + (s.sidebarVisible ? SASH_W : 0) + SASH_W
+  const avail = winW - chrome - (s.sidebarVisible ? s.sidebarWidth : 0)
+  if (s.focusChat) {
+    const max = Math.max(160, avail)
+    const min = Math.min(AGENT_MIN, Math.max(160, avail - 40))
+    return [Math.min(min, max), max]
+  }
+  return [AGENT_MIN, Math.max(AGENT_MIN, Math.min(winW * AGENT_MAX_RATIO, avail - CENTER_MIN))]
+}
+
 // Nunca dejamos que los anchos persistidos (o el preset "Foco en el agente")
 // achiquen la columna del editor por debajo de CENTER_MIN: con el chat y la
 // terminal abiertos esa columna es la que colapsaba y rompía la UI.
@@ -72,7 +89,17 @@ function clampToViewport(s: LayoutData): Widths {
   let sidebar = num(s.sidebarWidth, DEFAULTS.sidebarWidth)
   let agent = num(s.agentWidth, DEFAULTS.agentWidth)
   if (s.sidebarVisible) sidebar = clamp(sidebar, SIDEBAR_MIN, SIDEBAR_MAX)
-  if (s.agentVisible) agent = clamp(agent, AGENT_MIN, winW * AGENT_MAX_RATIO)
+  if (s.focusChat && s.sidebarVisible) {
+    // En foco el sidebar cede espacio para que el chat quepa sin desbordar.
+    const total = winW - (ACTIVITY_W + SASH_W + SASH_W)
+    sidebar = Math.min(sidebar, Math.max(SIDEBAR_MIN, total - AGENT_MIN))
+  }
+  if (s.agentVisible) {
+    const [lo, hi] = agentRange({ ...s, sidebarWidth: sidebar }, winW)
+    agent = clamp(agent, lo, hi)
+  }
+  const panelHeight = clamp(num(s.panelHeight, DEFAULTS.panelHeight), PANEL_MIN, winH - PANEL_VERTICAL_MARGIN)
+  if (s.focusChat) return { sidebarWidth: Math.round(sidebar), agentWidth: Math.round(agent), panelHeight }
   const chrome = ACTIVITY_W + (s.sidebarVisible ? SASH_W : 0) + (s.agentVisible ? SASH_W : 0)
   const avail = winW - chrome - CENTER_MIN
   if (s.sidebarVisible && s.agentVisible && sidebar + agent > avail) {
@@ -86,8 +113,7 @@ function clampToViewport(s: LayoutData): Widths {
   } else if (s.agentVisible && !s.sidebarVisible) {
     agent = Math.min(agent, Math.max(AGENT_MIN, avail))
   }
-  const panelHeight = clamp(num(s.panelHeight, DEFAULTS.panelHeight), PANEL_MIN, winH - PANEL_VERTICAL_MARGIN)
-  return { sidebarWidth: Math.round(sidebar), agentWidth: Math.round(agent), panelHeight: Math.round(panelHeight) }
+  return { sidebarWidth: Math.round(sidebar), agentWidth: Math.round(agent), panelHeight }
 }
 
 const persisted = loadJson<Partial<LayoutData>>(STORAGE_KEY, {})
@@ -110,15 +136,20 @@ export const useLayout = create<LayoutState>((set, get) => ({
     set((s) => ({
       panelVisible: !s.panelVisible,
       panelMaximized: s.panelVisible ? false : s.panelMaximized,
-      focusChat: s.panelVisible ? s.focusChat : false,
+      ...(s.panelVisible ? {} : { focusChat: false, agentWidth: s.agentWidthBeforeFocus ?? s.agentWidth, agentWidthBeforeFocus: null }),
     }))
     get().fitToViewport()
   },
-  showPanel: (tab) => set({ panelVisible: true, panelTab: tab, focusChat: false }),
+  showPanel: (tab) => {
+    set((s) => ({ panelVisible: true, panelTab: tab, focusChat: false, agentWidth: s.agentWidthBeforeFocus ?? s.agentWidth, agentWidthBeforeFocus: null }))
+    get().fitToViewport()
+  },
   toggleAgent: (visible) => {
     set((s) => {
       const next = visible ?? !s.agentVisible
-      return { agentVisible: next, focusChat: next ? s.focusChat : false }
+      const focusChat = next ? s.focusChat : false
+      const restore = s.focusChat && !focusChat ? { agentWidth: s.agentWidthBeforeFocus ?? s.agentWidth, agentWidthBeforeFocus: null } : {}
+      return { agentVisible: next, focusChat, ...restore }
     })
     get().fitToViewport()
   },
@@ -131,33 +162,39 @@ export const useLayout = create<LayoutState>((set, get) => ({
   setPanelHeight: (h) => set({ panelHeight: Math.round(clamp(h, PANEL_MIN, window.innerHeight - PANEL_VERTICAL_MARGIN)) }),
   setAgentWidth: (w) => {
     const s = get()
-    const chrome = ACTIVITY_W + (s.sidebarVisible ? SASH_W : 0) + SASH_W
-    const byCenter = window.innerWidth - chrome - (s.sidebarVisible ? s.sidebarWidth : 0) - CENTER_MIN
-    const max = Math.max(AGENT_MIN, Math.min(window.innerWidth * AGENT_MAX_RATIO, byCenter))
-    set({ agentWidth: Math.round(clamp(w, AGENT_MIN, max)) })
+    const [lo, hi] = agentRange(s, window.innerWidth)
+    set({ agentWidth: Math.round(clamp(w, lo, hi)) })
   },
   togglePanelMaximized: () => set((s) => ({ panelMaximized: !s.panelMaximized, panelVisible: true })),
   toggleFocusChat: (on) => {
     set((s) => {
       const next = on ?? !s.focusChat
       if (next === s.focusChat) return {}
-      return { focusChat: next, agentVisible: next ? true : s.agentVisible }
+      if (next) {
+        return {
+          focusChat: true,
+          agentVisible: true,
+          agentWidthBeforeFocus: s.agentWidth,
+          agentWidth: Math.round(agentRange({ ...s, focusChat: true }, window.innerWidth)[1]),
+        }
+      }
+      return { focusChat: false, agentWidth: s.agentWidthBeforeFocus ?? s.agentWidth, agentWidthBeforeFocus: null }
     })
     get().fitToViewport()
   },
   applyPreset: (preset) => {
     const width = window.innerWidth
-    if (preset === "agent") set({ agentVisible: true, sidebarVisible: false, agentWidth: Math.round(width * 0.62), focusChat: false })
-    else if (preset === "code") set({ agentVisible: false, sidebarVisible: true, focusChat: false })
-    else if (preset === "review") set({ agentVisible: true, sidebarVisible: true, activeView: "scm", agentWidth: 400, focusChat: false })
-    else set({ agentVisible: true, sidebarVisible: true, agentWidth: DEFAULTS.agentWidth, sidebarWidth: DEFAULTS.sidebarWidth, focusChat: false })
+    if (preset === "agent") set({ agentVisible: true, sidebarVisible: false, agentWidth: Math.round(width * 0.62), focusChat: false, agentWidthBeforeFocus: null })
+    else if (preset === "code") set({ agentVisible: false, sidebarVisible: true, focusChat: false, agentWidthBeforeFocus: null })
+    else if (preset === "review") set({ agentVisible: true, sidebarVisible: true, activeView: "scm", agentWidth: 400, focusChat: false, agentWidthBeforeFocus: null })
+    else set({ agentVisible: true, sidebarVisible: true, agentWidth: DEFAULTS.agentWidth, sidebarWidth: DEFAULTS.sidebarWidth, focusChat: false, agentWidthBeforeFocus: null })
     get().fitToViewport()
   },
   fitToViewport: () => set(clampToViewport(get())),
 }))
 
 useLayout.subscribe((s) => {
-  const data: Omit<LayoutData, "focusChat"> = {
+  const data: Omit<LayoutData, "focusChat" | "agentWidthBeforeFocus"> = {
     sidebarVisible: s.sidebarVisible,
     sidebarWidth: s.sidebarWidth,
     activeView: s.activeView,

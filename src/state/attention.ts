@@ -3,12 +3,13 @@ import { getCurrentWindow, UserAttentionType } from "@tauri-apps/api/window"
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification"
 import { isTauri } from "../lib/tauri"
 import { loadJson, saveJson } from "../lib/persist"
-import { selectSession, sessionWaiting, subscribeSessionFinished, useAgent, type PermissionRequest, type QuestionRequest } from "./agent"
+import { pendingRequests, selectSession, sessionWaiting, subscribeSessionFinished, useAgent } from "./agent"
+import { useApprovals } from "./approvals"
 import { useLayout } from "./layout"
 import { useToasts } from "./toasts"
 import { watchingSession } from "./unseen"
 
-type PendingSource = { permissions: PermissionRequest[]; questions: QuestionRequest[] }
+type PendingSource = Parameters<typeof pendingRequests>[0]
 
 let baseTitle = "GuilleCode"
 const TITLE_FLASH_MS = 1100
@@ -51,11 +52,13 @@ export function setBaseTitle(title: string): void {
 }
 
 export function pendingCount(s: PendingSource): number {
-  return s.permissions.length + s.questions.length
+  const { permissions, questions } = pendingRequests(s)
+  return permissions.length + questions.length
 }
 
 export function pendingSessionId(s: PendingSource): string | null {
-  return s.permissions[0]?.sessionID ?? s.questions[0]?.sessionID ?? null
+  const { permissions, questions } = pendingRequests(s)
+  return permissions[0]?.sessionID ?? questions[0]?.sessionID ?? null
 }
 
 export function focusPending(): void {
@@ -151,26 +154,27 @@ function onAgentFinished(sessionID: string): void {
 }
 
 function pendingBody(): string {
-  const { permissions, questions } = useAgent.getState()
+  const { permissions, questions } = pendingRequests(useAgent.getState())
   const parts: string[] = []
   if (permissions.length > 0) parts.push(`${permissions.length} permiso${permissions.length === 1 ? "" : "s"}`)
   if (questions.length > 0) parts.push(`${questions.length} pregunta${questions.length === 1 ? "" : "s"}`)
   return `${parts.join(" y ")} sin responder. El agente está esperando.`
 }
 
-async function notifyDesktop(body: string): Promise<void> {
+async function notifyDesktop(body: string, stillPending = () => true): Promise<void> {
   if (!useAttention.getState().desktop) return
   try {
     let granted = await isPermissionGranted()
     if (!granted) granted = (await requestPermission()) === "granted"
-    if (granted) sendNotification({ title: "GuilleCode necesita tu respuesta", body })
+    if (granted && stillPending()) sendNotification({ title: "GuilleCode necesita tu respuesta", body })
   } catch {
     try {
+      if (!stillPending()) return
       if (!("Notification" in window)) return
       if (Notification.permission === "granted") new Notification("GuilleCode necesita tu respuesta", { body })
       else if (Notification.permission !== "denied")
         void Notification.requestPermission().then((p) => {
-          if (p === "granted") new Notification("GuilleCode necesita tu respuesta", { body })
+          if (p === "granted" && stillPending()) new Notification("GuilleCode necesita tu respuesta", { body })
         })
     } catch {
       return
@@ -204,7 +208,7 @@ function setTitle(text: string): void {
 }
 
 function showToast(): void {
-  const { permissions, questions } = useAgent.getState()
+  const { permissions, questions } = pendingRequests(useAgent.getState())
   const parts: string[] = []
   if (permissions.length > 0) parts.push(`${permissions.length} permiso${permissions.length === 1 ? "" : "s"}`)
   if (questions.length > 0) parts.push(`${questions.length} pregunta${questions.length === 1 ? "" : "s"}`)
@@ -227,7 +231,8 @@ function engage(): void {
   useAttention.setState({ alerting: true, silenced: false })
   showToast()
   void escalateWindow()
-  void notifyDesktop(pendingBody())
+  const currentToast = toastId
+  void notifyDesktop(pendingBody(), () => useAttention.getState().alerting && toastId === currentToast)
   playChime()
   let on = false
   titleTimer = setInterval(() => {
@@ -285,19 +290,21 @@ export function testAlert(): void {
 
 export function initAttention(): () => void {
   if (offStore) return offStore
-  const sync = (count: number) => {
+  const sync = () => {
+    const count = pendingCount(useAgent.getState())
     useAttention.setState({ count })
     if (count > 0) engage()
     else disengage()
   }
-  sync(pendingCount(useAgent.getState()))
+  sync()
   const unsubscribe = useAgent.subscribe((s, prev) => {
-    const count = pendingCount(s)
-    if (count !== pendingCount(prev)) sync(count)
+    if (s.permissions !== prev.permissions || s.questions !== prev.questions || s.allSessions !== prev.allSessions) sync()
   })
+  const offApprovals = useApprovals.subscribe(() => sync())
   const offFinished = subscribeSessionFinished(onAgentFinished)
   offStore = () => {
     unsubscribe()
+    offApprovals()
     offFinished()
     offStore = null
     disengage()

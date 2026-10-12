@@ -16,10 +16,10 @@ import { loadJson, projectKey, saveJson } from "../lib/persist"
 import { call, isTauri } from "../lib/tauri"
 import { normalizePath, relativePath, samePath, toFileUrl } from "../lib/paths"
 import { notify } from "./toasts"
-import { clearApprovalFailed, setApprovalForSession, useApprovals } from "./approvals"
+import { clearApprovalFailed, permissionNeedsResponse, setApprovalForSession, useApprovals } from "./approvals"
 import { chooseAvailableModel, hasAccount, modelAvailable, modelVisible } from "../lib/providers"
 import { isArchivedSession, sessionTreeIds } from "../lib/sessions"
-import { AUTO_RETRY_MAX, autoRetryDelayMs, isRetryableProviderError, latestFailedAssistant, retryContext, retryMessageID, retryPromptParts, shouldAutoRetry, type RetryContext } from "../lib/autoretry"
+import { CONTINUE_INTERRUPTED_TURN, isRetryableProviderError, latestFailedAssistant, retryContext, retryMessageID, retryPromptParts } from "../lib/autoretry"
 import { reconcileHistory } from "../lib/history"
 
 export type ChatMessage = { info: Message; parts: Part[] }
@@ -62,7 +62,6 @@ export type ContextItem =
   | { kind: "image"; mime: string; url: string; filename: string }
 
 export type SessionView = { messages: ChatMessage[]; loading: boolean; hasMore: boolean; error: string | null }
-export type ProviderRetry = { messageID: string; attempt: number; phase: "waiting" | "sending" | "exhausted" }
 
 type AgentState = {
   connected: boolean
@@ -72,7 +71,6 @@ type AgentState = {
   allSessions: Session[]
   sessionsLoaded: boolean
   statuses: Record<string, SessionStatus>
-  providerRetries: Record<string, ProviderRetry>
   doneFlash: Record<string, number>
   views: Record<string, SessionView>
   permissions: PermissionRequest[]
@@ -110,7 +108,6 @@ export const useAgent = create<AgentState>(() => ({
   allSessions: [],
   sessionsLoaded: false,
   statuses: {},
-  providerRetries: {},
   doneFlash: {},
   views: {},
   permissions: [],
@@ -455,13 +452,6 @@ async function refreshSessionView(sessionID: string, history: HistoryState): Pro
       return { views: { ...s.views, [sessionID]: { messages, loading: false, hasMore: snapshot.length >= PAGE_SIZE, error: null } } }
     })
     for (const [id, revision] of history.messages) if (revision <= started) history.messages.delete(id)
-    const failed = latestFailedAssistant(messages)
-    if (failed?.info.role === "assistant") void maybeAutoRetry(sessionID, failed.info.error, messages)
-    else {
-      const last = messages.at(-1)?.info
-      if (last?.role === "assistant" && last.time.completed && autoRetry.get(sessionID)?.parentIDs.has(last.parentID))
-        cancelAutoRetry(sessionID)
-    }
   } catch (e) {
     if (histories.get(sessionID) !== history) return
     flush()
@@ -617,7 +607,6 @@ const statusMirror: Record<string, SessionStatus["type"]> = {}
 function applyStatus(sessionID: string, st: SessionStatus) {
   const prev = statusMirror[sessionID]
   statusMirror[sessionID] = st.type
-  if (st.type === "busy" || st.type === "retry") cancelAutoRetryTimer(sessionID)
   const finished = (prev === "busy" || prev === "retry") && st.type === "idle"
   enqueue((s) => {
     const patch: Partial<AgentState> = { statuses: { ...s.statuses, [sessionID]: st } }
@@ -654,35 +643,7 @@ export function syncStatuses(map: Record<string, SessionStatus>) {
   }
 }
 
-// When the engine gives up on a retryable provider error (the ChatGPT/Codex
-// backend returns transient 503s) resend the turn on our own, but only when no
-// tool ran in it: replaying tools could repeat side effects.
-type AutoRetryEntry = { parentIDs: Set<string>; handledFailures: Set<string>; count: number; timer: ReturnType<typeof setTimeout> | null; context: RetryContext }
-const autoRetry = new Map<string, AutoRetryEntry>()
-const autoRetryEvaluating = new Map<string, { again: boolean }>()
 const retryInFlight = new Set<string>()
-const retryAfterSend = new Map<string, unknown>()
-
-function cancelAutoRetryTimer(sessionID: string): void {
-  const entry = autoRetry.get(sessionID)
-  if (entry?.timer) {
-    clearTimeout(entry.timer)
-    entry.timer = null
-  }
-}
-
-export function cancelAutoRetry(sessionID: string): void {
-  cancelAutoRetryTimer(sessionID)
-  autoRetry.delete(sessionID)
-  autoRetryEvaluating.delete(sessionID)
-  retryAfterSend.delete(sessionID)
-  useAgent.setState((s) => {
-    if (!s.providerRetries[sessionID]) return {}
-    const providerRetries = { ...s.providerRetries }
-    delete providerRetries[sessionID]
-    return { providerRetries }
-  })
-}
 
 async function messagesForRetry(sessionID: string): Promise<ChatMessage[] | null> {
   try {
@@ -691,60 +652,6 @@ async function messagesForRetry(sessionID: string): Promise<ChatMessage[] | null
     return await api<ChatMessage[]>("GET", `/session/${sessionID}/message`, undefined, { limit: String(PAGE_SIZE) })
   } catch {
     return null
-  }
-}
-
-function showProviderRetry(sessionID: string, retry: ProviderRetry): void {
-  useAgent.setState((s) => ({ providerRetries: { ...s.providerRetries, [sessionID]: retry } }))
-}
-
-async function maybeAutoRetry(sessionID: string, error: unknown, snapshot?: ChatMessage[]): Promise<boolean> {
-  if (!isRetryableProviderError(error)) return false
-  // A new terminal error may arrive while the previous admission is still
-  // reconciling. Schedule only after that send releases its serialization slot.
-  if (retryInFlight.has(sessionID)) {
-    retryAfterSend.set(sessionID, error)
-    return true
-  }
-  if (autoRetry.get(sessionID)?.timer) return true
-  const running = autoRetryEvaluating.get(sessionID)
-  if (running) { running.again = true; return true }
-  const evaluation = { again: false }
-  autoRetryEvaluating.set(sessionID, evaluation)
-  try {
-    const messages = snapshot ?? await messagesForRetry(sessionID)
-    if (!messages || autoRetryEvaluating.get(sessionID) !== evaluation) return false
-    const failed = latestFailedAssistant(messages)
-    if (failed?.info.role !== "assistant" || !isRetryableProviderError(failed.info.error)) return false
-    if (!shouldAutoRetry(messages, failed.info.parentID)) return false
-    const parentID = failed.info.parentID
-    const previous = autoRetry.get(sessionID)
-    const entry: AutoRetryEntry = previous?.parentIDs.has(parentID) ? previous : {
-      parentIDs: new Set([parentID]), handledFailures: new Set(), count: 0, timer: null,
-      context: retryContext(messages, failed),
-    }
-    autoRetry.set(sessionID, entry)
-    if (entry.handledFailures.has(failed.info.id)) return true
-    if (entry.count >= AUTO_RETRY_MAX) {
-      showProviderRetry(sessionID, { messageID: failed.info.id, attempt: entry.count, phase: "exhausted" })
-      return false
-    }
-    showProviderRetry(sessionID, { messageID: failed.info.id, attempt: entry.count + 1, phase: "waiting" })
-    entry.timer = setTimeout(() => {
-      if (autoRetry.get(sessionID) !== entry) return
-      entry.timer = null
-      void retryMessage(sessionID, failed, entry).catch((e) => {
-        if (autoRetry.get(sessionID) !== entry) return
-        cancelAutoRetry(sessionID)
-        notify.error("No se pudo enviar el reintento", e instanceof Error ? e.message : String(e))
-      })
-    }, autoRetryDelayMs(entry.count))
-    return true
-  } finally {
-    if (autoRetryEvaluating.get(sessionID) === evaluation) {
-      autoRetryEvaluating.delete(sessionID)
-      if (evaluation.again) void maybeAutoRetry(sessionID, error)
-    }
   }
 }
 
@@ -799,13 +706,6 @@ function handleEvent(e: ServerEvent, directory?: string) {
   switch (e.type) {
     case "message.updated": {
       const info = p.info as Message
-      if (info.role === "assistant") {
-        if (info.time.completed && info.error) void maybeAutoRetry(info.sessionID, info.error)
-        else if (info.time.completed) {
-          const entry = autoRetry.get(info.sessionID)
-          if (entry?.parentIDs.has(info.parentID)) cancelAutoRetry(info.sessionID)
-        }
-      }
       enqueue((s) => withView(s, info.sessionID, (v) => ({ ...v, messages: upsertMessage(v.messages, info) })))
       fullHistory.delete(info.sessionID)
       break
@@ -849,7 +749,6 @@ function handleEvent(e: ServerEvent, directory?: string) {
     case "session.deleted": {
       const info = p.info as Session
       delete statusMirror[info.id]
-      cancelAutoRetry(info.id)
       enqueue((s) => {
         const resetActive = s.activeSessionId === info.id
         let open = s.openSessionIds.filter((x) => x !== info.id)
@@ -877,12 +776,10 @@ function handleEvent(e: ServerEvent, directory?: string) {
       break
     case "session.error": {
       const err = p.error as { name?: string; data?: { message?: string } } | undefined
-      const sessionID = p.sessionID as string | undefined
       const retryable = isRetryableProviderError(err)
       if (err && err.name !== "MessageAbortedError" && !retryable) {
         notify.error("El agente tuvo un error", err.data?.message ?? err.name)
       }
-      if (sessionID) void maybeAutoRetry(sessionID, err)
       break
     }
     case "permission.asked": {
@@ -1024,8 +921,16 @@ function parentOf(all: Session[], id: string): string | undefined {
   return all.find((x) => x.id === id)?.parentID
 }
 
-export function sessionWaiting(s: Pick<AgentState, "allSessions" | "permissions" | "questions">, id: string): boolean {
-  return [...s.permissions, ...s.questions].some((r) => {
+export function pendingRequests(s: Pick<AgentState, "allSessions" | "permissions" | "questions">, approvals = useApprovals.getState()) {
+  return {
+    permissions: s.permissions.filter((r) => permissionNeedsResponse(r, s.allSessions, approvals)),
+    questions: s.questions,
+  }
+}
+
+export function sessionWaiting(s: Pick<AgentState, "allSessions" | "permissions" | "questions">, id: string, approvals = useApprovals.getState()): boolean {
+  const { permissions, questions } = pendingRequests(s, approvals)
+  return [...permissions, ...questions].some((r) => {
     let current: string | undefined = r.sessionID
     for (let i = 0; current && i < 12; i++) {
       if (current === id) return true
@@ -1209,7 +1114,6 @@ export async function sendPrompt(
       }
     })
   }
-  if (id) cancelAutoRetry(id)
   const contextParts = contextToParts(root, s.context, s.includeActiveFile ? activeFile : null)
   const trimmed = text.trim()
   const command = findCommand(trimmed, s.commands)
@@ -1241,58 +1145,53 @@ export async function sendPrompt(
 
 export async function abortSession(id: string | null) {
   if (!id) return
-  cancelAutoRetry(id)
   await client.session.abort({ path: { id } }).catch(() => undefined)
 }
 
-export async function retryMessage(sessionID: string, failed: ChatMessage, automatic?: AutoRetryEntry): Promise<void> {
-  if (failed.info.role !== "assistant" || !failed.info.error) throw new Error("Esta respuesta no necesita un reintento.")
-  if (retryInFlight.has(sessionID)) throw new Error("Ya se está enviando un reintento para esta conversación.")
-  if (!automatic) cancelAutoRetry(sessionID)
+// A chat that keeps failing while every other session works does not recover by
+// resending the same turn. Compacting rewrites the payload and lets the same
+// conversation continue, so a provider error offers "Compactar y continuar"
+// instead of a chain of retries that never succeeded.
+export async function retryMessage(sessionID: string, failed: ChatMessage): Promise<void> {
+  await recoverTurn(sessionID, failed, "retry")
+}
+
+export async function compactAndContinue(sessionID: string, failed: ChatMessage): Promise<void> {
+  await recoverTurn(sessionID, failed, "compact")
+}
+
+async function recoverTurn(sessionID: string, failed: ChatMessage, mode: "retry" | "compact"): Promise<void> {
+  if (failed.info.role !== "assistant" || !failed.info.error) throw new Error("Esta respuesta no necesita recuperación.")
+  if (retryInFlight.has(sessionID)) throw new Error("Ya se está recuperando esta conversación.")
   retryInFlight.add(sessionID)
   try {
     const [messages, statuses] = await Promise.all([
       messagesForRetry(sessionID), api<Record<string, SessionStatus>>("GET", "/session/status", undefined, undefined, directoryOf(sessionID)),
     ])
-    if (automatic && autoRetry.get(sessionID) !== automatic) return
     if (!messages) throw new Error("No se pudo verificar el historial de la conversación. Probá de nuevo.")
-    if (latestFailedAssistant(messages)?.info.id !== failed.info.id) {
-      if (automatic) cancelAutoRetry(sessionID)
-      else throw new Error("La conversación ya avanzó. Reintentá solo la última respuesta interrumpida.")
-      return
-    }
-    if (statuses[sessionID]?.type === "busy" || statuses[sessionID]?.type === "retry") {
-      if (automatic) return
+    if (latestFailedAssistant(messages)?.info.id !== failed.info.id)
+      throw new Error("La conversación ya avanzó. Recuperá solo la última respuesta interrumpida.")
+    if (statuses[sessionID]?.type === "busy" || statuses[sessionID]?.type === "retry")
       throw new Error("El agente todavía está trabajando o reintentando. Esperá a que termine.")
-    }
-    if (automatic && !shouldAutoRetry(messages, failed.info.parentID)) {
-      cancelAutoRetry(sessionID)
-      return
-    }
     const s = useAgent.getState()
-    const context = automatic?.context ?? retryContext(messages, failed)
+    const context = retryContext(messages, failed)
     if (!s.modelsLoaded || s.modelsError || !modelAvailable(s.models, context.model))
       throw new Error("El modelo original de esta respuesta no está disponible. Revisá su cuenta desde Cuentas de IA.")
-    const messageID = retryMessageID()
-    if (automatic) {
-      automatic.parentIDs.add(messageID)
-      automatic.handledFailures.add(failed.info.id)
-      automatic.count += 1
-      showProviderRetry(sessionID, { messageID: failed.info.id, attempt: automatic.count, phase: "sending" })
-    }
+    if (mode === "compact") await compactSession(sessionID)
     await api("POST", `/session/${sessionID}/prompt_async`, {
-      messageID, model: context.model, agent: context.agent,
+      messageID: retryMessageID(), model: context.model, agent: context.agent,
       ...(context.variant ? { variant: context.variant } : {}),
-      parts: retryPromptParts(messages, failed.info.parentID),
+      // After compacting, the original text is already in the summary: continue
+      // from it instead of replaying the task.
+      parts: mode === "compact"
+        ? [{ type: "text", text: CONTINUE_INTERRUPTED_TURN }]
+        : retryPromptParts(messages, failed.info.parentID),
     }, undefined, { directory: context.directory })
     // A 204 confirms admission, not recovery of OpenAI. Reflect the new history
     // even if message.updated/session.status never arrive on the event stream.
     await ensureSessionView(sessionID, true)
   } finally {
     retryInFlight.delete(sessionID)
-    const pending = retryAfterSend.get(sessionID)
-    retryAfterSend.delete(sessionID)
-    if (pending) void maybeAutoRetry(sessionID, pending)
   }
 }
 

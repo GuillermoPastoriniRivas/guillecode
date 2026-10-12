@@ -1,0 +1,25 @@
+{
+  "identifier": "com.guillecode.test",
+  "productName": "guillecode-test",
+  "build": {
+    "beforeDevCommand": ""
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "GuilleCode TEST — espacios de trabajo",
+        "width": 1480,
+        "height": 920,
+        "minWidth": 980,
+        "minHeight": 620,
+        "resizable": true,
+        "fullscreen": false,
+        "theme": "Dark",
+        "center": true,
+        "dragDropEnabled": false,
+        "visible": true
+      }
+    ]
+  }
+}

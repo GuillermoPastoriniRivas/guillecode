@@ -2,7 +2,7 @@ import { create } from "zustand"
 import { call, isTauri, onEvent } from "../lib/tauri"
 import { loadJson, saveJson } from "../lib/persist"
 import { notify } from "./toasts"
-import { DRAFT_TAB } from "./agent"
+import { DRAFT_TAB, type PermissionRequest } from "./agent"
 
 type ApprovalsView = { autoApprove: boolean; sessions: Record<string, boolean> }
 
@@ -24,6 +24,27 @@ export function approveFor(sessionId: string | null | undefined): boolean {
   const s = useApprovals.getState()
   const key = sessionId ?? DRAFT_TAB
   return key in s.sessions ? s.sessions[key] : s.autoApprove
+}
+
+// El desktop recibe permission.asked directamente del motor, antes de que el
+// hub responda. Ese permiso solo requiere atención si es manual o falló el reply.
+export function permissionNeedsResponse(
+  request: Pick<PermissionRequest, "id" | "sessionID">,
+  sessions: { id: string; parentID?: string }[],
+  approvals = useApprovals.getState(),
+): boolean {
+  if (approvals.failed.includes(request.id)) return true
+  if (!approvals.loaded) return false
+  let root = request.sessionID
+  const seen = new Set<string>()
+  while (!seen.has(root)) {
+    seen.add(root)
+    const parent = sessions.find((s) => s.id === root)?.parentID
+    if (!parent) break
+    root = parent
+  }
+  const autoApprove = root in approvals.sessions ? approvals.sessions[root] : approvals.autoApprove
+  return !autoApprove
 }
 
 export async function loadApprovals(): Promise<void> {

@@ -1,8 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import {
-  AUTO_RETRY_MAX,
-  autoRetryDelayMs,
   isRetryableProviderError,
   lastVisibleUserMessage,
   latestFailedAssistant,
@@ -62,12 +60,6 @@ test("no reintenta un turno que ya ejecutó herramientas", () => {
   assert.equal(shouldAutoRetry(later, "u2"), true)
   // A missing parent is treated as unsafe.
   assert.equal(shouldAutoRetry(later, "nope"), false)
-})
-
-test("el backoff crece y se mantiene acotado", () => {
-  assert.ok(autoRetryDelayMs(0) < autoRetryDelayMs(1))
-  assert.equal(autoRetryDelayMs(AUTO_RETRY_MAX), autoRetryDelayMs(99))
-  assert.equal(AUTO_RETRY_MAX, 3)
 })
 
 test("solo recupera el error terminal, no errores históricos ni respuestas incompletas", () => {

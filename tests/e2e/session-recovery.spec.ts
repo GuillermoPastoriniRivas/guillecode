@@ -30,6 +30,7 @@ async function setup(page: Page, restart = false) {
     rejectPrompt: false,
     historyStatus: 200,
     reads: 0,
+    summaries: 0,
     readGate: null as Promise<void> | null,
   }
   await page.addInitScript(({ root, sessionID, restart }) => {
@@ -86,6 +87,10 @@ async function setup(page: Page, restart = false) {
       if (gate) await gate
       if (state.historyStatus !== 200) return route.fulfill({ status: state.historyStatus, json: { message: "Historial temporalmente no disponible" } })
       return route.fulfill({ json: snapshot })
+    }
+    if (path === `/session/${sessionID}/summarize`) {
+      state.summaries++
+      return route.fulfill({ json: true })
     }
     if (path === `/session/${sessionID}/prompt_async`) {
       const body = route.request().postDataJSON()
@@ -152,23 +157,22 @@ test("REST lento conserva texto SSE nuevo y no resucita mensajes eliminados", as
   await expect(page.locator(".msg-user")).toHaveCount(0)
 })
 
-test("el reintento automático conserva modelo, agente y variante del turno original", async ({ page }) => {
-  await page.clock.install()
+test("Compactar y continuar conserva el modelo, agente y variante del turno original", async ({ page }) => {
   const state = await setup(page)
   await expect(page.locator(".retry-banner")).toContainText("Reintentando (1)")
   state.status = {}
   state.history = messages(true)
   Object.assign(state.history[0].info.model, { variant: "high" })
-  await page.clock.fastForward(6000)
-  await expect(page.locator(".msg-error")).toContainText("Reintento automático pendiente (1/3)")
+  await page.evaluate((sid) => (window as unknown as { __qaPush: (event: unknown) => void }).__qaPush({ type: "session.status", properties: { sessionID: sid, status: { type: "idle" } } }), sessionID)
   await page.getByTitle("Elegir modelo", { exact: true }).click()
   await page.locator(".quick-row", { hasText: "Otro modelo" }).click()
   await expect(page.getByTitle("Elegir modelo", { exact: true })).toContainText("Otro modelo")
   await page.getByTitle("Modo del agente", { exact: true }).click()
   await expect(page.getByTitle("Modo del agente", { exact: true })).toContainText("plan")
-  await page.clock.fastForward(16000)
+  await page.locator(".msg-error").getByRole("button", { name: "Compactar y continuar" }).click()
   await expect.poll(() => state.prompts.length).toBe(1)
-  expect(state.prompts[0].body).toMatchObject({ model: { providerID: "openai", modelID: "qa" }, agent: "build", variant: "high" })
+  expect(state.summaries).toBe(1)
+  expect(state.prompts[0].body).toMatchObject({ model: { providerID: "openai", modelID: "qa" }, agent: "build", variant: "high", parts: [{ type: "text", text: CONTINUE_INTERRUPTED_TURN }] })
 })
 
 test("conserva partes SSE recibidas antes de que REST entregue el mensaje", async ({ page }) => {
@@ -214,7 +218,7 @@ test("el cierre prematuro muestra texto parcial y el manual continúa desde el h
   expect(state.prompts[0].body.parts).toEqual([{ type: "text", text: CONTINUE_INTERRUPTED_TURN }])
 })
 
-test("reconcilia reintentos perdidos y permite reintentar un 503 en la misma conversación", async ({ page }) => {
+test("reconcilia reintentos perdidos y ofrece Compactar y continuar en la misma conversación", async ({ page }) => {
   const state = await setup(page)
   await expect(page.locator(".retry-banner")).toContainText("Reintentando (1)")
 
@@ -229,87 +233,17 @@ test("reconcilia reintentos perdidos y permite reintentar un 503 en la misma con
   state.status = {}
   await expect(page.locator(".retry-banner")).toHaveCount(0, { timeout: 10000 })
   await expect(page.locator(".msg-error")).toContainText(errorText)
-  await page.locator(".msg-error").getByRole("button", { name: "Reintentar" }).click()
+  await page.locator(".msg-error").getByRole("button", { name: "Compactar y continuar" }).click()
   await expect.poll(() => state.prompts.length).toBe(1)
+  expect(state.summaries).toBe(1)
   expect(state.prompts[0]).toEqual({ path: `/session/${sessionID}/prompt_async`, body: {
     messageID: expect.stringMatching(/^msg_/),
-    model: { providerID: "openai", modelID: "qa" }, agent: "build", parts: [{ type: "text", text: "Continuá con el trabajo pendiente" }],
+    model: { providerID: "openai", modelID: "qa" }, agent: "build", parts: [{ type: "text", text: CONTINUE_INTERRUPTED_TURN }],
   } })
   expect(state.created).toBe(0)
 })
 
-test("reintenta automáticamente un 503 que no ejecutó herramientas", async ({ page }) => {
-  await page.clock.install()
-  const state = await setup(page)
-  await expect(page.locator(".msg-user")).toContainText("Continuá con el trabajo pendiente")
-
-  // The session starts as "retry"; make it idle so the automatic retry can fire.
-  state.status = {}
-  state.failed = true
-  await page.evaluate((sid) => (window as unknown as { __qaPush: (event: unknown) => void }).__qaPush({ type: "session.status", properties: { sessionID: sid, status: { type: "idle" } } }), sessionID)
-
-  const failed = messages(true)[1].info
-  await page.evaluate((info) => (window as unknown as { __qaPush: (event: unknown) => void }).__qaPush({ type: "message.updated", properties: { info } }), failed)
-  await expect(page.locator(".msg-error")).toContainText("Reintento automático pendiente (1/3)")
-  await page.clock.fastForward(16_000)
-  await expect.poll(() => state.prompts.length).toBe(1)
-  expect(state.prompts[0].body.parts).toEqual([{ type: "text", text: "Continuá con el trabajo pendiente" }])
-})
-
-test("recupera un 503 por REST aunque no lleguen los eventos del error ni del reintento", async ({ page }) => {
-  await page.clock.install()
-  const state = await setup(page)
-  await expect(page.locator(".retry-banner")).toContainText("Reintentando (1)")
-  state.status = {}
-  state.failed = true
-  state.reply = "success"
-  await page.clock.fastForward(6000)
-  await expect(page.locator(".msg-error")).toContainText("Reintento automático pendiente (1/3)")
-  await page.clock.fastForward(16000)
-  await expect.poll(() => state.prompts.length).toBe(1)
-  await expect(page.locator(".msg-assistant").last()).toContainText("La respuesta se recuperó")
-  await expect(page.locator(".msg-error").getByRole("button", { name: "Reintentar" })).toHaveCount(0)
-  await expect(page.locator(".msg-error")).not.toContainText("Enviando reintento")
-  expect(state.created).toBe(0)
-})
-
-test("acota a tres los reintentos adicionales aunque cada envío genere un padre nuevo", async ({ page }) => {
-  await page.clock.install()
-  const state = await setup(page)
-  await expect(page.locator(".retry-banner")).toContainText("Reintentando (1)")
-  state.status = {}
-  state.failed = true
-  state.reply = "failure"
-  await page.clock.fastForward(6000)
-  await expect(page.locator(".msg-error")).toContainText("Reintento automático pendiente (1/3)")
-  for (const [attempt, delay] of [16000, 46000, 91000].entries()) {
-    await page.clock.fastForward(delay)
-    await expect.poll(() => state.prompts.length).toBe(attempt + 1)
-    await expect(page.locator(".msg-error").last()).toContainText(attempt < 2 ? `pendiente (${attempt + 2}/3)` : "después de 3 reintentos adicionales")
-  }
-  expect(new Set(state.prompts.map((p) => p.body.messageID)).size).toBe(3)
-  await page.clock.fastForward(180000)
-  expect(state.prompts.length).toBe(3)
-})
-
-test("descarta un reintento pendiente si la conversación avanzó en otra ventana", async ({ page }) => {
-  await page.clock.install()
-  const state = await setup(page)
-  await expect(page.locator(".retry-banner")).toContainText("Reintentando (1)")
-  state.status = {}
-  state.failed = true
-  await page.clock.fastForward(6000)
-  await expect(page.locator(".msg-error")).toContainText("Reintento automático pendiente (1/3)")
-  const nextUser = messages()[0]
-  nextUser.info.id = "user-other-window"
-  state.history = [...messages(true), nextUser]
-  await page.clock.fastForward(16000)
-  await expect(page.locator(".msg-error")).not.toContainText("Reintento automático pendiente")
-  expect(state.prompts.length).toBe(0)
-})
-
-test("verifica herramientas con el historial actual y el reintento manual continúa sin reenviar la tarea", async ({ page }) => {
-  await page.clock.install()
+test("verifica herramientas con el historial actual y la recuperación continúa sin reenviar la tarea", async ({ page }) => {
   const state = await setup(page)
   await expect(page.locator(".msg-user")).toContainText("Continuá con el trabajo pendiente")
   state.status = {}
@@ -317,31 +251,30 @@ test("verifica herramientas con el historial actual y el reintento manual contin
   const failed = state.history[1]
   failed.parts = [{ type: "tool", id: "p-edit", messageID: failed.info.id, sessionID, callID: "c-edit", tool: "apply_patch", state: { status: "completed", input: {}, output: "Archivo editado", title: "Edit", metadata: {}, time: { start: now, end: now + 1 } } }]
   await page.evaluate((info) => (window as unknown as { __qaPush: (event: unknown) => void }).__qaPush({ type: "message.updated", properties: { info } }), failed.info)
-  await page.clock.fastForward(22000)
   await expect(page.locator(".msg-error")).toContainText(errorText)
   expect(state.prompts.length).toBe(0)
-  await page.locator(".msg-error").getByRole("button", { name: "Reintentar" }).click()
+  await page.locator(".msg-error").getByRole("button", { name: "Compactar y continuar" }).click()
   await expect.poll(() => state.prompts.length).toBe(1)
+  expect(state.summaries).toBe(1)
   expect(state.prompts[0].body.parts).toEqual([{ type: "text", text: CONTINUE_INTERRUPTED_TURN }])
 })
 
-test("permite reintentar cuando el padre salió de la página y muestra los errores de admisión", async ({ page }) => {
-  await page.clock.install()
+test("muestra los errores de admisión y permite recuperar aunque el padre salió de la página", async ({ page }) => {
   const state = await setup(page)
   await expect(page.locator(".retry-banner")).toContainText("Reintentando (1)")
   state.status = {}
   state.history = [messages(true)[1]]
   state.rejectPrompt = true
-  await page.clock.fastForward(6000)
-  const retry = page.locator(".msg-error").getByRole("button", { name: "Reintentar" })
-  await expect(retry).toBeVisible()
-  await retry.click()
+  await page.evaluate((sid) => (window as unknown as { __qaPush: (event: unknown) => void }).__qaPush({ type: "session.status", properties: { sessionID: sid, status: { type: "idle" } } }), sessionID)
+  const recover = page.locator(".msg-error").getByRole("button", { name: "Compactar y continuar" })
+  await expect(recover).toBeVisible()
+  await recover.click()
   await expect(page.getByText("No se pudo admitir el reintento")).toBeVisible()
-  await expect(retry).toBeEnabled()
+  await expect(recover).toBeEnabled()
   expect(state.prompts[0].body.parts).toEqual([{ type: "text", text: CONTINUE_INTERRUPTED_TURN }])
   state.rejectPrompt = false
   state.reply = "success"
-  await retry.click()
+  await recover.click()
   await expect(page.locator(".msg-assistant").last()).toContainText("La respuesta se recuperó")
   expect(state.prompts.length).toBe(2)
 })

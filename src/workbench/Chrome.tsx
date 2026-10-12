@@ -35,7 +35,7 @@ import {
 } from "../state/usage"
 import { CHATGPT } from "../state/accounts"
 import { useGit } from "../state/git"
-import { contextSettings, featureTitle, findFeature, isAppRunning, pickFeature, runApp, stopApp, useFeatures } from "../state/features"
+import { contextSettings, isAppRunning, pickWorkspace, runApp, stopApp, useFeatures, workspaceTitle } from "../state/features"
 import { useTerminals } from "../state/terminals"
 import { useDocs, docKey } from "../editor/documents"
 import { useEditors, openEditor } from "../state/editors"
@@ -70,7 +70,7 @@ export function ActivityBar() {
   const visible = useLayout((s) => s.sidebarVisible)
   const changes = useGit((s) => s.repos.reduce((n, r) => n + (s.byRepo[r]?.status?.entries.length ?? 0), 0))
   const busy = useAgent((s) => Object.values(s.statuses).filter((x) => x.type === "busy").length)
-  const attention = useAgent((s) => s.permissions.length + s.questions.length)
+  const attention = useAttention((s) => s.count)
   const sessions = useAgent((s) => s.sessions)
   const unseenIds = useUnseen((s) => s.ids)
   const unseen = sessions.filter((s) => !s.parentID && s.id in unseenIds).length
@@ -102,20 +102,21 @@ export function ActivityBar() {
 
 function FeatureChip() {
   const list = useFeatures((s) => s.list)
-  const root = useProject((s) => s.root)
-  const feature = findFeature(root, list)
-  if (!list?.git || !feature) return null
-  const isolated = feature.kind !== "main"
+  const activeId = useFeatures((s) => s.activeWorkspace)
+  const ws = list?.workspaces.find((w) => w.id === activeId) ?? list?.workspaces[0] ?? null
+  if (!list?.git || !ws) return null
+  const isolated = ws.kind !== "main"
+  const repoNote = ws.repos.length === 1 ? ws.repos[0].name : `${ws.repos.length} repositorios`
   return (
     <button
       type="button"
       className={`title-feature${isolated ? " isolated" : ""}`}
-      onClick={() => void pickFeature()}
-      title={`${isolated ? "Feature aislada en su propia carpeta" : "Copia principal del proyecto"}: ${feature.root}\nClic para cambiar de feature`}
+      onClick={() => void pickWorkspace()}
+      title={`${isolated ? "Trabajo separado (worktree por repositorio)" : "Copia principal del proyecto"}: ${ws.repos.map((r) => r.path).join(", ")}\nClic para cambiar de espacio de trabajo`}
     >
       <Icon name={isolated ? "worktree" : "home"} />
-      <span className="title-feature-name">{featureTitle(feature)}</span>
-      {feature.branch && <span className="title-feature-branch">{feature.branch}</span>}
+      <span className="title-feature-name">{workspaceTitle(ws)}</span>
+      <span className="title-feature-branch">{repoNote}</span>
       <Icon name="chevron-down" />
     </button>
   )
@@ -511,7 +512,7 @@ export function StatusBar() {
   const gitBusy = useGit((s) => s.busy)
   const connected = useAgent((s) => s.connected)
   const busyCount = useAgent((s) => Object.values(s.statuses).filter((x) => x.type === "busy").length)
-  const attention = useAgent((s) => s.permissions.length + s.questions.length)
+  const attention = useAttention((s) => s.count)
   const model = useAgent((s) => s.model)
   const models = useAgent((s) => s.models)
   const favoriteModels = useAgent((s) => s.favoriteModels)
@@ -533,7 +534,9 @@ export function StatusBar() {
   const runTerminalId = useFeatures((s) => s.runTerminalId)
   const terminals = useTerminals((s) => s.terminals)
   const activeRoot = useProject((s) => s.root)
-  const feature = findFeature(activeRoot, featureList)
+  const activeId = useFeatures((s) => s.activeWorkspace)
+  const ws = featureList?.workspaces.find((w) => w.id === activeId) ?? featureList?.workspaces[0] ?? null
+  const workspaceCount = featureList?.workspaces.length ?? 0
   const appRunning = isAppRunning(runTerminalId, terminals)
   const runCommand = contextSettings(featureList, activeRoot)?.run ?? null
 
@@ -557,13 +560,13 @@ export function StatusBar() {
     <footer className="status-bar">
       <div className="status-left">
         <StatusItem icon="remote" label={connected ? "opencode" : "desconectado"} title={connected ? "Conectado al servidor de opencode" : "Reconectando con opencode…"} tone={connected ? "remote" : "remote offline"} />
-        {feature && featureList && featureList.features.length > 1 && (
+        {ws && workspaceCount > 1 && (
           <StatusItem
-            icon={feature.kind === "main" ? "home" : "worktree"}
-            label={featureTitle(feature)}
-            title="Feature activa (clic para cambiar)"
-            tone={feature.kind === "main" ? undefined : "feature"}
-            onClick={() => void pickFeature()}
+            icon={ws.kind === "main" ? "home" : "worktree"}
+            label={workspaceTitle(ws)}
+            title="Espacio de trabajo activo (clic para cambiar)"
+            tone={ws.kind === "main" ? undefined : "feature"}
+            onClick={() => void pickWorkspace()}
           />
         )}
         {status && repo && (

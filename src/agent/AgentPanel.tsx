@@ -10,7 +10,7 @@ import {
   useAgent,
 } from "../state/agent"
 import { notify } from "../state/toasts"
-import { useApprovals } from "../state/approvals"
+import { permissionNeedsResponse, useApprovals } from "../state/approvals"
 import { percent } from "../lib/format"
 import { useLayout } from "../state/layout"
 import { useProject } from "../state/project"
@@ -31,27 +31,14 @@ const SUGGESTIONS = [
   { icon: "git-pull-request", title: "Revisar mis cambios", text: "/review" },
 ]
 
-function rootSessionId(sessions: { id: string; parentID?: string }[], id: string): string {
-  let current = id
-  const seen = new Set<string>()
-  while (!seen.has(current)) {
-    seen.add(current)
-    const parent = sessions.find((s) => s.id === current)?.parentID
-    if (parent) current = parent
-    else break
-  }
-  return current
-}
-
 export function SessionPane({ sessionId, variant }: { sessionId: string | null; variant: "panel" | "editor" }) {
   const session = useAgent((s) => s.sessions.find((x) => x.id === sessionId) ?? null)
   const status = useAgent((s) => (sessionId ? (s.statuses[sessionId]?.type ?? "idle") : "idle"))
   const retry = useAgent((s) => (sessionId ? s.statuses[sessionId] : undefined))
   const permissions = useAgent((s) => s.permissions)
   const questions = useAgent((s) => s.questions)
-  const approvalSessions = useApprovals((s) => s.sessions)
-  const approvalGlobal = useApprovals((s) => s.autoApprove)
-  const approvalFailed = useApprovals((s) => s.failed)
+  const approvals = useApprovals()
+  const allSessions = useAgent((s) => s.allSessions)
   const todos = useAgent((s) => (sessionId ? s.todos[sessionId] : undefined))
   const sessions = useAgent((s) => s.sessions)
   const root = useProject((s) => s.root)
@@ -144,11 +131,7 @@ export function SessionPane({ sessionId, variant }: { sessionId: string | null; 
           <QuestionCard key={q.id} request={q} />
         ))}
         {mine.permissions
-          .filter((p) => {
-            const root = rootSessionId(sessions, p.sessionID)
-            const on = root in approvalSessions ? approvalSessions[root] : approvalGlobal
-            return !on || approvalFailed.includes(p.id)
-          })
+          .filter((p) => permissionNeedsResponse(p, allSessions, approvals))
           .map((p) => (
             <PermissionCard key={p.id} request={p} />
           ))}

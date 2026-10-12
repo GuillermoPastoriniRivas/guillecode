@@ -2,6 +2,7 @@ import { useMemo, useState } from "react"
 import type { Session } from "@opencode-ai/sdk"
 import { deleteSession, newSession, renameSession, selectSession, sessionInRoot, sessionWaiting, setSessionArchived, useAgent } from "../state/agent"
 import { useSessionMark } from "../state/unseen"
+import { useApprovals } from "../state/approvals"
 import { useProject } from "../state/project"
 import { featureTitle, findFeature, useFeatures } from "../state/features"
 import { normalizePath } from "../lib/paths"
@@ -203,12 +204,13 @@ function OtherFeatureSessions() {
   const statuses = useAgent((s) => s.statuses)
   const permissions = useAgent((s) => s.permissions)
   const questions = useAgent((s) => s.questions)
+  const approvals = useApprovals()
   const list = useFeatures((s) => s.list)
   const archived = archivedSessionIds(all)
   const active = all.filter((s) => {
     if (s.parentID || archived.has(s.id) || sessionInRoot(s, root)) return false
     const busy = statuses[s.id] && statuses[s.id].type !== "idle"
-    return busy || sessionWaiting({ allSessions: all, permissions, questions }, s.id)
+    return busy || sessionWaiting({ allSessions: all, permissions, questions }, s.id, approvals)
   })
   if (active.length === 0) return null
   return (

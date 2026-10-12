@@ -234,6 +234,12 @@
   margin: -2px 0;
   cursor: row-resize;
 }
+/* En foco-chat el centro no se renderiza: un relleno flexible absorbe el espacio
+   libre y deja el chat a la derecha, sin desbordar en ventanas angostas. */
+.focus-filler {
+  flex: 1;
+  min-width: 0;
+}
 .sash:hover,
 .sash.active {
   background: var(--accent);
