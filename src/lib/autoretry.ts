@@ -32,14 +32,25 @@ function interruptedStream(error: unknown): string | null {
   } catch { return null }
 }
 
+export function isUpstreamBufferError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false
+  const data = (error as { data?: { message?: unknown; responseBody?: unknown } }).data
+  return [data?.message, data?.responseBody].some((text) => typeof text === "string"
+    && /exceeded request buffer limit while retrying upstream|request_payload_exceeded_retry_buffer_limit/i.test(text))
+}
+
 export function providerErrorMessage(error: { name?: string; data?: { message?: string } }): string | undefined {
+  if (isUpstreamBufferError(error))
+    return "El servidor de IA superó su búfer al intentar reenviar la solicitud. No es falta de espacio en tu PC. Compactá la conversación para intentar continuar desde el último paso."
   return interruptedStream(error) ?? error.data?.message ?? error.name
 }
 
 export function isRetryableProviderError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false
   const e = error as { name?: string; data?: { isRetryable?: boolean } }
-  return e.name === "APIError" && e.data?.isRetryable === true
+  // Some gateways return 507 with isRetryable=false. Replaying the same request
+  // is not useful, but compacting can recover it without losing the conversation.
+  return isUpstreamBufferError(error) || (e.name === "APIError" && e.data?.isRetryable === true)
 }
 
 function isContextText(text: string): boolean {
@@ -65,8 +76,16 @@ export function lastVisibleUserMessage(messages: RetryMessage[]): RetryMessage |
 }
 
 export function latestFailedAssistant(messages: RetryMessage[]): RetryMessage | null {
-  const last = messages.at(-1)
-  return last?.info.role === "assistant" && last.info.time.completed && last.info.error ? last : null
+  // Compaction is an intermediate step, not a resumed user turn. If admission
+  // of the continuation fails, keep the original recovery action available,
+  // including after reloading or opening the conversation in another window.
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]
+    if (message.info.role === "assistant" && message.info.summary) continue
+    if (message.info.role === "user" && message.parts.length && message.parts.every((part) => part.type === "compaction")) continue
+    return message.info.role === "assistant" && message.info.time.completed && message.info.error ? message : null
+  }
+  return null
 }
 
 export function retryPromptParts(messages: RetryMessage[], parentID: string): RetryPromptPart[] {

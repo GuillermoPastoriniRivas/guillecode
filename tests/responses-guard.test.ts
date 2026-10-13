@@ -43,6 +43,22 @@ test("Responses preserva bytes fragmentados y exige un terminal válido; cancela
     }
     response = new Response("unavailable", { status: 503 })
     assert.equal(await fetch("https://api.openai.com/v1/responses", { method: "POST" }), response)
+    const bufferError = "Insufficient Storage: exceeded request buffer limit while retrying upstream"
+    response = new Response(bufferError, { status: 507, headers: { "content-type": "text/plain", "content-length": String(bufferError.length) } })
+    const limited = await fetch("https://api.openai.com/v1/responses", { method: "POST" })
+    assert.equal(limited.headers.get("content-type"), "text/event-stream")
+    assert.equal(limited.headers.get("content-length"), null)
+    const failure = await limited.text()
+    assert.match(failure, /response.failed/)
+    assert.match(failure, /guillecode_upstream_buffer_limit/)
+    assert.match(failure, /HTTP 507/)
+    assert.ok(failure.includes(bufferError))
+    assert.ok(!failure.includes("response.completed"))
+    response = new Response("Insufficient Storage", { status: 507 })
+    assert.equal(await fetch("https://api.openai.com/v1/responses", { method: "POST" }), response, "No se transforma cualquier 507")
+    response = new Response(bufferError, { status: 507 })
+    assert.equal(await fetch("https://api.openai.com/v1/other", { method: "POST" }), response)
+    assert.equal(await fetch("https://api.openai.com/v1/responses"), response)
     response = new Response("event stream", { headers: { "content-type": "text/event-stream" } })
     assert.equal(await fetch("https://local/global/event"), response)
     let readCount = 0

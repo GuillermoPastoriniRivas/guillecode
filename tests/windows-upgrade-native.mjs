@@ -10,11 +10,12 @@ import { once } from "node:events"
 // NSIS replacement/relaunch without CDP; it does NOT exercise the in-app updater.
 if (process.platform !== "win32" || !process.argv[2]) throw new Error("Uso: node tests/windows-upgrade-native.mjs carpeta-de-fixtures-QA")
 const dir = resolve(process.argv[2])
-const { identifier } = JSON.parse(readFileSync(join(dir, "fixture.json"), "utf8"))
+const fixture = JSON.parse(readFileSync(join(dir, "fixture.json"), "utf8"))
+const { identifier } = fixture
 assert.match(identifier, /^com\.guillecode\.upgrade-test-\d+$/)
-const baseVersion = JSON.parse(readFileSync("src-tauri/tauri.conf.json", "utf8")).version
+const baseVersion = fixture.baseVersion ?? JSON.parse(readFileSync("src-tauri/tauri.conf.json", "utf8")).version
 const [major, minor, patch] = baseVersion.split(".").map(Number)
-const nextVersion = `${major}.${minor}.${patch + 1}`
+const nextVersion = fixture.nextVersion ?? `${major}.${minor}.${patch + 1}`
 const installed = join(dir, "native-installed"), profile = join(dir, "native-profile")
 const appData = join(profile, "AppData", "Roaming", identifier)
 mkdirSync(appData, { recursive: true })

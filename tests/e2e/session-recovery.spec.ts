@@ -31,6 +31,8 @@ async function setup(page: Page, restart = false) {
     historyStatus: 200,
     reads: 0,
     summaries: 0,
+    summaryRequests: [] as { body: Record<string, unknown>; directory: string | undefined }[],
+    summaryReply: "success" as "success" | "failure" | "missing",
     readGate: null as Promise<void> | null,
   }
   await page.addInitScript(({ root, sessionID, restart }) => {
@@ -90,6 +92,13 @@ async function setup(page: Page, restart = false) {
     }
     if (path === `/session/${sessionID}/summarize`) {
       state.summaries++
+      state.summaryRequests.push({ body: route.request().postDataJSON(), directory: route.request().headers()["x-opencode-directory"] })
+      if (state.summaryReply !== "missing") {
+        const summary = messages(state.summaryReply === "failure")[1]
+        Object.assign(summary.info, { id: `m-summary-${state.summaries}`, summary: true, finish: "stop", time: { created: Date.now(), completed: Date.now() } })
+        summary.parts = [{ type: "text", id: `p-summary-${state.summaries}`, messageID: summary.info.id, sessionID, text: "Resumen del trabajo pendiente y los pasos completados" }]
+        state.history = [...(state.history ?? messages(state.failed)), summary]
+      }
       return route.fulfill({ json: true })
     }
     if (path === `/session/${sessionID}/prompt_async`) {
@@ -172,8 +181,51 @@ test("Compactar y continuar conserva el modelo, agente y variante del turno orig
   await page.locator(".msg-error").getByRole("button", { name: "Compactar y continuar" }).click()
   await expect.poll(() => state.prompts.length).toBe(1)
   expect(state.summaries).toBe(1)
+  expect(state.summaryRequests[0]).toEqual({ body: { providerID: "openai", modelID: "qa" }, directory: encodeURIComponent(root) })
   expect(state.prompts[0].body).toMatchObject({ model: { providerID: "openai", modelID: "qa" }, agent: "build", variant: "high", parts: [{ type: "text", text: CONTINUE_INTERRUPTED_TURN }] })
 })
+
+test("el 507 de búfer explica el problema y compacta sin repetir herramientas ni crear otro chat", async ({ page }) => {
+  const state = await setup(page)
+  await expect(page.locator(".retry-banner")).toBeVisible()
+  const bufferError = "Insufficient Storage: exceeded request buffer limit while retrying upstream"
+  state.status = {}
+  state.history = messages(true)
+  state.history[1].info.error = { name: "APIError", data: { message: bufferError, statusCode: 507, isRetryable: false } }
+  state.history[1].parts = [{ type: "tool", id: "p-edit", messageID: "m-assistant", sessionID, callID: "c-edit", tool: "apply_patch", state: { status: "completed", input: {}, output: "Archivo editado", title: "Edit", metadata: {}, time: { start: now, end: now + 1 } } }]
+  await page.evaluate((sid) => (window as unknown as { __qaPush: (event: unknown) => void }).__qaPush({ type: "session.status", properties: { sessionID: sid, status: { type: "idle" } } }), sessionID)
+  const error = page.locator(".msg-error")
+  await expect(error).toContainText("No es falta de espacio en tu PC")
+  await expect(error.locator("pre")).not.toBeVisible()
+  await error.getByText("Detalles técnicos", { exact: true }).click()
+  await expect(error.locator("pre")).toHaveText(bufferError)
+  await expect(error.getByRole("button", { name: "Reintentar", exact: true })).toHaveCount(0)
+  state.reply = "success"
+  await error.getByRole("button", { name: "Compactar y continuar" }).click()
+  await expect(page.locator(".msg-assistant").last()).toContainText("La respuesta se recuperó")
+  expect(state.summaries).toBe(1)
+  expect(state.prompts).toHaveLength(1)
+  expect(state.prompts[0].body.parts).toEqual([{ type: "text", text: CONTINUE_INTERRUPTED_TURN }])
+  expect(state.created).toBe(0)
+  await expect(page.locator(".msg-user").first()).toContainText("Continuá con el trabajo pendiente")
+})
+
+for (const result of ["failure", "missing"] as const) {
+  test(`no continúa si la compactación devuelve HTTP 200 pero el resumen ${result === "failure" ? "falló" : "no existe"}`, async ({ page }) => {
+    const state = await setup(page)
+    await expect(page.locator(".retry-banner")).toBeVisible()
+    state.status = {}
+    state.history = messages(true)
+    state.summaryReply = result
+    await page.evaluate((sid) => (window as unknown as { __qaPush: (event: unknown) => void }).__qaPush({ type: "session.status", properties: { sessionID: sid, status: { type: "idle" } } }), sessionID)
+    await page.locator(".msg-error").getByRole("button", { name: "Compactar y continuar" }).click()
+    await expect(page.getByText("No se pudo compactar y continuar", { exact: true })).toBeVisible()
+    expect(state.summaries).toBe(1)
+    expect(state.prompts).toHaveLength(0)
+    await expect(page.locator(".msg-user")).toContainText("Continuá con el trabajo pendiente")
+    await expect(page.locator(".msg-error").getByRole("button", { name: "Compactar y continuar" })).toBeEnabled()
+  })
+}
 
 test("conserva partes SSE recibidas antes de que REST entregue el mensaje", async ({ page }) => {
   await page.clock.install()

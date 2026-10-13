@@ -15,6 +15,10 @@ const mock = createServer(async (request, response) => {
   for await (const _chunk of request) { /* drain request */ }
   if (!request.url.endsWith("/responses")) return response.end("{}")
   calls++
+  if (mode === "buffer") {
+    response.writeHead(507, { "content-type": "text/plain" })
+    return response.end("Insufficient Storage: exceeded request buffer limit while retrying upstream")
+  }
   response.writeHead(200, { "content-type": "text/event-stream" })
   const events = [
     { type: "response.created", response: { id: "resp-qa", model: "qa-model", created_at: 0 } },
@@ -63,10 +67,12 @@ try {
     try { await api("GET", "/global/health"); ready = true; break } catch { await delay(300) }
   }
   assert.ok(ready, log)
-  for (mode of ["completed", "failed", "incomplete", "eof"]) {
+  let lastSession
+  for (mode of ["completed", "failed", "incomplete", "eof", "buffer"]) {
     const before = calls
     // A fresh profile installs the engine's plugin dependencies on first use.
     const session = await api("POST", "/session", {}, 120000)
+    lastSession = session
     await api("POST", `/session/${session.id}/prompt_async`, { model: { providerID: "openai", modelID: "qa-model" }, agent: "build", parts: [{ type: "text", text: "ping" }] })
     let messages, status
     for (let i = 0; i < 100; i++) {
@@ -82,12 +88,33 @@ try {
     const assistant = assistants[0]
     assert.ok(assistant.info.time.completed)
     assert.ok(!status[session.id] || status[session.id].type === "idle", `${mode}: session left busy`)
-    assert.ok(assistant.parts.some((part) => part.type === "text" && part.text.includes("Respuesta parcial á🙂")), `${mode}: partial text lost`)
+    if (mode !== "buffer") assert.ok(assistant.parts.some((part) => part.type === "text" && part.text.includes("Respuesta parcial á🙂")), `${mode}: partial text lost`)
     if (mode === "completed") { assert.equal(assistant.info.finish, "stop"); assert.equal(assistant.info.error, undefined) }
     if (mode === "incomplete") { assert.equal(assistant.info.finish, "length"); assert.equal(assistant.info.error, undefined) }
     if (mode === "failed") assert.match(assistant.info.error?.data?.message ?? "", /subscription_sharing_usage_limit_exceeded/)
     if (mode === "eof") assert.match(assistant.info.error?.data?.message ?? "", /se interrumpió antes de recibir su final/)
-    console.log(`Responses ${mode}: one call, idle, partial text preserved, terminal semantics OK`)
+    if (mode === "buffer") {
+      assert.equal(assistant.info.error?.name, "UnknownError")
+      assert.match(assistant.info.error?.data?.message ?? "", /guillecode_upstream_buffer_limit/)
+      assert.match(assistant.info.error?.data?.message ?? "", /HTTP 507/)
+      assert.match(JSON.stringify(assistant.info.error), /exceeded request buffer limit/)
+    }
+    console.log(`Responses ${mode}: one call, idle, terminal semantics OK`)
+  }
+  // Verify the real engine's summarize contract, including HTTP 200 on failure.
+  for (mode of ["completed", "failed"]) {
+    const before = await api("GET", `/session/${lastSession.id}/message`)
+    const ids = new Set(before.map((message) => message.info.id))
+    await api("POST", `/session/${lastSession.id}/summarize`, { providerID: "openai", modelID: "qa-model" }, 30000)
+    const after = await api("GET", `/session/${lastSession.id}/message`)
+    const summary = after.findLast((message) => message.info.role === "assistant" && message.info.summary && !ids.has(message.info.id))
+    assert.ok(summary, `${mode}: summarize did not persist a new summary`)
+    if (mode === "completed") {
+      assert.ok(summary.info.time.completed)
+      assert.equal(summary.info.finish, "stop")
+      assert.equal(summary.info.error, undefined)
+    } else assert.ok(summary.info.error, "HTTP 200 must not hide a failed summary")
+    console.log(`Compaction ${mode}: persisted summary verified after HTTP 200`)
   }
 } catch (error) {
   console.error(log)

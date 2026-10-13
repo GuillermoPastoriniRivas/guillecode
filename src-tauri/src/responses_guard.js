@@ -85,6 +85,29 @@ function protect(response, signal) {
   return new Response(stream, { status: response.status, statusText: response.statusText, headers })
 }
 
+async function bufferFailure(response) {
+  if (response.status !== 507) return response
+  const body = await response.clone().text()
+  if (!/exceeded request buffer limit while retrying upstream|request_payload_exceeded_retry_buffer_limit/i.test(body)) return response
+  // The SDK retries every 5xx before exposing it to the UI. Bridge this known
+  // non-recoverable replay into a terminal Responses error, preserving its real
+  // status and body. This is a failed generation, never a successful finish.
+  const created = { type: "response.created", response: { id: "guillecode-upstream-buffer-limit", model: "unknown", created_at: 0 } }
+  // Enter the streaming phase without adding visible content. The pinned SDK
+  // treats a failure before any output as another retryable API call error.
+  const item = { type: "response.output_item.added", output_index: 0, item: { type: "message", id: "guillecode-buffer-error", role: "assistant", content: [], status: "in_progress" } }
+  const delta = { type: "response.output_text.delta", item_id: "guillecode-buffer-error", output_index: 0, content_index: 0, delta: "" }
+  const event = { type: "response.failed", sequence_number: 1, response: {
+    error: { code: "guillecode_upstream_buffer_limit", message: `HTTP 507: ${body}` },
+  } }
+  const headers = new Headers(response.headers)
+  headers.delete("content-length")
+  headers.delete("content-encoding")
+  headers.set("content-type", "text/event-stream")
+  void response.body?.cancel().catch(() => undefined)
+  return new Response([created, item, delta, event].map((value) => `data: ${JSON.stringify(value)}\n\n`).join(""), { headers })
+}
+
 export const GuilleCodeResponses = async () => {
   if (globalThis[installed]) return {}
   globalThis[installed] = true
@@ -93,7 +116,9 @@ export const GuilleCodeResponses = async () => {
     const response = await original(input, init)
     const url = new URL(input instanceof Request ? input.url : input)
     const method = init?.method ?? (input instanceof Request ? input.method : "GET")
-    if (method.toUpperCase() !== "POST" || !url.pathname.endsWith("/responses") || !response.ok ||
+    if (method.toUpperCase() !== "POST" || !url.pathname.endsWith("/responses")) return response
+    if (!response.ok) return bufferFailure(response)
+    if (
         !response.body || !response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) return response
     return protect(response, init?.signal ?? (input instanceof Request ? input.signal : undefined))
   }

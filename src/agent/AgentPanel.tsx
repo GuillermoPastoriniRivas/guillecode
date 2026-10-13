@@ -24,6 +24,7 @@ import { Logo } from "../components/Logo"
 import { shortAgo } from "../lib/time"
 import { projectName } from "../lib/paths"
 import { archivedSessionOwner, unarchivedSessions } from "../lib/sessions"
+import { providerErrorMessage } from "../lib/autoretry"
 
 const SUGGESTIONS = [
   { icon: "telescope", title: "Entender el proyecto", text: "Explicame la arquitectura de este proyecto y dónde está cada cosa." },
@@ -125,7 +126,7 @@ export function SessionPane({ sessionId, variant }: { sessionId: string | null; 
       <div className="session-dock">
         {retry?.type === "retry" && (
           <div className="retry-banner">
-            <Icon name="sync" spin /> Reintentando ({retry.attempt}): {retry.message}
+            <Icon name="sync" spin /> Reintentando ({retry.attempt}): {providerErrorMessage({ data: { message: retry.message } })}
           </div>
         )}
         {mine.questions.map((q) => (

@@ -388,6 +388,22 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
+.msg-error-content {
+  flex: 1;
+  min-width: 0;
+}
+.msg-error-details {
+  margin-top: 6px;
+  color: var(--fg-dim);
+}
+.msg-error-details summary {
+  cursor: pointer;
+}
+.msg-error-details pre {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .msg-aborted {
   display: flex;
   align-items: center;

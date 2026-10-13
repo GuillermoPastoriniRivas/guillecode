@@ -19,7 +19,7 @@ import { notify } from "./toasts"
 import { clearApprovalFailed, permissionNeedsResponse, setApprovalForSession, useApprovals } from "./approvals"
 import { chooseAvailableModel, hasAccount, modelAvailable, modelVisible } from "../lib/providers"
 import { isArchivedSession, sessionTreeIds } from "../lib/sessions"
-import { CONTINUE_INTERRUPTED_TURN, isRetryableProviderError, latestFailedAssistant, retryContext, retryMessageID, retryPromptParts } from "../lib/autoretry"
+import { CONTINUE_INTERRUPTED_TURN, isRetryableProviderError, latestFailedAssistant, providerErrorMessage, retryContext, retryMessageID, retryPromptParts } from "../lib/autoretry"
 import { reconcileHistory } from "../lib/history"
 import { isBubbleWindow } from "../lib/windows"
 
@@ -783,7 +783,7 @@ function handleEvent(e: ServerEvent, directory?: string) {
       const err = p.error as { name?: string; data?: { message?: string } } | undefined
       const retryable = isRetryableProviderError(err)
       if (err && err.name !== "MessageAbortedError" && !retryable) {
-        notify.error("El agente tuvo un error", err.data?.message ?? err.name)
+        notify.error("El agente tuvo un error", providerErrorMessage(err))
       }
       break
     }
@@ -1183,13 +1183,31 @@ async function recoverTurn(sessionID: string, failed: ChatMessage, mode: "retry"
     const context = retryContext(messages, failed)
     if (!s.modelsLoaded || s.modelsError || !modelAvailable(s.models, context.model))
       throw new Error("El modelo original de esta respuesta no está disponible. Revisá su cuenta desde Cuentas de IA.")
-    if (mode === "compact") await compactSession(sessionID)
+    const last = messages.at(-1)?.info
+    const alreadyCompacted = last?.role === "assistant" && last.summary && !last.error
+      && last.time.completed && last.finish === "stop"
+    if (mode === "compact" && !alreadyCompacted) {
+      await compactSession(sessionID, context.model, context.directory)
+      // /summarize can return HTTP 200 even when the model failed. Only resume
+      // after a new, completed summary is persisted, never after mere admission.
+      const compacted = await messagesForRetry(sessionID)
+      const previous = new Set(messages.map((message) => message.info.id))
+      const summary = compacted?.findLast((message) => message.info.role === "assistant"
+        && message.info.summary && !previous.has(message.info.id))
+      if (!summary || summary.info.role !== "assistant" || summary.info.error
+        || !summary.info.time.completed || summary.info.finish !== "stop") {
+        await ensureSessionView(sessionID, true)
+        const error = summary?.info.role === "assistant" ? summary.info.error : undefined
+        throw new Error(error ? `No se pudo resumir la conversación: ${providerErrorMessage(error)}`
+          : "No se pudo verificar que la compactación terminó. El historial se conserva; probá de nuevo.")
+      }
+    }
     await api("POST", `/session/${sessionID}/prompt_async`, {
       messageID: retryMessageID(), model: context.model, agent: context.agent,
       ...(context.variant ? { variant: context.variant } : {}),
       // After compacting, the original text is already in the summary: continue
       // from it instead of replaying the task.
-      parts: mode === "compact"
+      parts: mode === "compact" || alreadyCompacted
         ? [{ type: "text", text: CONTINUE_INTERRUPTED_TURN }]
         : retryPromptParts(messages, failed.info.parentID),
     }, undefined, { directory: context.directory })
@@ -1266,9 +1284,8 @@ export async function unrevertSession(sessionID: string) {
   await ensureSessionView(sessionID, true)
 }
 
-export async function compactSession(sessionID: string) {
-  const { model } = useAgent.getState()
-  await api("POST", `/session/${sessionID}/summarize`, { providerID: model.providerID, modelID: model.modelID })
+export async function compactSession(sessionID: string, model = useAgent.getState().model, directory?: string) {
+  await api("POST", `/session/${sessionID}/summarize`, { providerID: model.providerID, modelID: model.modelID }, undefined, { directory })
 }
 
 export async function forkSession(sessionID: string, messageID?: string) {

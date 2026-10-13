@@ -20,7 +20,7 @@ import {
   useAgent,
   type ChatMessage,
 } from "../state/agent"
-import { isRetryableProviderError, latestFailedAssistant, providerErrorMessage } from "../lib/autoretry"
+import { isRetryableProviderError, isUpstreamBufferError, latestFailedAssistant, providerErrorMessage } from "../lib/autoretry"
 import { openFile } from "../state/editors"
 import { useProject } from "../state/project"
 import { notify } from "../state/toasts"
@@ -179,13 +179,21 @@ function AssistantFooter({ message, onRetry, onCompact, working }: { message: Ch
   const tokens = info.tokens
   const total = tokens ? tokens.input + tokens.output + (tokens.reasoning ?? 0) : 0
   const secs = info.time.completed ? ((info.time.completed - info.time.created) / 1000).toFixed(1) : null
-  const error = info.error as { name?: string; data?: { message?: string } } | undefined
+  const error = info.error as { name?: string; data?: { message?: string; responseBody?: string } } | undefined
   return (
     <>
       {error && error.name !== "MessageAbortedError" && (
-        <div className="msg-error">
+        <div className="msg-error" role="alert">
           <Icon name="error" />
-          <span>{providerErrorMessage(error)}</span>
+          <div className="msg-error-content">
+            <span>{providerErrorMessage(error)}</span>
+            {isUpstreamBufferError(error) && (
+              <details className="msg-error-details">
+                <summary>Detalles técnicos</summary>
+                <pre>{error.data?.message}{error.data?.responseBody && error.data.responseBody !== error.data.message ? `\n${error.data.responseBody}` : ""}</pre>
+              </details>
+            )}
+          </div>
           {isRetryableProviderError(error) ? (
             onCompact && (
               <button type="button" className="msg-retry" onClick={onCompact} disabled={working}>

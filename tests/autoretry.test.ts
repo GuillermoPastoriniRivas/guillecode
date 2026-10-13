@@ -2,6 +2,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import {
   isRetryableProviderError,
+  isUpstreamBufferError,
   lastVisibleUserMessage,
   latestFailedAssistant,
   retryPromptParts,
@@ -32,6 +33,22 @@ test("reconoce solo el error de proveedor reintentable", () => {
   assert.equal(isRetryableProviderError({ name: "APIError", data: { isRetryable: false } }), false)
   assert.equal(isRetryableProviderError({ name: "ProviderAuthError", data: {} }), false)
   assert.equal(isRetryableProviderError(undefined), false)
+})
+
+test("el búfer upstream ofrece compactar aunque el motor marque el 507 como no reintentable", () => {
+  const message = "Insufficient Storage: exceeded request buffer limit while retrying upstream"
+  const error = { name: "APIError", data: { message, statusCode: 507, isRetryable: false } }
+  assert.equal(isUpstreamBufferError(error), true)
+  assert.equal(isRetryableProviderError(error), true)
+  assert.match(providerErrorMessage(error), /servidor de IA.*búfer/)
+  assert.match(providerErrorMessage(error), /No es falta de espacio en tu PC/)
+  assert.equal(isUpstreamBufferError({ name: "APIError", data: { message: "Insufficient Storage", statusCode: 507 } }), false)
+  assert.equal(isUpstreamBufferError({ data: { message: 507 } }), false)
+  assert.equal(isUpstreamBufferError(undefined), false)
+  const bodyOnly = { name: "APIError", data: { message: "HTTP 507", responseBody: message, isRetryable: false } }
+  assert.equal(isRetryableProviderError(bodyOnly), true)
+  assert.match(providerErrorMessage(bodyOnly), /búfer/)
+  assert.equal(isUpstreamBufferError({ data: { responseBody: "request_payload_exceeded_retry_buffer_limit" } }), true)
 })
 
 test("elige el último mensaje del usuario con contenido visible", () => {
@@ -68,6 +85,18 @@ test("solo recupera el error terminal, no errores históricos ni respuestas inco
   assert.equal(latestFailedAssistant([failed, user("u2", [text("seguí")])]), null)
   assert.equal(latestFailedAssistant([failed, assistant("a2", "u2")]), null)
   assert.equal(latestFailedAssistant([{ ...failed, info: { ...failed.info, time: {} } }]), null)
+})
+
+test("compactar no pierde el turno fallado si después se rechaza su continuación", () => {
+  const failed = { info: { id: "a1", role: "assistant", time: { completed: 1 }, error: { name: "APIError" } }, parts: [] }
+  const compact = user("compact", [{ type: "compaction", auto: false }])
+  const summary = assistant("summary", "compact")
+  Object.assign(summary.info, { summary: true, time: { completed: 2 }, finish: "stop" })
+  const history = [failed, compact, summary]
+  assert.equal(latestFailedAssistant(history), failed)
+  assert.equal(latestFailedAssistant([...history, user("continued", [text(CONTINUE_INTERRUPTED_TURN)])]), null)
+  Object.assign(summary.info, { error: { name: "APIError" } })
+  assert.equal(latestFailedAssistant(history), failed, "No continuar usando el agente compaction como si fuera el agente original")
 })
 
 test("reintento manual continúa el trabajo si hubo herramientas o falta el padre visible", () => {

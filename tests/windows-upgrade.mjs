@@ -17,12 +17,13 @@ mkdirSync(join(tmpdir(), "opencode"), { recursive: true })
 const reuse = process.env.GC_UPGRADE_FIXTURE
 const dir = reuse ? resolve(reuse) : mkdtempSync(join(tmpdir(), "opencode", "guillecode-upgrade-"))
 const fixture = reuse ? JSON.parse(readFileSync(join(dir, "fixture.json"), "utf8")) : null
+const buildOnly = process.argv.includes("--build-only")
 const identifier = fixture?.identifier ?? `com.guillecode.upgrade-test-${Date.now()}`
 const binaryName = "guillecode-upgrade-test"
 const productionConfig = JSON.parse(readFileSync("src-tauri/tauri.conf.json", "utf8"))
 assert.equal(productionConfig.plugins.updater.windows.installMode, "quiet", "La prueba debe usar el modo silencioso de producción")
 assert.equal(productionConfig.bundle.windows.nsis.installMode, "currentUser", "quiet requiere instalación por usuario")
-const baseVersion = JSON.parse(readFileSync("src-tauri/tauri.conf.json", "utf8")).version
+const baseVersion = fixture?.baseVersion ?? process.env.GC_UPGRADE_BASE_VERSION ?? JSON.parse(readFileSync("src-tauri/tauri.conf.json", "utf8")).version
 const parts = baseVersion.split(".").map(Number)
 const nextVersion = `${parts[0]}.${parts[1]}.${parts[2] + 1}`
 const installed = join(dir, "installed"), profile = join(dir, "profile")
@@ -50,7 +51,7 @@ const tcp = createTcpServer()
 await new Promise((done) => tcp.listen(fixture?.cdpPort ?? 0, "127.0.0.1", done))
 const cdpPort = tcp.address().port
 await new Promise((done) => tcp.close(done))
-writeFileSync(join(dir, "fixture.json"), JSON.stringify({ identifier, serverPort: server.address().port, cdpPort }))
+writeFileSync(join(dir, "fixture.json"), JSON.stringify({ identifier, serverPort: server.address().port, cdpPort, baseVersion, nextVersion }))
 const delay = (ms) => new Promise((done) => setTimeout(done, ms))
 
 function build(version) {
@@ -140,6 +141,9 @@ try {
   signature = readFileSync(`${updateInstaller}.sig`, "utf8").trim()
   console.log(`[upgrade] compilando instalador QA ${baseVersion}…`)
   const initialInstaller = reuse ? join(dir, `${baseVersion}-setup.exe`) : build(baseVersion)
+  if (buildOnly) {
+    console.log(`[upgrade] fixtures firmados listos para la prueba nativa: ${dir}`)
+  } else {
   console.log(`[upgrade] instalando ${baseVersion} en un directorio aislado…`)
   // NSIS /D must be last. Current-user QA install never requires administrator.
   const installer = spawn(initialInstaller, ["/S", `/D=${installed}`], { env, windowsHide: true, stdio: "ignore" })
@@ -221,6 +225,7 @@ try {
   console.log(`UPGRADE PASS: ${baseVersion} → ${nextVersion}, actualización silenciosa y relanzamiento; motor huérfano liberado sin cerrar otros motores; perfil, preferencias y conversación conservados; HTTP fallido y firma inválida rechazados`)
   await invoke(page, "app_quit").catch(() => {})
   await delay(1500)
+  }
 } catch (error) {
   console.error("[upgrade] FALLÓ:", error?.stack ?? error)
   process.exitCode = 1
@@ -238,6 +243,6 @@ try {
   try { server.closeAllConnections(); await new Promise((done) => server.close(done)) } catch {}
   killInstalled()
   await delay(500)
-  if (process.exitCode) console.warn(`[upgrade] fixture conservado para diagnóstico: ${dir}`)
+  if (process.exitCode || buildOnly) console.warn(`[upgrade] fixture conservado: ${dir}`)
   else try { rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 500 }) } catch (error) { console.warn(`[upgrade] no se pudo limpiar ${dir}: ${error.message}`) }
 }
