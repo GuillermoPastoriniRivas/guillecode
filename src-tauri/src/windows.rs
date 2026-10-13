@@ -178,7 +178,7 @@ pub fn create_bubble(app: &AppHandle, project: String, session: String, origin: 
         .decorations(false)
         .transparent(true)
         .always_on_top(true)
-        .skip_taskbar(true)
+        .skip_taskbar(false)
         .shadow(false)
         .theme(Some(tauri::Theme::Dark))
         .disable_drag_drop_handler()

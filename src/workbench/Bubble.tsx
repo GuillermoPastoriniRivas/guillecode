@@ -2,7 +2,7 @@ import { useEffect } from "react"
 import { bindAgentProject, ensureSessionView, loadAgentMeta, selectSession, sessionWaiting, startEventStream, useAgent } from "../state/agent"
 import { initProject, useProject } from "../state/project"
 import { initApprovals } from "../state/approvals"
-import { dockBubble } from "../state/bubbles"
+import { dockBubble, minimizeBubble } from "../state/bubbles"
 import { listenWindowClose } from "../state/hub"
 import { SessionPane } from "../agent/AgentPanel"
 import { DialogHost } from "../components/Dialog"
@@ -10,7 +10,7 @@ import { ContextMenuHost } from "../components/ContextMenu"
 import { QuickInput } from "../components/QuickInput"
 import { ImageLightbox } from "../components/ImageLightbox"
 import { Toasts } from "../components/Toasts"
-import { Icon, Spinner } from "../components/ui"
+import { Icon, IconButton, Spinner } from "../components/ui"
 
 let bubbleBooted = false
 
@@ -36,6 +36,7 @@ function BubbleHead({ sessionId, origin }: { sessionId: string; origin: string }
       <span className="bubble-head-title" data-tauri-drag-region>
         {session?.title || "Conversación"}
       </span>
+      <IconButton icon="remove" title="Minimizar chat" onClick={() => void minimizeBubble()} />
       <button
         type="button"
         className="bubble-dock"

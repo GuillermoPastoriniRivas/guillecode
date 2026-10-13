@@ -60,6 +60,16 @@ export function listenBubbleDock(): void {
   })
 }
 
+// Minimiza la ventana sin cerrar el chat ni perder el borrador. Se recupera
+// desde la barra de tareas de Windows.
+export async function minimizeBubble(): Promise<void> {
+  try {
+    await getCurrentWindow().minimize()
+  } catch (e) {
+    notify.error("No se pudo minimizar el chat", e instanceof Error ? e.message : String(e))
+  }
+}
+
 // Devuelve la conversación a la ventana de origen y cierra la burbuja.
 export async function dockBubble(sessionId: string, origin: string): Promise<void> {
   await emitTo(origin, "bubble://dock", sessionId).catch(() => undefined)
