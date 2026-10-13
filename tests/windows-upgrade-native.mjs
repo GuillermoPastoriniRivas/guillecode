@@ -39,8 +39,8 @@ writeFileSync(join(appData, "remote.json"), JSON.stringify({ enabled: true, port
 const prefs = JSON.stringify({ upgradeNativeMarker: "preserved" })
 writeFileSync(join(appData, "remote_prefs.json"), prefs)
 const headers = { Authorization: `Bearer ${token}`, "x-opencode-directory": profile, "Content-Type": "application/json" }
-async function hub(path, options = {}) {
-  const response = await fetch(`http://127.0.0.1:${remotePort}${path}`, { ...options, headers, signal: AbortSignal.timeout(5000) })
+async function hub(path, options = {}, timeout = 5000) {
+  const response = await fetch(`http://127.0.0.1:${remotePort}${path}`, { ...options, headers, signal: AbortSignal.timeout(timeout) })
   if (!response.ok) throw new Error(`Hub HTTP ${response.status}`)
   return response.json()
 }
@@ -72,7 +72,8 @@ try {
   const executable = join(installed, "guillecode-upgrade-test.exe")
   app = spawn(executable, ["--hidden"], { env, windowsHide: true, stdio: "ignore" })
   await healthy()
-  const session = await hub("/oc/session", { method: "POST", body: JSON.stringify({ title: "native-upgrade-preserved" }) })
+  // A fresh profile installs the engine's plugin dependencies on first use.
+  const session = await hub("/oc/session", { method: "POST", body: JSON.stringify({ title: "native-upgrade-preserved" }) }, 120000)
   // Let the frontend normalize defaults, then compare the actual preferences.
   await delay(1500)
   const prefsBefore = JSON.parse(readFileSync(join(appData, "remote_prefs.json"), "utf8"))
