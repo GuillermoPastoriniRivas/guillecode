@@ -23,6 +23,7 @@ import type { Route } from "./Home"
 import { Icon, Md, OfflineBanner, useLive, usePoll } from "./ui"
 import { reconcileHistory } from "../lib/history"
 import { providerErrorMessage } from "../lib/autoretry"
+import { isDesktopContextText, isInternalScreenshot } from "../lib/internal-context"
 
 const PAGE = 60
 const STICK_PX = 160
@@ -238,10 +239,10 @@ function renderParts(parts: Part[], live: boolean): ReactNode[] {
 function MessageView({ message, live }: { message: Message; live: boolean }) {
   const parts = message.parts
   const text = parts
-    .filter((p) => p.type === "text" && !p.synthetic && p.text?.trim())
+    .filter((p) => p.type === "text" && !p.synthetic && p.text?.trim() && !isDesktopContextText(p.text))
     .map((p) => p.text!)
     .join("\n\n")
-  const files = parts.filter((p) => p.type === "file" && !p.url?.startsWith("file:"))
+  const files = parts.filter((p) => p.type === "file" && !isInternalScreenshot(p) && !p.url?.startsWith("file:"))
   if (message.info.role === "user") {
     if ((!text && files.length === 0) || /^#{1,2} Memoria fluws/.test(text)) return null
     return (

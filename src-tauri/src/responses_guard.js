@@ -1,6 +1,27 @@
 // Runs inside GuilleCode's engine, so desktop, PWA and routines use the same
 // transport protection. Do not turn a truncated Responses stream into a finish.
+import { createProviderDiagnostics } from "./provider-diagnostics.js"
+import { budgetChatGPTRequest } from "./responses-budget.js"
+
 const installed = Symbol.for("guillecode.responses.guard")
+
+function payloadFailure() {
+  return terminalFailure("guillecode_request_budget", "La solicitud supera el presupuesto de transporte de ChatGPT incluso preservando solo resultados antiguos abreviados. El historial está intacto. Compactá la conversación para continuar; reenviar lo mismo no lo resuelve.")
+}
+
+function terminalFailure(code, message, responseHeaders) {
+  const events = [
+    { type: "response.created", response: { id: "guillecode-transport-error", model: "unknown", created_at: 0 } },
+    { type: "response.output_item.added", output_index: 0, item: { type: "message", id: "guillecode-transport-error", role: "assistant", content: [], status: "in_progress" } },
+    { type: "response.output_text.delta", item_id: "guillecode-transport-error", output_index: 0, content_index: 0, delta: "" },
+    { type: "response.failed", sequence_number: 1, response: { error: { code, message } } },
+  ]
+  const headers = new Headers(responseHeaders)
+  headers.delete("content-length")
+  headers.delete("content-encoding")
+  headers.set("content-type", "text/event-stream")
+  return new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""), { headers })
+}
 
 function interrupted() {
   const error = new Error("La respuesta se interrumpió antes de recibir su final. Se conservó el contenido parcial. Reintentá para continuar desde el historial.")
@@ -8,7 +29,7 @@ function interrupted() {
   return error
 }
 
-function protect(response, signal) {
+function protect(response, signal, diagnostic) {
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   let buffer = "", data = [], terminal = false
@@ -32,6 +53,7 @@ function protect(response, signal) {
             typeof result?.usage?.input_tokens === "number" && typeof result?.usage?.output_tokens === "number") terminal = true
         if (event.type === "response.failed" && typeof event.sequence_number === "number" && result &&
             (result.error == null || typeof result.error.message === "string")) terminal = true
+        diagnostic?.event(event, terminal)
       } catch { /* Malformed data is handled by the provider parser. */ }
       data = []
     } else if (value.startsWith("data:")) {
@@ -62,6 +84,7 @@ function protect(response, signal) {
         }
         const next = await reader.read()
         if (!next.done) {
+          diagnostic?.chunk(next.value)
           observe(decoder.decode(next.value, { stream: true }))
           controller.enqueue(next.value)
           return
@@ -69,16 +92,17 @@ function protect(response, signal) {
         observe(decoder.decode())
         if (buffer === "\r") line("")
         if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError")
-        if (!terminal) { fail(controller); return }
+        if (!terminal) { diagnostic?.finish("eof_without_terminal"); fail(controller); return }
         controller.close()
       } catch (error) {
+        diagnostic?.error(signal?.aborted || error?.name === "AbortError" ? "aborted" : "stream_error", error, signal)
         if (signal?.aborted || error?.name === "AbortError") controller.error(error)
         else if (terminal) controller.close()
         else fail(controller)
         await reader.cancel(error).catch(() => undefined)
       }
     },
-    cancel(reason) { return reader.cancel(reason) },
+    cancel(reason) { diagnostic?.finish(signal?.aborted ? "aborted" : "consumer_cancelled"); return reader.cancel(reason) },
   }, { highWaterMark: 0 })
   const headers = new Headers(response.headers)
   headers.delete("content-length")
@@ -92,35 +116,51 @@ async function bufferFailure(response) {
   // The SDK retries every 5xx before exposing it to the UI. Bridge this known
   // non-recoverable replay into a terminal Responses error, preserving its real
   // status and body. This is a failed generation, never a successful finish.
-  const created = { type: "response.created", response: { id: "guillecode-upstream-buffer-limit", model: "unknown", created_at: 0 } }
   // Enter the streaming phase without adding visible content. The pinned SDK
   // treats a failure before any output as another retryable API call error.
-  const item = { type: "response.output_item.added", output_index: 0, item: { type: "message", id: "guillecode-buffer-error", role: "assistant", content: [], status: "in_progress" } }
-  const delta = { type: "response.output_text.delta", item_id: "guillecode-buffer-error", output_index: 0, content_index: 0, delta: "" }
-  const event = { type: "response.failed", sequence_number: 1, response: {
-    error: { code: "guillecode_upstream_buffer_limit", message: `HTTP 507: ${body}` },
-  } }
-  const headers = new Headers(response.headers)
-  headers.delete("content-length")
-  headers.delete("content-encoding")
-  headers.set("content-type", "text/event-stream")
   void response.body?.cancel().catch(() => undefined)
-  return new Response([created, item, delta, event].map((value) => `data: ${JSON.stringify(value)}\n\n`).join(""), { headers })
+  return terminalFailure("guillecode_upstream_buffer_limit", `HTTP 507: ${body}`, response.headers)
 }
 
-export const GuilleCodeResponses = async () => {
+export const GuilleCodeResponses = async (_input, options = {}) => {
   if (globalThis[installed]) return {}
   globalThis[installed] = true
+  const diagnostics = createProviderDiagnostics(options.diagnosticsPath, { appVersion: options.appVersion })
   const original = globalThis.fetch
   globalThis.fetch = async (input, init) => {
-    const response = await original(input, init)
     const url = new URL(input instanceof Request ? input.url : input)
     const method = init?.method ?? (input instanceof Request ? input.method : "GET")
-    if (method.toUpperCase() !== "POST" || !url.pathname.endsWith("/responses")) return response
-    if (!response.ok) return bufferFailure(response)
+    if (method.toUpperCase() !== "POST" || !url.pathname.endsWith("/responses")) return original(input, init)
+    const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined)
+    if (url.origin === "https://chatgpt.com") {
+      if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError")
+      const body = typeof init?.body === "string" ? init.body
+        : input instanceof Request && init?.body === undefined ? await input.clone().text() : null
+      if (body !== null) {
+        const bounded = budgetChatGPTRequest(body)
+        if (bounded === null) {
+          diagnostics?.begin(input, { ...init, body })?.finish("request_budget_exceeded")
+          return payloadFailure()
+        }
+        if (bounded !== body) {
+          const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined))
+          headers.delete("content-length")
+          init = { ...init, headers, body: bounded }
+        }
+      }
+    }
+    const diagnostic = diagnostics?.begin(input, init)
+    let response
+    try { response = await original(input, init) }
+    catch (error) { diagnostic?.error(signal?.aborted ? "aborted" : "transport_error", error, signal); throw error }
+    diagnostic?.headers(response)
+    if (!response.ok) { diagnostic?.httpError(response); return bufferFailure(response) }
     if (
-        !response.body || !response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) return response
-    return protect(response, init?.signal ?? (input instanceof Request ? input.signal : undefined))
+        !response.body || !response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) {
+      diagnostic?.finish("http_ok_non_stream")
+      return response
+    }
+    return protect(response, signal, diagnostic)
   }
   return {}
 }

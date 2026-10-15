@@ -26,6 +26,7 @@ import { useProject } from "../state/project"
 import { notify } from "../state/toasts"
 import { clockTime } from "../lib/time"
 import { normalizePath, relativePath, resolvePath } from "../lib/paths"
+import { isDesktopContextText, isInternalScreenshot } from "../lib/internal-context"
 
 function isContextMessage(m: ChatMessage): boolean {
   if (m.info.role !== "user") return false
@@ -36,7 +37,7 @@ function isContextMessage(m: ChatMessage): boolean {
 
 function visibleUserText(m: ChatMessage): string {
   return m.parts
-    .filter((p): p is Extract<Part, { type: "text" }> => p.type === "text" && !p.synthetic)
+    .filter((p): p is Extract<Part, { type: "text" }> => p.type === "text" && !p.synthetic && !isDesktopContextText(p.text))
     .map((p) => p.text)
     .join("\n\n")
 }
@@ -112,7 +113,7 @@ function renderParts(parts: Part[], live: boolean): ReactNode[] {
   }
   for (const p of parts) {
     if (p.type === "step-start" || p.type === "patch") continue
-    if (p.type === "text" && (p.synthetic || !p.text.trim())) continue
+    if (p.type === "text" && (p.synthetic || !p.text.trim() || isDesktopContextText(p.text))) continue
     if (isStep(p)) group.push(p)
     else {
       flush()
@@ -153,7 +154,7 @@ function FileChip({ part }: { part: Extract<Part, { type: "file" }> }) {
 const PartView = memo(function PartView({ part, live }: { part: Part; live: boolean }) {
   switch (part.type) {
     case "text":
-      if (part.synthetic || !part.text.trim()) return null
+      if (part.synthetic || !part.text.trim() || isDesktopContextText(part.text)) return null
       return (
         <div className="msg-text">
           <Markdown text={part.text} />
@@ -165,6 +166,7 @@ const PartView = memo(function PartView({ part, live }: { part: Part; live: bool
     case "tool":
       return <ToolCard part={part} />
     case "file":
+      if (isInternalScreenshot(part)) return null
       return <FileChip part={part} />
     case "patch":
       return null
@@ -238,9 +240,10 @@ function AssistantFooter({ message, onRetry, onCompact, working }: { message: Ch
 function ContextBlock({ message }: { message: ChatMessage }) {
   const [open, setOpen] = useState(false)
   const text = message.parts
-    .filter((p): p is Extract<Part, { type: "text" }> => p.type === "text")
+    .filter((p): p is Extract<Part, { type: "text" }> => p.type === "text" && !isDesktopContextText(p.text))
     .map((p) => p.text)
     .join("\n\n")
+  if (!text.trim()) return null
   const title = text.match(/^#{1,2} ([^\n]+)/m)?.[1]?.trim() ?? "Contexto inyectado"
   return (
     <div className="msg-context">

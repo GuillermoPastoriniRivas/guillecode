@@ -1,4 +1,5 @@
 import type { Message, Part } from "@opencode-ai/sdk"
+import { INTERNAL_SCREENSHOT_FILENAME, isDesktopContextText } from "./internal-context.ts"
 
 export type RetryMessage = { info: Message; parts: Part[] }
 export type RetryContext = { model: { providerID: string; modelID: string }; agent: string; variant?: string; directory: string }
@@ -36,10 +37,12 @@ export function isUpstreamBufferError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false
   const data = (error as { data?: { message?: unknown; responseBody?: unknown } }).data
   return [data?.message, data?.responseBody].some((text) => typeof text === "string"
-    && /exceeded request buffer limit while retrying upstream|request_payload_exceeded_retry_buffer_limit/i.test(text))
+    && /exceeded request buffer limit while retrying upstream|request_payload_exceeded_retry_buffer_limit|guillecode_request_budget/i.test(text))
 }
 
 export function providerErrorMessage(error: { name?: string; data?: { message?: string } }): string | undefined {
+  if (error.data?.message?.includes("guillecode_request_budget"))
+    return "La solicitud supera el presupuesto de transporte de ChatGPT. El historial está intacto. Compactá la conversación para continuar."
   if (isUpstreamBufferError(error))
     return "El servidor de IA superó su búfer al intentar reenviar la solicitud. No es falta de espacio en tu PC. Compactá la conversación para intentar continuar desde el último paso."
   return interruptedStream(error) ?? error.data?.message ?? error.name
@@ -54,7 +57,7 @@ export function isRetryableProviderError(error: unknown): boolean {
 }
 
 function isContextText(text: string): boolean {
-  return /^#{1,2} Memoria fluws/.test(text)
+  return /^#{1,2} Memoria fluws/.test(text) || isDesktopContextText(text)
 }
 
 function hasVisibleUserContent(message: RetryMessage): boolean {
@@ -97,7 +100,7 @@ export function retryPromptParts(messages: RetryMessage[], parentID: string): Re
     for (const part of parent.parts) {
       if (part.type === "text" && !part.synthetic && part.text.trim() && !isContextText(part.text))
         parts.push({ type: "text", text: part.text })
-      else if (part.type === "file")
+      else if (part.type === "file" && part.filename !== INTERNAL_SCREENSHOT_FILENAME)
         parts.push({ type: "file", mime: part.mime, url: part.url, filename: part.filename ?? "" })
     }
   }

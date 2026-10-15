@@ -42,7 +42,9 @@ fn reply(req: Request, status: u16, body: Option<&Value>) {
 
 fn handle(app: &AppHandle, mut req: Request, token: &str) {
     let path = req.url().split('?').next().unwrap_or("").to_string();
+    let session_binding = path == "/desktop/session";
     let channel = match path.as_str() {
+        "/desktop/session" => Channel::Desktop,
         "/mcp/desktop" => Channel::Desktop,
         "/mcp/browser" => Channel::Browser,
         "/mcp/routines" => Channel::Routines,
@@ -68,6 +70,15 @@ fn handle(app: &AppHandle, mut req: Request, token: &str) {
         Ok(v) => v,
         Err(_) => return reply(req, 400, Some(&json!({ "jsonrpc": "2.0", "id": null, "error": { "code": -32700, "message": "JSON inválido" } }))),
     };
+    if session_binding {
+        if parsed["peek"].as_bool().unwrap_or(false) {
+            return reply(req, 200, Some(&json!({ "task": super::tasks::get(app, parsed["session"].as_str().unwrap_or_default()) })));
+        }
+        return match super::tasks::bind(app, parsed["session"].as_str().unwrap_or_default()) {
+            Ok(binding) => reply(req, 200, Some(&binding)),
+            Err(e) => reply(req, 400, Some(&json!({ "error": e }))),
+        };
+    }
     if let Some(batch) = parsed.as_array() {
         let answers: Vec<Value> = batch.iter().filter_map(|m| dispatch(app, channel, m)).collect();
         if answers.is_empty() {

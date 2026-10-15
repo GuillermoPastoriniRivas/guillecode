@@ -1758,6 +1758,19 @@ html.is-bubble #root {
   flex-direction: column;
   overflow: hidden;
 }
+
+.bubble-context {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+}
+.bubble-context label, .bubble-task { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.bubble-context select { flex: 1; min-width: 0; background: transparent; color: inherit; border: 0; font: inherit; text-overflow: ellipsis; }
+.bubble-context option { background: var(--bg); color: var(--text); }
+.bubble-task { margin-top: 5px; justify-content: space-between; }
+.bubble-task span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bubble-task button { font: inherit; cursor: pointer; }
+.bubble-context [role="alert"] { margin-top: 4px; color: var(--warning); }
 .bubble-loading {
   flex: 1;
   display: flex;

@@ -1,6 +1,68 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { GuilleCodeResponses } from "../src-tauri/src/responses_guard.js"
+import { budgetChatGPTRequest, CHATGPT_REQUEST_BUDGET } from "../src-tauri/src/responses-budget.js"
+
+test("ChatGPT mide UTF-8 y preserva instrucciones, usuarios y pares de herramientas", () => {
+  const input = [{ role: "user", content: "No borrar mis requisitos" }]
+  for (let i = 0; i < 12; i++) {
+    input.push({ role: "assistant", content: `Paso ${i}` })
+    input.push({ type: "function_call", call_id: `call-${i}`, name: "read", arguments: "{}" })
+    input.push({ type: "function_call_output", call_id: `call-${i}`, output: "á🙂".repeat(15000) })
+  }
+  const request = { instructions: "reglas", tools: [{ name: "read" }], input }
+  const body = JSON.stringify(request)
+  assert.ok(body.length < CHATGPT_REQUEST_BUDGET)
+  assert.ok(Buffer.byteLength(body) > CHATGPT_REQUEST_BUDGET)
+  const bounded = budgetChatGPTRequest(body)
+  assert.ok(bounded)
+  assert.ok(Buffer.byteLength(bounded) <= CHATGPT_REQUEST_BUDGET)
+  const result = JSON.parse(bounded)
+  assert.equal(result.instructions, request.instructions)
+  assert.deepEqual(result.tools, request.tools)
+  assert.deepEqual(result.input[0], input[0])
+  assert.equal(result.input.length, input.length)
+  assert.deepEqual(result.input.slice(-16), input.slice(-16))
+  assert.match(result.input[3].output, /salida antigua abreviada/)
+  assert.equal(JSON.stringify(request), body, "No mutar el historial original")
+  assert.equal(budgetChatGPTRequest(bounded), bounded, "Idempotente")
+  assert.equal(budgetChatGPTRequest(JSON.stringify({ input: [{ role: "user", content: "x".repeat(CHATGPT_REQUEST_BUDGET) }] })), null)
+  assert.equal(budgetChatGPTRequest('{ "input": [] }'), '{ "input": [] }')
+  const batch = input.filter((item) => item.type)
+  assert.equal(budgetChatGPTRequest(JSON.stringify({ input: batch })), null, "No abreviar un lote paralelo actual aunque tenga más de ocho resultados")
+})
+
+test("ChatGPT no envía requests irreducibles; respeta Request, cancelación y otros proveedores", async () => {
+  const original = globalThis.fetch
+  const key = Symbol.for("guillecode.responses.guard")
+  let calls = 0
+  let sent
+  try {
+    globalThis.fetch = async (_input, init) => { calls++; sent = init; return new Response("ok") }
+    await GuilleCodeResponses()
+    const body = JSON.stringify({ input: [{ role: "user", content: "x".repeat(CHATGPT_REQUEST_BUDGET) }] })
+    const response = await fetch(new Request("https://chatgpt.com/backend-api/codex/responses", { method: "POST", body }))
+    assert.match(await response.text(), /guillecode_request_budget/)
+    assert.equal(calls, 0)
+    await fetch("https://api.openai.com/v1/responses", { method: "POST", body })
+    assert.equal(calls, 1)
+    const old = { type: "function_call_output", call_id: "old", output: "x".repeat(CHATGPT_REQUEST_BUDGET) }
+    const recent = Array.from({ length: 8 }, (_, i) => ({ type: "function_call_output", call_id: `recent-${i}`, output: "ok" }))
+    const reducible = JSON.stringify({ input: [old, { role: "assistant", content: "continuar" }, ...recent] })
+    await fetch(new Request("https://chatgpt.com/backend-api/codex/responses", { method: "POST", body: reducible, headers: { "content-length": String(Buffer.byteLength(reducible)), "authorization": "Bearer fake" } }))
+    assert.ok(Buffer.byteLength(sent.body) <= CHATGPT_REQUEST_BUDGET)
+    assert.equal(sent.headers.get("content-length"), null)
+    assert.equal(sent.headers.get("authorization"), "Bearer fake")
+    assert.equal(calls, 2)
+    const abort = new AbortController()
+    abort.abort()
+    await assert.rejects(fetch("https://chatgpt.com/backend-api/codex/responses", { method: "POST", body, signal: abort.signal }), { name: "AbortError" })
+    assert.equal(calls, 2)
+  } finally {
+    globalThis.fetch = original
+    delete globalThis[key]
+  }
+})
 
 test("Responses preserva bytes fragmentados y exige un terminal válido; cancela el lector", async () => {
   const original = globalThis.fetch

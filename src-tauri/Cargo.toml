@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.10.0"
+version = "0.13.0"
 description = "GuilleCode"
 authors = ["guille"]
 license = ""
@@ -11,6 +11,11 @@ rust-version = "1.77.2"
 [lib]
 name = "app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+# Opt-in feature for the desktop end-to-end test that builds a real Tauri window.
+# It also makes build.rs add the Common Controls v6 manifest to test executables.
+desktop-e2e = []
 
 [build-dependencies]
 tauri-build = { version = "2.6.3", features = [] }

@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
 import { createServer } from "node:http"
 import { createServer as tcpServer } from "node:net"
-import { mkdtemp, mkdir, rm, copyFile } from "node:fs/promises"
+import { mkdtemp, mkdir, rm, copyFile, readFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
@@ -43,7 +43,7 @@ Object.assign(env, {
   XDG_DATA_HOME: join(profile, "data"), XDG_CONFIG_HOME: join(profile, "config"), XDG_CACHE_HOME: join(profile, "cache"), XDG_STATE_HOME: join(profile, "state"),
   OPENCODE_CONFIG_DIR: join(profile, "config", "opencode"), OPENCODE_DISABLE_EXTERNAL_SKILLS: "true", OPENCODE_DISABLE_PROJECT_CONFIG: "true", OPENCODE_SERVER_PASSWORD: "qa-password",
   OPENCODE_CONFIG_CONTENT: JSON.stringify({
-    plugin: [pathToFileURL(join(profile, "responses-guard.js")).href],
+    plugin: [[pathToFileURL(join(profile, "responses-guard.js")).href, { diagnosticsPath: join(profile, "provider-diagnostics.jsonl"), appVersion: "qa" }]],
     enabled_providers: ["openai"],
     provider: { openai: { options: { apiKey: "qa-fake-key", baseURL: `http://127.0.0.1:${mock.address().port}/v1` }, models: { "qa-model": { name: "QA", limit: { context: 200000, output: 32000 } } } } },
     agent: { title: { disable: true }, summary: { disable: true } },
@@ -51,6 +51,8 @@ Object.assign(env, {
 })
 await mkdir(env.OPENCODE_CONFIG_DIR, { recursive: true })
 await copyFile(resolve("src-tauri/src/responses_guard.js"), join(profile, "responses-guard.js"))
+await copyFile(resolve("src-tauri/src/responses-budget.js"), join(profile, "responses-budget.js"))
+await copyFile(resolve("src-tauri/src/provider-diagnostics.js"), join(profile, "provider-diagnostics.js"))
 const child = spawn(resolve("src-tauri/binaries/opencode-x86_64-pc-windows-msvc.exe"), ["serve", "--hostname", "127.0.0.1", "--port", String(port), "--print-logs", "--log-level", "DEBUG"], { env, cwd: profile, windowsHide: true, stdio: "pipe" })
 let log = ""
 for (const output of [child.stdout, child.stderr]) output.on("data", (bytes) => { log = (log + bytes).slice(-6000) })
@@ -101,6 +103,16 @@ try {
     }
     console.log(`Responses ${mode}: one call, idle, terminal semantics OK`)
   }
+  const diagnostics = (await readFile(join(profile, "provider-diagnostics.jsonl"), "utf8")).trim().split("\n").map(JSON.parse)
+  const requests = diagnostics.filter((record) => record.phase === "request")
+  assert.equal(requests.length, 5)
+  assert.ok(requests.every((record) => record.model === "qa-model" && record.requestBytes > 0 && record.appVersion === "qa"))
+  assert.ok(diagnostics.some((record) => record.outcome === "response.completed" && record.usage?.input_tokens === 10))
+  assert.ok(diagnostics.some((record) => record.outcome === "eof_without_terminal"))
+  assert.ok(diagnostics.some((record) => record.outcome === "http_error" && record.status === 507))
+  assert.ok(diagnostics.some((record) => record.failureClass === "upstream_buffer_limit"))
+  assert.ok(!JSON.stringify(diagnostics).includes("qa-fake-key"))
+  console.log("Provider diagnostics: real engine options, wire size, outcomes and safe persistence OK")
   // Verify the real engine's summarize contract, including HTTP 200 on failure.
   for (mode of ["completed", "failed"]) {
     const before = await api("GET", `/session/${lastSession.id}/message`)

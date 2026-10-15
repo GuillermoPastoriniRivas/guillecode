@@ -2,7 +2,8 @@ use super::ocr;
 use super::stream::clipboard;
 use super::uia::{self, Change, Delta};
 use super::win::{self, Button, Rect, WinInfo};
-use super::{blocked_reason, gate, listed_reason, record, ToolResult};
+use super::{blocked_reason, listed_reason, record, ToolResult};
+use super::{context, tasks};
 use base64::Engine;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -25,20 +26,178 @@ const CLIPBOARD_MAX: usize = 20000;
 const STEPS_MAX: usize = 20;
 const ZOOM_MAX: f64 = 3.0;
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Frame {
     origin: (i32, i32),
     scale: f64,
+    bounds: Rect,
+    fingerprint: u64,
+    at: Instant,
 }
 
-static FRAMES: Mutex<Option<HashMap<isize, Frame>>> = Mutex::new(None);
+static FRAMES: Mutex<Option<HashMap<(String, isize), Frame>>> = Mutex::new(None);
 
 fn remember_frame(window: isize, frame: Frame) {
-    FRAMES.lock().unwrap().get_or_insert_with(HashMap::new).insert(window, frame);
+    FRAMES.lock().unwrap().get_or_insert_with(HashMap::new).insert((tasks::observer(), window), frame);
 }
 
 fn frame_of(window: isize) -> Option<Frame> {
-    FRAMES.lock().unwrap().as_ref().and_then(|m| m.get(&window).copied())
+    FRAMES.lock().unwrap().as_ref().and_then(|m| m.get(&(tasks::observer(), window)).cloned())
+}
+
+fn fingerprint(shot: &win::Shot) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    shot.width.hash(&mut hash); shot.height.hash(&mut hash);
+    for pixel in shot.bgra.chunks(4).step_by(31) { pixel[..3].hash(&mut hash); }
+    hash.finish()
+}
+
+fn validate_frame(w: &WinInfo, frame: &Frame) -> Result<(), String> {
+    if frame.at.elapsed() > Duration::from_secs(120) || win::bounds(w.hwnd) != frame.bounds || fingerprint(&win::capture_window(w.hwnd)?) != frame.fingerprint {
+        return Err("La captura/OCR ya no representa esta pantalla. Capturá de nuevo y resolvé el objetivo antes de hacer clic.".into());
+    }
+    Ok(())
+}
+
+fn check_current() -> Result<(), String> {
+    match crate::proc::app() { Some(app) => tasks::check(app), None => Ok(()) }
+}
+
+fn expectation_schema() -> Value {
+    json!({ "type": "object", "description": "Una condición comprobable: ref+value (valor exacto), window+text (texto visible), window (abierta), path+contains opcional (archivo UTF-8), o pageId+text (Chrome). gone invierte presencia. timeout en segundos, hasta 90.", "properties": {
+        "ref": {"type":"string"}, "value": {"type":"string"}, "window": {"type":"string"}, "text": {"type":"string"},
+        "path": {"type":"string"}, "contains": {"type":"string"}, "pageId": {"type":"integer"}, "gone": {"type":"boolean"}, "timeout": {"type":"integer"}
+    }, "additionalProperties": false })
+}
+
+fn validate_expect(expect: &Value) -> Result<(), String> {
+    if !expect.is_object() { return Err("falta expect: una condición observable del resultado".into()); }
+    if expect.as_object().unwrap().keys().any(|k| !["ref", "window", "path", "pageId", "value", "text", "contains", "gone", "timeout"].contains(&k.as_str())) { return Err("expect tiene propiedades desconocidas".into()); }
+    let count = ["ref", "window", "path", "pageId"].iter().filter(|k| expect.get(**k).is_some()).count();
+    if count != 1 { return Err("expect necesita exactamente uno de ref, window, path o pageId".into()); }
+    for key in ["ref", "window", "path", "text", "contains"] {
+        if expect.get(key).is_some() && (!expect[key].is_string() || arg(expect, key).is_empty()) { return Err(format!("expect.{} debe ser texto no vacío", key)); }
+    }
+    if expect.get("gone").is_some() && !expect["gone"].is_boolean() { return Err("expect.gone debe ser booleano".into()); }
+    if expect.get("timeout").is_some() && expect["timeout"].as_u64().filter(|n| *n <= 90).is_none() { return Err("expect.timeout debe ser de 0 a 90 segundos".into()); }
+    if expect.get("ref").is_some() && !expect["value"].is_string() { return Err("expect.ref necesita value exacto".into()); }
+    if expect.get("pageId").is_some() && (!expect["pageId"].is_u64() || arg(expect, "text").is_empty()) { return Err("expect.pageId necesita text".into()); }
+    if expect.get("path").is_some() && !std::path::Path::new(arg(expect, "path")).is_absolute() { return Err("expect.path debe ser absoluto".into()); }
+    Ok(())
+}
+
+fn validate_steps(args: &Value) -> Result<(), String> {
+    let list = args["actions"].as_array().ok_or("falta actions")?;
+    if list.is_empty() || list.len() > STEPS_MAX { return Err(format!("actions necesita de 1 a {} pasos", STEPS_MAX)); }
+    for step in list {
+        let required: &[&str] = match arg(step, "do") {
+            "click" | "scroll" => &["ref"], "type" => &["text"], "select" => &["ref", "option"],
+            "press_key" => &["keys"], "click_xy" => &["window"], "wait" => &["window"], "clipboard" => &["action"],
+            _ => return Err("acción no admitida en el bloque".into()),
+        };
+        for key in required { if !step[*key].is_string() { return Err(format!("{} necesita {}", arg(step, "do"), key)); } }
+        if arg(step, "do") == "click_xy" && ["x", "y"].iter().any(|k| step[*k].as_f64().filter(|v| v.is_finite()).is_none()) { return Err("click_xy necesita x e y finitos".into()); }
+        if let Some(expect) = step.get("expect") { validate_expect(expect)?; }
+    }
+    Ok(())
+}
+
+fn verify(app: &AppHandle, expect: &Value) -> Result<String, String> {
+    validate_expect(expect)?;
+    let start = Instant::now();
+    let timeout = Duration::from_secs(expect["timeout"].as_u64().unwrap_or(10).min(90));
+    let mut seen = String::new();
+    loop {
+        tasks::check(app)?;
+        let gone = expect["gone"].as_bool().unwrap_or(false);
+        let observed: Result<bool, String> = if let Some(reference) = expect["ref"].as_str() {
+            do_read(&json!({"ref":reference})).map(|(result, _)| {
+                seen = first_text(&result);
+                same_text(&seen, expect["value"].as_str().unwrap_or_default())
+            })
+        } else if let Some(path) = expect["path"].as_str() {
+            let path = std::path::Path::new(path);
+            if let Some(contains) = expect["contains"].as_str() {
+                match path.metadata() {
+                    Ok(meta) if meta.len() <= 2_000_000 => std::fs::read_to_string(path).map(|v| v.contains(contains)).map_err(|e| e.to_string()),
+                    Ok(_) => Err("archivo demasiado grande para verificar contains (máximo 2 MB)".into()),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+                    Err(e) => Err(e.to_string()),
+                }
+            } else { Ok(path.is_file()) }
+        } else if let Some(page) = expect["pageId"].as_u64() {
+            let response = super::browser::call("evaluate_script", json!({"pageId":page, "function":"() => (document.querySelector('main') ?? document.body).innerText.slice(0, 30000)"}))?;
+            if response["isError"].as_bool().unwrap_or(false) { return Err(response.to_string()); }
+            let text = response["content"].as_array().map(|a| a.iter().filter_map(|v| v["text"].as_str()).collect::<Vec<_>>().join("\n")).unwrap_or_default();
+            Ok(text.contains(arg(expect, "text")))
+        } else {
+            let matches: Vec<WinInfo> = matching(&win::windows(), arg(expect, "window")).into_iter().cloned().collect();
+            if matches.is_empty() { Ok(false) } else {
+                let w = resolve_window(arg(expect, "window"))?;
+                allowed(&w)?;
+                if arg(expect, "text").is_empty() { Ok(true) } else {
+                    let needle = arg(expect, "text").to_string();
+                    uia::run(move |u| u.present(w.hwnd, &needle)).map(|r| r.is_some())
+                }
+            }
+        };
+        match observed {
+            Ok(present) if present != gone => return Ok(format!("Condición comprobada: {}", expect)),
+            Err(e) => return Err(format!("No se pudo comprobar el resultado: {}. No repitas la escritura sin observar.", e)),
+            _ => {},
+        }
+        if start.elapsed() >= timeout {
+            let observed = if seen.is_empty() { String::new() } else { format!(" (observé {:?})", seen.chars().take(200).collect::<String>()) };
+            return Err(format!("Resultado no verificado después de {:.1}s: {}{}. Observá antes de repetir acciones.", start.elapsed().as_secs_f64(), expect, observed));
+        }
+        std::thread::sleep(Duration::from_millis(150));
+    }
+}
+
+fn do_task(app: &AppHandle, args: &Value) -> Result<(ToolResult, String), String> {
+    let task = match arg(args, "action") {
+        "get" => tasks::current(app).ok_or("sin tarea")?,
+        "plan" => tasks::plan(app, arg(args, "label"), arg(args, "next"))?,
+        "checkpoint" | "complete" => {
+            let evidence = verify(app, &args["expect"])?;
+            tasks::checkpoint(app, arg(args, "label"), &evidence, arg(args, "next"), arg(args, "action") == "complete")?
+        },
+        _ => return Err("action debe ser get, plan, checkpoint o complete".into()),
+    };
+    Ok((text(serde_json::to_string(&task).unwrap()), "actualizó el progreso".into()))
+}
+
+fn do_execute(app: &AppHandle, args: &Value) -> Result<(ToolResult, String), String> {
+    validate_expect(&args["expect"])?; // validate before any side effect
+    validate_steps(args)?;
+    let scene = context::validate_scene(&tasks::observer(), arg(args, "sceneId"))?;
+    let list = args["actions"].as_array().ok_or("faltan actions")?;
+    let mut resolved = args.clone();
+    let mut actions = Vec::new();
+    for step in list {
+        let mut step = step.clone();
+        if let Some(reference) = step["ref"].as_str() {
+            let owner = if let Some(key) = text_key(reference) {
+                texts().lock().unwrap().refs.get(&key).map(|r| format!("w{}", r.window)).ok_or("ref OCR vencida")?
+            } else { format!("w{}", window_of_ref(reference)?.hwnd) };
+            if owner != scene.target.window { return Err("La ref pertenece a otro destino: observá esa ventana en un bloque nuevo.".into()); }
+        }
+        if let Some(window) = step["window"].as_str() {
+            if format!("w{}", resolve_window(window)?.hwnd) != scene.target.window { return Err("Un bloque execute sólo actúa sobre su escena. Observá el siguiente destino al terminar.".into()); }
+        } else if matches!(arg(&step, "do"), "type" | "press_key" | "click_xy" | "wait") && step.get("ref").is_none() {
+            step["window"] = json!(scene.target.window);
+        }
+        if let Some(expect) = step.get("expect") { validate_expect(expect)?; }
+        actions.push(step);
+    }
+    resolved["actions"] = json!(actions);
+    let (result, summary) = do_steps(app, &resolved)?;
+    if result.error { return Ok((result, summary)); }
+    let evidence = verify(app, &args["expect"])?;
+    let label = if arg(args, "label").is_empty() { "Bloque completado" } else { arg(args, "label") };
+    let task = tasks::checkpoint(app, label, &evidence, arg(args, "next"), false)?;
+    Ok((text(format!("{}\n{}\nCheckpoint guardado ({}).", first_text(&result), evidence, task.checkpoints.len())), summary))
 }
 
 #[derive(Clone)]
@@ -46,6 +205,8 @@ struct TextRef {
     window: isize,
     offset: Rect,
     text: String,
+    observer: String,
+    frame: Frame,
 }
 
 #[derive(Default)]
@@ -93,6 +254,18 @@ pub fn definitions() -> Vec<Value> {
     let element = "Descripción corta del elemento para el registro que ve el usuario (ej. «botón Guardar»).";
     let button = json!({ "type": "string", "enum": ["left", "right", "middle"], "description": "Botón (por defecto left). right abre el menú contextual." });
     vec![
+        tool("observe", "Observa la aplicación objetivo de esta conversación en una llamada: ventana, selección, controles y sceneId. Usalo para refrescar contexto vencido o cambiar explícitamente a otra ventana; no cambia el foco.", json!({ "window": prop("string", window) }), &[], true),
+        tool("execute", "Ejecuta un bloque corto sobre una escena reciente y verifica el resultado. Necesita sceneId de observe/contexto automático, actions y expect. Se detiene ante escena cambiada, error, condición incumplida o cancelación. No repitas una escritura de resultado incierto sin leerla.", json!({
+            "sceneId": prop("string", "id de la escena más reciente de esta conversación"),
+            "actions": { "type": "array", "minItems": 1, "maxItems": STEPS_MAX, "items": { "type": "object" } },
+            "expect": expectation_schema(),
+            "label": prop("string", "Resultado que se verificará"),
+            "next": prop("string", "Próximo paso de una tarea larga"),
+        }), &["sceneId", "actions", "expect"], false),
+        tool("task", "Consulta o actualiza el progreso persistente de ESTA conversación. get recupera checkpoints y operaciones inciertas. checkpoint/complete necesitan expect: el backend comprueba la condición antes de registrar éxito. plan actualiza objetivo/próximo paso sin declararlos hechos.", json!({
+            "action": { "type": "string", "enum": ["get", "plan", "checkpoint", "complete"] },
+            "label": prop("string", "Objetivo o resultado"), "next": prop("string", "Próximo paso"), "expect": expectation_schema(),
+        }), &["action"], false),
         tool(
             "status",
             "Estado de la PC antes de actuar: si la sesión está bloqueada (entonces no hay mouse ni teclado, solo acciones por accesibilidad), si el control está activado o pausado, la batería y la ventana en primer plano. Llamalo primero.",
@@ -274,7 +447,7 @@ pub fn definitions() -> Vec<Value> {
     ]
 }
 
-fn resolve_window(query: &str) -> Result<WinInfo, String> {
+pub(super) fn resolve_window(query: &str) -> Result<WinInfo, String> {
     let q = query.trim();
     if q.is_empty() {
         return Err("falta la ventana".into());
@@ -287,7 +460,7 @@ fn resolve_window(query: &str) -> Result<WinInfo, String> {
     match matches.as_slice() {
         [] => Err(format!("no hay ninguna ventana que coincida con «{}». Ventanas abiertas:\n{}", q, windows_text(&list))),
         [one] => Ok((*one).clone()),
-        many => Ok(many.iter().find(|w| w.foreground).copied().unwrap_or(many[0]).clone()),
+        many => Err(format!("«{}» coincide con varias ventanas. Elegí el id exacto:\n{}", q, many.iter().map(|w| window_line(w)).collect::<Vec<_>>().join("\n"))),
     }
 }
 
@@ -300,6 +473,14 @@ fn matching<'a>(list: &'a [WinInfo], query: &str) -> Vec<&'a WinInfo> {
     list.iter()
         .filter(|w| w.title.to_lowercase().contains(&lower) || w.process.to_lowercase() == lower || w.process.to_lowercase().trim_end_matches(".exe") == lower)
         .collect()
+}
+
+fn default_window(args: &Value) -> Result<WinInfo, String> {
+    if arg(args, "window").is_empty() {
+        context::bound_window()
+    } else {
+        resolve_window(arg(args, "window"))
+    }
 }
 
 fn window_line(w: &WinInfo) -> String {
@@ -331,7 +512,7 @@ fn header(w: &WinInfo) -> String {
     format!("Ventana w{} \"{}\" ({})", w.hwnd, w.title.replace('"', "'"), w.process)
 }
 
-fn allowed(w: &WinInfo) -> Result<(), String> {
+pub(super) fn allowed(w: &WinInfo) -> Result<(), String> {
     match blocked_reason(w) {
         Some(reason) => Err(reason),
         None => Ok(()),
@@ -354,7 +535,7 @@ fn window_of_ref(reference: &str) -> Result<WinInfo, String> {
     win::window(hwnd).or_else(|| win::window(win::root_of(hwnd))).ok_or_else(|| "la ventana de ese elemento ya no existe: pedí `windows` y un snapshot nuevo".to_string())
 }
 
-fn snapshot_text(window: &WinInfo, root: Option<String>, max: usize) -> Result<String, String> {
+pub(super) fn snapshot_text(window: &WinInfo, root: Option<String>, max: usize) -> Result<String, String> {
     let hwnd = window.hwnd;
     let tree = uia::run(move |u| u.snapshot(hwnd, root.as_deref(), max, DEPTH))?;
     Ok(format!("{}\n{}", header(window), tree.render(max)))
@@ -429,13 +610,20 @@ fn text_key(reference: &str) -> Option<String> {
 }
 
 pub fn call(app: &AppHandle, name: &str, args: &Value) -> ToolResult {
+    let started = Instant::now();
     win::physical_thread();
+    let _input = context::input();
     if name != "status" {
-        if let Err(e) = gate(app) {
+        if let Err(e) = tasks::check(app) {
             return fail(e);
         }
     }
+    let _overlays = if matches!(name, "screenshot" | "screen_text") { Some(context::Overlays::hide(app)) } else { None };
+    if matches!(name, "click" | "click_xy" | "type" | "press_key" | "select" | "close_window") {
+        if let Err(e) = tasks::flight(app, Some(format!("{}: {}", name, describe_target(args, arg(args, "window"))))) { return fail(e); }
+    }
     let (result, summary) = dispatch(app, name, args);
+    tasks::metric(app, name, started.elapsed().as_millis(), !result.error);
     if !matches!(name, "status" | "windows" | "steps") {
         record(app, "desktop", name, &summary, !result.error);
     }
@@ -444,6 +632,9 @@ pub fn call(app: &AppHandle, name: &str, args: &Value) -> ToolResult {
 
 fn dispatch(app: &AppHandle, name: &str, args: &Value) -> (ToolResult, String) {
     let outcome = match name {
+        "observe" => context::observe(app, &tasks::observer(), args["window"].as_str()).map(|scene| (text(serde_json::to_string(&scene).unwrap()), "observó el destino".into())),
+        "execute" => do_execute(app, args),
+        "task" => do_task(app, args),
         "status" => Ok((status_text(app), String::new())),
         "windows" => Ok((text(windows_text(&win::windows())), String::new())),
         "snapshot" => do_snapshot(args),
@@ -467,6 +658,8 @@ fn dispatch(app: &AppHandle, name: &str, args: &Value) -> (ToolResult, String) {
 }
 
 fn act(name: &str, args: &Value) -> Result<Acted, String> {
+    check_current()?;
+    let _overlays = crate::proc::app().map(context::Overlays::hide);
     match name {
         "click" => act_click(args),
         "type" => act_type(args),
@@ -574,6 +767,7 @@ fn act_click(args: &Value) -> Result<Acted, String> {
     if !win::on_screen(x, y) {
         return Err("el elemento está fuera de la pantalla".into());
     }
+    if win::window_at(x, y) != win::root_of(w.hwnd) { return Err("Otra ventana tapa el control. Observá de nuevo antes de hacer clic.".into()); }
     win::click(x, y, button, double)?;
     Ok(Acted { window: w, before, done: format!("Clic con el mouse en {} ({}, {}).", target, x, y), summary })
 }
@@ -582,10 +776,12 @@ fn act_click_text(args: &Value, key: &str) -> Result<Acted, String> {
     needs_desktop("hacer clic sobre un texto de la pantalla")?;
     let found = texts().lock().unwrap().refs.get(key).cloned();
     let tref = found.ok_or_else(|| format!("no conozco la ref de texto «{}»: pedí screen_text de nuevo", key))?;
+    if tref.observer != tasks::observer() { return Err("La ref OCR pertenece a otra conversación: pedí screen_text.".into()); }
     let w = win::window(tref.window).ok_or("la ventana de ese texto ya no existe: pedí `windows`")?;
     allowed(&w)?;
     let before = snapshot_ids();
     win::focus(w.hwnd)?;
+    validate_frame(&w, &tref.frame)?;
     let bounds = win::bounds(w.hwnd);
     let area = Rect { left: bounds.left + tref.offset.left, top: bounds.top + tref.offset.top, right: bounds.left + tref.offset.right, bottom: bounds.top + tref.offset.bottom };
     let (x, y) = area.center();
@@ -714,11 +910,7 @@ fn append_text(w: &WinInfo, reference: &str, content: &str, target: &str, keystr
 
 fn act_type_at_focus(args: &Value, content: &str, submit: bool, keystrokes: bool) -> Result<Acted, String> {
     needs_desktop("teclear")?;
-    let w = if arg(args, "window").is_empty() {
-        win::window(win::foreground()).ok_or("no hay ninguna ventana al frente")?
-    } else {
-        resolve_window(arg(args, "window"))?
-    };
+    let w = default_window(args)?;
     allowed(&w)?;
     let before = snapshot_ids();
     if !w.foreground {
@@ -785,11 +977,7 @@ fn act_select(args: &Value) -> Result<Acted, String> {
 fn act_press(args: &Value) -> Result<Acted, String> {
     let keys = arg(args, "keys").to_string();
     needs_desktop("apretar teclas")?;
-    let w = if arg(args, "window").is_empty() {
-        win::window(win::foreground()).ok_or("no hay ninguna ventana al frente")?
-    } else {
-        resolve_window(arg(args, "window"))?
-    };
+    let w = default_window(args)?;
     allowed(&w)?;
     let lower = keys.to_lowercase();
     if lower.contains("win+") || lower.contains("meta+") || lower == "win" {
@@ -848,6 +1036,7 @@ fn do_wait(args: &Value) -> Result<(ToolResult, String), String> {
     let seconds = |s: Instant| format!("{:.1} s", s.elapsed().as_secs_f64());
     if needle.is_empty() {
         loop {
+            check_current()?;
             let list = win::windows();
             let found: Vec<WinInfo> = matching(&list, &query).into_iter().cloned().collect();
             if gone && found.is_empty() {
@@ -877,6 +1066,7 @@ fn do_wait(args: &Value) -> Result<(ToolResult, String), String> {
     allowed(&w)?;
     let summary = format!("esperó «{}» · {}", needle, w.title);
     loop {
+        check_current()?;
         if !win::exists(w.hwnd) {
             return Err(format!("La ventana «{}» se cerró mientras esperaba «{}».", w.title, needle));
         }
@@ -934,7 +1124,10 @@ fn do_screenshot(args: &Value) -> Result<(ToolResult, String), String> {
         let shot = win::capture_window(w.hwnd)?;
         (win::encode(&shot, SHOT_SIDE, 75)?, w.hwnd, format!("«{}»", w.title), shot.origin)
     };
-    remember_frame(key, Frame { origin, scale: encoded.scale });
+    if key != 0 {
+        let shot = win::capture_window(key)?;
+        remember_frame(key, Frame { origin, scale: encoded.scale, bounds: win::bounds(key), fingerprint: fingerprint(&shot), at: Instant::now() });
+    }
     let data = base64::engine::general_purpose::STANDARD.encode(&encoded.jpeg);
     let info = format!(
         "Captura de {} ({}x{} px). Para click_xy usá coordenadas de esta imagen{}.",
@@ -963,12 +1156,14 @@ fn do_screen_text(args: &Value) -> Result<(ToolResult, String), String> {
     let needle = arg(args, "find").to_string();
     let summary = if needle.is_empty() { format!("leyó la pantalla de «{}»", w.title) } else { format!("buscó «{}» en la pantalla de «{}»", needle, w.title) };
     let mut store = texts().lock().unwrap();
-    store.refs.retain(|_, t| t.window != w.hwnd);
+    let observer = tasks::observer();
+    store.refs.retain(|_, t| t.window != w.hwnd || t.observer != observer);
+    let frame = Frame { origin: shot.origin, scale: 1.0, bounds, fingerprint: fingerprint(&shot), at: Instant::now() };
     let mut add = |store: &mut Texts, label: &str, rect: Rect| -> String {
         store.next += 1;
         let key = format!("t{}", store.next);
         let offset = Rect { left: rect.left - bounds.left, top: rect.top - bounds.top, right: rect.right - bounds.left, bottom: rect.bottom - bounds.top };
-        store.refs.insert(key.clone(), TextRef { window: w.hwnd, offset, text: label.to_string() });
+        store.refs.insert(key.clone(), TextRef { window: w.hwnd, offset, text: label.to_string(), observer: observer.clone(), frame: frame.clone() });
         key
     };
     let listing = |store: &mut Texts, add: &mut dyn FnMut(&mut Texts, &str, Rect) -> String, limit: usize| -> Vec<String> {
@@ -1010,6 +1205,7 @@ fn act_click_xy(args: &Value) -> Result<Acted, String> {
     }
     let before = snapshot_ids();
     win::focus(w.hwnd)?;
+    validate_frame(&w, &frame)?;
     if win::window_at(sx, sy) != win::root_of(w.hwnd) {
         return Err("hay otra ventana tapando ese punto: traé la ventana al frente y capturala de nuevo".into());
     }
@@ -1047,6 +1243,7 @@ fn first_text(result: &ToolResult) -> String {
 }
 
 fn do_steps(app: &AppHandle, args: &Value) -> Result<(ToolResult, String), String> {
+    validate_steps(args)?;
     let list = args["actions"].as_array().ok_or("falta actions: una lista de acciones")?;
     if list.is_empty() || list.len() > STEPS_MAX {
         return Err(format!("actions tiene que tener entre 1 y {} acciones", STEPS_MAX));
@@ -1056,7 +1253,10 @@ fn do_steps(app: &AppHandle, args: &Value) -> Result<(ToolResult, String), Strin
     let mut last: Option<WinInfo> = None;
     let mut failure: Option<String> = None;
     for (i, step) in list.iter().enumerate() {
+        tasks::check(app)?;
         let name = arg(step, "do").to_string();
+        if let Some(expect) = step.get("expect") { validate_expect(expect)?; }
+        tasks::flight(app, Some(format!("Paso {}: {}", i + 1, name)))?;
         let outcome: Result<(String, Option<WinInfo>, String), String> = match name.as_str() {
             "click" | "type" | "select" | "press_key" | "scroll" | "click_xy" => act(&name, step).map(|a| (a.done, Some(a.window), a.summary)),
             "wait" => do_wait(step).map(|(r, s)| (first_text(&r), None, s)),
@@ -1075,6 +1275,12 @@ fn do_steps(app: &AppHandle, args: &Value) -> Result<(ToolResult, String), Strin
                 record(app, "desktop", &name, &format!("{} falló", name), false);
                 failure = Some(format!("{}. {} falló: {}\nNo hice las {} acciones que faltaban.", i + 1, name, e, list.len() - i - 1));
                 break;
+            }
+        }
+        if let Some(expect) = step.get("expect") {
+            match verify(app, expect) {
+                Ok(evidence) => { tasks::checkpoint(app, &format!("Paso {}: {}", i + 1, name), &evidence, "Continuar bloque", false)?; },
+                Err(e) => { failure = Some(e); break; },
             }
         }
         if i + 1 < list.len() {
@@ -1393,5 +1599,118 @@ mod tests {
         let kinds = steps["inputSchema"]["properties"]["actions"]["items"]["properties"]["do"]["enum"].as_array().unwrap();
         assert_eq!(kinds.len(), 8);
         assert!(defs.iter().all(|d| d["inputSchema"]["type"] == "object"));
+    }
+
+    #[cfg(feature = "desktop-e2e")]
+    #[test]
+    #[ignore = "real Windows/WebView2: isolated bubble, Notepad file, cancellation and durable checkpoints"]
+    fn bubble_context_end_to_end() {
+        use tauri::Manager;
+        let stem = format!("guillecode-bubble-e2e-{}", uuid::Uuid::new_v4().simple());
+        let directory = std::env::temp_dir().join("opencode").join(&stem);
+        std::fs::create_dir_all(&directory).unwrap();
+        let mut app = tauri::Builder::default().any_thread()
+            .manage(super::super::DesktopState {
+                config: Mutex::new(super::super::DesktopConfig { enabled: true, browser: false, ..Default::default() }),
+                port: 0, token: "isolated-test".into(), activity: Mutex::new(std::collections::VecDeque::new()), plane: None, browser_injected: false,
+            })
+            .manage(tasks::Tasks { records: Mutex::new(HashMap::new()), path: Some(directory.join("desktop-tasks.json")) })
+            .build(tauri::generate_context!()).expect("isolated Tauri runtime");
+        crate::proc::install(app.handle().clone());
+        let overlay = tauri::WebviewWindowBuilder::new(app.handle(), "bubble-e2e", tauri::WebviewUrl::External("about:blank".parse().unwrap()))
+            .title("GuilleCode QA overlay").inner_size(320.0, 300.0).always_on_top(true).build().unwrap();
+        context::start(app.handle());
+        let handle = app.handle().clone();
+        let owned_stem = stem.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let path = std::env::temp_dir().join(format!("{}.txt", owned_stem));
+                std::fs::write(&path, "linea uno\r\n").unwrap();
+                do_launch(&json!({"app":"notepad", "args":format!("\"{}\"", path.display())})).unwrap();
+                let w = resolve_window(&owned_stem).unwrap();
+                win::focus(w.hwnd).unwrap();
+                std::thread::sleep(Duration::from_millis(500));
+                overlay.set_focus().unwrap();
+                std::thread::sleep(Duration::from_millis(300));
+                let preview = tauri::async_runtime::block_on(context::desktop_context_get(handle.clone(), "bubble-test".into())).unwrap();
+                assert_eq!(preview["target"]["window"], format!("w{}", w.hwnd), "focusing the bubble must preserve the external target");
+                let prepared = tauri::async_runtime::block_on(context::desktop_context_prepare(handle.clone(), "bubble-test".into(), "Agregar y guardar".into(), true)).unwrap();
+                assert!(prepared["image"].as_str().unwrap().starts_with("data:image/jpeg;base64,"));
+                assert!(!prepared["scene"]["content"].as_str().unwrap().contains("GuilleCode QA overlay"));
+                assert!(overlay.is_visible().unwrap(), "capture restores the overlay");
+                let binding = tasks::bind(&handle, "bubble-test").unwrap();
+                let _session = tasks::enter(&handle, &json!({"_guillecode":binding})).unwrap();
+                let (found, _) = do_find(&json!({"window":format!("w{}",w.hwnd),"role":"document"})).unwrap();
+                let doc = reference_in(&out(&found), 'e');
+                let scene = context::observe(&handle, "bubble-test", Some(&format!("w{}",w.hwnd))).unwrap();
+                let result = call(&handle, "execute", &json!({"sceneId":scene.id,"label":"Texto reemplazado", "actions":[
+                    {"do":"type","ref":doc,"mode":"replace","text":"linea uno\nlinea dos"}
+                ], "expect":{"ref":doc,"value":"linea uno\nlinea dos"}, "next":"Guardar"}));
+                assert!(!result.error, "{}", out(&result));
+                let scene = context::observe(&handle, "bubble-test", Some(&format!("w{}",w.hwnd))).unwrap();
+                let saved = call(&handle, "execute", &json!({"sceneId":scene.id,"label":"Archivo guardado", "actions":[
+                    {"do":"press_key","keys":"ctrl+s"}
+                ], "expect":{"path":path.to_string_lossy(),"contains":"linea dos"}}));
+                assert!(!saved.error, "{}", out(&saved));
+                assert_eq!(tasks::current(&handle).unwrap().checkpoints.len(), 2);
+                let durable: Value = serde_json::from_slice(&std::fs::read(handle.state::<tasks::Tasks>().path.as_ref().unwrap()).unwrap()).unwrap();
+                assert_eq!(durable["bubble-test"]["checkpoints"].as_array().unwrap().len(), 2);
+                assert!(durable["bubble-test"].get("token").is_none());
+                tasks::cancel(&handle, "bubble-test").unwrap();
+                let stopped = call(&handle, "type", &json!({"ref":doc,"mode":"append","text":"NO DEBE APARECER"}));
+                assert!(stopped.error);
+                drop(_session);
+                let contents = std::fs::read_to_string(&path).unwrap();
+                assert!(!contents.contains("NO DEBE APARECER"));
+                let _ = overlay.destroy();
+            }));
+            cleanup(&owned_stem);
+            let _ = tx.send(result);
+        });
+        let deadline = Instant::now() + Duration::from_secs(120);
+        let result = loop {
+            app.run_iteration(|_, _| {});
+            if let Ok(result) = rx.try_recv() { break result; }
+            assert!(Instant::now() < deadline, "bubble integration timed out");
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        for window in app.webview_windows().values() { let _ = window.destroy(); }
+        let _ = std::fs::remove_dir_all(directory);
+        if let Err(error) = result { std::panic::resume_unwind(error); }
+    }
+
+    #[test]
+    fn reject_malformed_later_steps_before_any_input() {
+        let valid_first = json!({"do":"type","ref":"e1","text":"conservar"});
+        assert!(validate_steps(&json!({"actions":[valid_first, {"do":"press_key"}]})).is_err());
+        assert!(validate_steps(&json!({"actions":[{"do":"type","ref":"e1","text":""}, {"do":"press_key","keys":"ctrl+s"}]})).is_ok());
+        assert!(validate_steps(&json!({"actions":[{"do":"launch","app":"notepad"}]})).is_err());
+    }
+
+    #[test]
+    fn verification_rejects_ambiguous_or_vacuous_conditions() {
+        for invalid in [json!({}), json!({"window":"w1","path":"C:\\x.txt"}), json!({"ref":"e1"}),
+            json!({"path":"relative.txt"}), json!({"pageId":2,"text":""}), json!({"window":""}),
+            json!({"window":"w1","timeout":-1}), json!({"path":"C:\\x.txt","contains":""})] {
+            assert!(validate_expect(&invalid).is_err(), "accepted {}", invalid);
+        }
+        for valid in [json!({"ref":"e1","value":""}), json!({"window":"w1","text":"Guardado"}),
+            json!({"path":"C:\\x.txt","contains":"Total"}), json!({"pageId":3,"text":"Cambios guardados"})] {
+            assert!(validate_expect(&valid).is_ok(), "rejected {}", valid);
+        }
+    }
+
+    #[test]
+    fn visual_frames_are_scoped_to_the_observer() {
+        let frame = Frame { origin:(-100, 30), scale:0.5, bounds:Rect::default(), fingerprint:7, at:Instant::now() };
+        let _a = tasks::restore(Some(("frame-a".into(), 1)));
+        remember_frame(1234, frame);
+        assert!(frame_of(1234).is_some());
+        {
+            let _b = tasks::restore(Some(("frame-b".into(), 1)));
+            assert!(frame_of(1234).is_none());
+        }
+        assert_eq!(frame_of(1234).unwrap().origin, (-100, 30));
     }
 }

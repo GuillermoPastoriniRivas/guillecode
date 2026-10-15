@@ -76,8 +76,20 @@ fn spawn_worker() -> Sender<Job> {
 }
 
 pub fn run<T: Send + 'static>(f: impl FnOnce(&mut Uia) -> Result<T, String> + Send + 'static) -> Result<T, String> {
+    run_with_timeout(JOB_TIMEOUT, f)
+}
+
+pub fn run_with_timeout<T: Send + 'static>(timeout: Duration, f: impl FnOnce(&mut Uia) -> Result<T, String> + Send + 'static) -> Result<T, String> {
     let (tx, rx) = mpsc::channel();
+    let identity = super::tasks::identity();
+    let abandoned = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let pending = abandoned.clone();
     let job: Job = Box::new(move |uia| {
+        if pending.load(std::sync::atomic::Ordering::SeqCst) { return; }
+        let _scope = super::tasks::restore(identity);
+        if let Some(app) = crate::proc::app() {
+            if let Err(e) = super::tasks::check(app) { let _ = tx.send(Err(e)); return; }
+        }
         let _ = tx.send(f(uia));
     });
     {
@@ -89,9 +101,10 @@ pub fn run<T: Send + 'static>(f: impl FnOnce(&mut Uia) -> Result<T, String> + Se
             *worker = Some(fresh);
         }
     }
-    match rx.recv_timeout(JOB_TIMEOUT) {
+    match rx.recv_timeout(timeout) {
         Ok(result) => result,
         Err(RecvTimeoutError::Timeout) => {
+            abandoned.store(true, std::sync::atomic::Ordering::SeqCst);
             *WORKER.lock().unwrap() = None;
             Err("la app no respondió a tiempo a la accesibilidad de Windows. Las refs anteriores se perdieron: pedí un snapshot nuevo o usá screenshot".into())
         }
@@ -109,7 +122,12 @@ fn err(e: uiautomation::Error) -> String {
 fn detached<P: 'static>(pattern: P, call: impl FnOnce(&P) -> uiautomation::Result<()> + Send + 'static) -> Result<bool, String> {
     let (tx, rx) = mpsc::channel();
     let boxed = Remote((pattern, call));
+    let identity = super::tasks::identity();
     std::thread::spawn(move || {
+        let _scope = super::tasks::restore(identity);
+        if let Some(app) = crate::proc::app() {
+            if let Err(e) = super::tasks::check(app) { let _ = tx.send(Err(e)); return; }
+        }
         let moved = boxed;
         let (pattern, call) = moved.0;
         unsafe {
@@ -131,6 +149,7 @@ pub struct Entry {
     pub name: String,
     rid: Option<String>,
     tick: u64,
+    observers: HashSet<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -254,7 +273,7 @@ pub struct Uia {
     refs: HashMap<String, Entry>,
     by_runtime: HashMap<String, String>,
     used: HashSet<String>,
-    last: HashMap<isize, Tree>,
+    last: HashMap<(String, isize), Tree>,
     next: u64,
     tick: u64,
 }
@@ -389,6 +408,33 @@ fn describe(node: &Node, reference: &str) -> String {
 }
 
 impl Uia {
+    pub fn selection(&self, window: isize) -> Result<String, String> {
+        let mut texts = Vec::new();
+        for entry in self.refs.iter().filter(|(key, e)| self.used.contains(*key) && e.window == window && matches!(e.role.as_str(), "document" | "edit")).map(|(_, e)| e) {
+            if entry.el.is_password().unwrap_or(true) { continue; }
+            if let Ok(pattern) = entry.el.get_pattern::<UITextPattern>() {
+                if let Ok(ranges) = pattern.get_selection() {
+                    for range in ranges.into_iter().take(4) {
+                        if let Ok(text) = range.get_text(4000) {
+                            if !text.trim().is_empty() && !texts.contains(&text) { texts.push(text); }
+                        }
+                    }
+                }
+            }
+            if texts.len() >= 4 { break; }
+        }
+        Ok(texts.join("\n").chars().take(8000).collect())
+    }
+
+    pub fn browser_url(&self, window: isize) -> Option<String> {
+        // Only the browser's address field, never an arbitrary edit inside the page.
+        self.refs.iter().filter(|(key, e)| self.used.contains(*key) && e.window == window && e.role == "edit")
+            .find_map(|(_, e)| {
+                let name = e.name.to_lowercase();
+                if !["address and search", "direcciones y búsqueda", "direcciones y busqueda", "adress-"].iter().any(|s| name.contains(s)) { return None; }
+                e.el.get_pattern::<UIValuePattern>().ok()?.get_value().ok().filter(|s| !s.trim().is_empty())
+            })
+    }
     fn new() -> Result<Uia, String> {
         let auto = UIAutomation::new().map_err(err)?;
         let control = auto.get_control_view_condition().map_err(err)?;
@@ -415,18 +461,20 @@ impl Uia {
                         entry.role = node.role.clone();
                         entry.name = node.name.clone();
                         entry.tick = self.tick;
+                        entry.observers.insert(super::tasks::observer());
                         self.used.insert(existing.clone());
                         return existing;
                     }
                 }
             }
         }
-        self.next += 1;
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        self.next = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
         let id = format!("e{}", self.next);
         if let Some(key) = &rid {
             self.by_runtime.insert(key.clone(), id.clone());
         }
-        self.refs.insert(id.clone(), Entry { el, window, role: node.role.clone(), name: node.name.clone(), rid, tick: self.tick });
+        self.refs.insert(id.clone(), Entry { el, window, role: node.role.clone(), name: node.name.clone(), rid, tick: self.tick, observers: HashSet::from([super::tasks::observer()]) });
         self.used.insert(id.clone());
         self.evict();
         id
@@ -457,7 +505,7 @@ impl Uia {
     pub fn entry(&self, reference: &str) -> Result<&Entry, String> {
         let key = reference.trim().trim_start_matches('[').trim_end_matches(']').trim();
         let key = if key.starts_with('e') { key.to_string() } else { format!("e{}", key) };
-        self.refs.get(&key).ok_or_else(|| format!("no conozco la ref «{}»: pedí un snapshot nuevo de la ventana y usá una ref de ese resultado", reference))
+        self.refs.get(&key).filter(|e| e.observers.contains(&super::tasks::observer())).ok_or_else(|| format!("no conozco la ref «{}» en esta conversación: pedí un snapshot nuevo de la ventana y usá una ref de ese resultado", reference))
     }
 
     fn document_preview(&self, el: &UIElement) -> Option<String> {
@@ -478,7 +526,7 @@ impl Uia {
             ctx.hidden += 1;
             return;
         }
-        if node.value.is_none() && node.has_text && matches!(node.role.as_str(), "document" | "edit") {
+        if !node.password && node.value.is_none() && node.has_text && matches!(node.role.as_str(), "document" | "edit") {
             node.value = self.document_preview(el);
         }
         let anonymous = node.name.is_empty() && node.value.is_none();
@@ -552,13 +600,13 @@ impl Uia {
         }
         let tree = Tree { lines: ctx.lines, truncated: ctx.truncated, hidden: ctx.hidden, max };
         if root.is_none() {
-            self.last.insert(window, tree.clone());
+            self.last.insert((super::tasks::observer(), window), tree.clone());
         }
         Ok(tree)
     }
 
     pub fn changes(&mut self, window: isize, max: usize, depth: usize) -> Result<Change, String> {
-        let previous = self.last.get(&window).cloned();
+        let previous = self.last.get(&(super::tasks::observer(), window)).cloned();
         let tree = self.snapshot(window, None, max, depth)?;
         Ok(match previous {
             Some(old) => Change::Delta(compare(&old, &tree), tree),

@@ -189,6 +189,9 @@ pub fn root_of(raw: isize) -> isize {
 }
 
 pub(crate) fn send(inputs: &[INPUT]) -> Result<(), String> {
+    if super::tasks::identity().is_some() {
+        if let Some(app) = crate::proc::app() { super::tasks::check(app)?; }
+    }
     let sent = unsafe { SendInput(inputs, std::mem::size_of::<INPUT>() as i32) };
     if sent as usize != inputs.len() {
         return Err("Windows bloqueó el mouse/teclado simulado: la PC puede estar bloqueada o la ventana corre como administrador".into());

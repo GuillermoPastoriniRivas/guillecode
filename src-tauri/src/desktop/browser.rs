@@ -377,6 +377,46 @@ pub fn tools() -> Vec<Value> {
     decorate(bridge().inner.lock().unwrap().tools.clone())
 }
 
+fn page_context(url: &str, listing: &str) -> Value {
+    let normalize = |s: &str| s.trim().trim_start_matches("https://").trim_start_matches("http://").trim_end_matches('/').to_string();
+    let wanted = normalize(url);
+    let candidates: Vec<Value> = listing.lines().filter_map(|line| {
+        let (id, rest) = line.trim().split_once(": ")?;
+        let id = id.parse::<u64>().ok()?;
+        let page_url = rest.split_whitespace().next()?;
+        (normalize(page_url) == wanted).then(|| json!({"pageId":id, "url":page_url}))
+    }).collect();
+    json!({"url":url, "pageId": if candidates.len() == 1 { candidates[0]["pageId"].clone() } else { Value::Null }, "candidates":candidates,
+        "hint":"Un pageId sólo se identifica con coincidencia única de URL. Si hay varias pestañas iguales, pedí elegir; la selección del puente no prueba cuál está viendo el usuario."})
+}
+
+#[cfg(test)]
+mod context_tests {
+    use super::*;
+    #[test]
+    fn visible_url_matches_only_a_unique_page_never_bridge_selection() {
+        let one = page_context("example.com/report", "1: https://example.com/report\n2: https://elsewhere.test [selected]");
+        assert_eq!(one["pageId"], 1);
+        let duplicate = page_context("example.com/report", "1: https://example.com/report\n2: https://example.com/report [selected]");
+        assert!(duplicate["pageId"].is_null());
+        assert_eq!(duplicate["candidates"].as_array().unwrap().len(), 2);
+        assert!(page_context("example.com/report", "1: https://example.com/report-other")["pageId"].is_null());
+    }
+}
+
+pub fn context_for_url(url: Option<&str>) -> Value {
+    let Some(url) = url else { return json!({"pageId":null, "hint":"No se pudo leer la URL visible; usá list_pages y comprobá el destino."}); };
+    if !status().connected { return json!({"url":url, "pageId":null, "hint":"Conexión con Chrome sin verificar; usá list_pages."}); }
+    // Never launch Chrome or open a permission prompt just to enrich context.
+    match request("tools/call", json!({"name":"list_pages", "arguments":{}}), Duration::from_secs(2)) {
+        Ok(result) if !result["isError"].as_bool().unwrap_or(false) => {
+            let text = result["content"].as_array().map(|items| items.iter().filter_map(|v| v["text"].as_str()).collect::<Vec<_>>().join("\n")).unwrap_or_default();
+            page_context(url, &text)
+        }
+        _ => json!({"url":url, "pageId":null, "hint":"No se pudo verificar la pestaña en el presupuesto de contexto; usá list_pages."}),
+    }
+}
+
 pub fn original_name(name: &str) -> String {
     name.strip_prefix(PREFIX).unwrap_or(name).to_string()
 }

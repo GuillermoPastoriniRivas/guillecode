@@ -22,6 +22,8 @@ import { isArchivedSession, sessionTreeIds } from "../lib/sessions"
 import { CONTINUE_INTERRUPTED_TURN, isRetryableProviderError, latestFailedAssistant, providerErrorMessage, retryContext, retryMessageID, retryPromptParts } from "../lib/autoretry"
 import { reconcileHistory } from "../lib/history"
 import { isBubbleWindow } from "../lib/windows"
+import { desktopContextText, prepareDesktopContext } from "../lib/desktop-context"
+import { INTERNAL_SCREENSHOT_FILENAME } from "../lib/internal-context"
 
 export type ChatMessage = { info: Message; parts: Part[] }
 
@@ -340,17 +342,37 @@ function upsertPart(messages: ChatMessage[], part: Part): ChatMessage[] {
 
 function appendDelta(messages: ChatMessage[], messageID: string, partID: string, field: string, delta: string): ChatMessage[] {
   const index = messages.findIndex((m) => m.info.id === messageID)
-  if (index === -1) return messages
-  const message = messages[index]
-  const partIndex = message.parts.findIndex((p) => p.id === partID)
+  // Parts can precede message.updated when a bubble joins an ongoing turn.
+  // Keep streaming into that pending part until the real message info arrives.
+  const source = index === -1 ? pendingParts.get(messageID) : messages[index].parts
+  if (!source) return messages
+  const partIndex = source.findIndex((p) => p.id === partID)
   if (partIndex === -1) return messages
-  const part = message.parts[partIndex] as unknown as Record<string, unknown>
+  const part = source[partIndex] as unknown as Record<string, unknown>
   const current = typeof part[field] === "string" ? (part[field] as string) : ""
-  const parts = [...message.parts]
+  const parts = [...source]
   parts[partIndex] = { ...part, [field]: current + delta } as unknown as Part
+  if (index === -1) {
+    pendingParts.set(messageID, parts)
+    return messages
+  }
   const next = [...messages]
-  next[index] = { ...message, parts }
+  next[index] = { ...messages[index], parts }
   return next
+}
+
+function recoverMessageInfo(sessionID: string, messageID: string): void {
+  const missing = () => {
+    const view = useAgent.getState().views[sessionID]
+    return view && !view.messages.some((message) => message.info.id === messageID)
+  }
+  if (!missing()) return
+  // Apply queued message.updated first, then hydrate only if its header really
+  // was missed. Waiting for the final update would hide the whole live reply.
+  queueMicrotask(() => {
+    flush()
+    if (missing()) void ensureSessionView(sessionID, true)
+  })
 }
 
 function mergeDirectorySessions(all: Session[], directory: string, list: Session[]): Session[] {
@@ -725,6 +747,7 @@ function handleEvent(e: ServerEvent, directory?: string) {
     case "message.part.updated": {
       const part = p.part as Part
       enqueue((s) => withView(s, part.sessionID, (v) => ({ ...v, messages: upsertPart(v.messages, part) })))
+      recoverMessageInfo(part.sessionID, part.messageID)
       break
     }
     case "message.part.delta": {
@@ -1050,7 +1073,7 @@ export function clearContext() {
 }
 
 type PromptPart =
-  | { type: "text"; text: string }
+  | { type: "text"; text: string; synthetic?: boolean }
   | {
       type: "file"
       mime: string
@@ -1124,6 +1147,22 @@ export async function sendPrompt(
   const command = findCommand(trimmed, s.commands)
   const variant = selectedVariant(s)
   const agentName = isBubbleWindow() ? BUBBLE_AGENT : s.agentName
+  if (isTauri && agentName === BUBBLE_AGENT && (!isBubbleWindow() || command)) {
+    await call("desktop_task_begin", { session: id, instruction: trimmed }).catch(() => undefined)
+  }
+  if (isBubbleWindow() && !command) {
+    const model = s.models.find((m) => m.providerID === s.model.providerID && m.modelID === s.model.modelID)
+    // Attaching observed context must never block the instruction: if the
+    // desktop control is off or there is no target, send the message anyway so
+    // the agent can explain what is missing.
+    try {
+      const context = await prepareDesktopContext(id, trimmed, model?.image === true)
+      contextParts.push({ type: "text", text: desktopContextText(context), synthetic: true })
+      if (context.image) contextParts.push({ type: "file", mime: "image/jpeg", url: context.image, filename: INTERNAL_SCREENSHOT_FILENAME })
+    } catch (e) {
+      contextParts.push({ type: "text", text: `Contexto de escritorio no disponible: ${e instanceof Error ? e.message : String(e)}. Decile al usuario qué falta (activar el control de la PC o elegir una aplicación) y no intentes manejar la interfaz de otra forma.`, synthetic: true })
+    }
+  }
   if (command) {
     await api("POST", `/session/${id}/command`, {
       command: command.name,
@@ -1151,6 +1190,7 @@ export async function sendPrompt(
 
 export async function abortSession(id: string | null) {
   if (!id) return
+  if (isTauri) await call("desktop_task_cancel", { session: id }).catch(() => undefined)
   await client.session.abort({ path: { id } }).catch(() => undefined)
 }
 
