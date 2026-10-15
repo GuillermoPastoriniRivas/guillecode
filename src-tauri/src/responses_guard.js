@@ -6,7 +6,7 @@ import { budgetChatGPTRequest } from "./responses-budget.js"
 const installed = Symbol.for("guillecode.responses.guard")
 
 function payloadFailure() {
-  return terminalFailure("guillecode_request_budget", "La solicitud supera el presupuesto de transporte de ChatGPT incluso preservando solo resultados antiguos abreviados. El historial está intacto. Compactá la conversación para continuar; reenviar lo mismo no lo resuelve.")
+  return terminalFailure("guillecode_request_budget", "La solicitud supera el presupuesto de transporte de ChatGPT incluso abreviando resultados antiguos y omitiendo capturas anteriores. El historial está intacto. Compactá la conversación para continuar; reenviar lo mismo no lo resuelve.")
 }
 
 function terminalFailure(code, message, responseHeaders) {

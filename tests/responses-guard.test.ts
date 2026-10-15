@@ -2,6 +2,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { GuilleCodeResponses } from "../src-tauri/src/responses_guard.js"
 import { budgetChatGPTRequest, CHATGPT_REQUEST_BUDGET } from "../src-tauri/src/responses-budget.js"
+import { desktopCaptureMarker } from "../src/lib/internal-context.ts"
 
 test("ChatGPT mide UTF-8 y preserva instrucciones, usuarios y pares de herramientas", () => {
   const input = [{ role: "user", content: "No borrar mis requisitos" }]
@@ -32,6 +33,67 @@ test("ChatGPT mide UTF-8 y preserva instrucciones, usuarios y pares de herramien
   assert.equal(budgetChatGPTRequest(JSON.stringify({ input: batch })), null, "No abreviar un lote paralelo actual aunque tenga más de ocho resultados")
 })
 
+test("ChatGPT omite capturas identificadas de más vieja a nueva sin campos de imagen residuales", async () => {
+  const image = "data:image/jpeg;base64," + "A".repeat(120000)
+  const input: unknown[] = []
+  for (let i = 0; i < 9; i++) {
+    const url = image + i
+    input.push({ role: "user", content: [{ type: "input_image", image_url: url, detail: "high" }, { type: "input_text", text: `Paso ${i}\n${await desktopCaptureMarker(url)}` }] })
+  }
+  input.push({ role: "user", content: [{ type: "input_image", image_url: image }, { type: "input_text", text: await desktopCaptureMarker(image) }] })
+  const request = { instructions: "reglas", tools: [{ name: "read" }], input }
+  const body = JSON.stringify(request)
+  assert.ok(Buffer.byteLength(body) > CHATGPT_REQUEST_BUDGET)
+  const bounded = budgetChatGPTRequest(body)
+  assert.ok(bounded)
+  assert.ok(Buffer.byteLength(bounded) <= CHATGPT_REQUEST_BUDGET)
+  const result = JSON.parse(bounded)
+  const parts = result.input.flatMap((item: { content?: { type: string; text?: string; image_url?: string }[] }) => Array.isArray(item.content) ? item.content : [])
+  const kept = parts.filter((part) => part.type === "input_image")
+  assert.ok(kept.length < 10, "Omite capturas antiguas hasta entrar en el presupuesto")
+  assert.ok(kept.length >= 1, "Nunca omite la observación actual")
+  assert.equal(kept.at(-1)?.image_url, image, "Conserva la captura más reciente")
+  assert.ok(parts.some((part) => part.type === "input_text" && /captura anterior omitida/.test(part.text ?? "")))
+  const omitted = result.input.slice(0, 10 - kept.length)
+  for (const item of omitted) assert.deepEqual(Object.keys(item.content[0]).sort(), ["text", "type"])
+  assert.deepEqual(result.input.slice(omitted.length), input.slice(omitted.length), "Solo cambia un prefijo de capturas")
+  assert.equal(JSON.stringify(request), body, "No mutar el historial original")
+  assert.equal(budgetChatGPTRequest(bounded), bounded, "Idempotente")
+})
+
+test("ChatGPT preserva adjuntos sin marca, capturas actuales múltiples y razonamiento", async () => {
+  const image = (name: string, size = 150000) => ({ type: "input_image", image_url: "data:image/jpeg;base64," + name.repeat(size), detail: "high" })
+  const old = image("a", 600000)
+  const attachment = image("b")
+  const current = [image("c"), image("d")]
+  const input = [
+    { role: "user", content: [old, attachment, { type: "input_text", text: await desktopCaptureMarker(old.image_url) }] },
+    { type: "reasoning", encrypted_content: "opaque" },
+    { role: "user", content: [...current, { type: "input_text", text: (await Promise.all(current.map((part) => desktopCaptureMarker(part.image_url)))).join("\n") }] },
+    { type: "function_call", call_id: "c", name: "observe", arguments: "{}" },
+    { type: "function_call_output", call_id: "c", output: "observation" },
+  ]
+  const body = JSON.stringify({ input })
+  const bounded = budgetChatGPTRequest(body)
+  assert.ok(bounded)
+  const result = JSON.parse(bounded)
+  assert.equal(result.input[0].content[0].type, "input_text")
+  assert.deepEqual(result.input[0].content[1], attachment)
+  assert.deepEqual(result.input.slice(1), input.slice(1))
+  assert.equal(JSON.stringify({ input }), body)
+
+  const huge = image("e", CHATGPT_REQUEST_BUDGET)
+  // A later text-only instruction does not make the latest capture expendable.
+  const latest = { role: "user", content: [huge, { type: "input_text", text: await desktopCaptureMarker(huge.image_url) }] }
+  assert.equal(budgetChatGPTRequest(JSON.stringify({ input: [latest, { role: "user", content: "Continuá" }] })), null)
+  // Legacy images and mismatched markers are not inferred to be screenshots.
+  const unmarked = { role: "user", content: [huge, { type: "input_text", text: await desktopCaptureMarker(old.image_url) }] }
+  assert.equal(budgetChatGPTRequest(JSON.stringify({ input: [unmarked, input[2]] })), null)
+  assert.equal(budgetChatGPTRequest(JSON.stringify({ input: [{ role: "user", content: [huge, ...current] }] })), null)
+  const small = JSON.stringify({ input: [input[2]] })
+  assert.equal(budgetChatGPTRequest(small), small, "No tocar solicitudes que ya caben")
+})
+
 test("ChatGPT no envía requests irreducibles; respeta Request, cancelación y otros proveedores", async () => {
   const original = globalThis.fetch
   const key = Symbol.for("guillecode.responses.guard")
@@ -54,10 +116,20 @@ test("ChatGPT no envía requests irreducibles; respeta Request, cancelación y o
     assert.equal(sent.headers.get("content-length"), null)
     assert.equal(sent.headers.get("authorization"), "Bearer fake")
     assert.equal(calls, 2)
+    const screenshot = "data:image/jpeg;base64," + "A".repeat(CHATGPT_REQUEST_BUDGET)
+    const marked = JSON.stringify({ input: [
+      { role: "user", content: [{ type: "input_text", text: await desktopCaptureMarker(screenshot) }, { type: "input_image", image_url: screenshot, detail: "high" }] },
+      { role: "user", content: [{ type: "input_text", text: await desktopCaptureMarker("data:image/jpeg;base64,new") }, { type: "input_image", image_url: "data:image/jpeg;base64,new" }] },
+    ] })
+    await fetch(new Request("https://chatgpt.com/backend-api/codex/responses", { method: "POST", body: marked }))
+    assert.ok(Buffer.byteLength(sent.body) <= CHATGPT_REQUEST_BUDGET)
+    assert.deepEqual(JSON.parse(sent.body).input[1], JSON.parse(marked).input[1])
+    assert.equal(JSON.parse(sent.body).input[0].content[1].type, "input_text")
+    assert.equal(calls, 3)
     const abort = new AbortController()
     abort.abort()
     await assert.rejects(fetch("https://chatgpt.com/backend-api/codex/responses", { method: "POST", body, signal: abort.signal }), { name: "AbortError" })
-    assert.equal(calls, 2)
+    assert.equal(calls, 3)
   } finally {
     globalThis.fetch = original
     delete globalThis[key]

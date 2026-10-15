@@ -6,14 +6,19 @@ import { mkdtemp, mkdir, rm, copyFile, readFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
+import { createHash } from "node:crypto"
+import { budgetChatGPTRequest, CHATGPT_REQUEST_BUDGET } from "../src-tauri/src/responses-budget.js"
 
 // Real pinned engine + shipped plugin; fake credentials and loopback inference.
 const profile = await mkdtemp(join(tmpdir(), "guillecode-responses-"))
 const delay = (ms) => new Promise((done) => setTimeout(done, ms))
 let calls = 0, mode = "completed"
+let wireBody
 const mock = createServer(async (request, response) => {
-  for await (const _chunk of request) { /* drain request */ }
+  let body = ""
+  for await (const chunk of request) body += chunk
   if (!request.url.endsWith("/responses")) return response.end("{}")
+  wireBody = body
   calls++
   if (mode === "buffer") {
     response.writeHead(507, { "content-type": "text/plain" })
@@ -45,7 +50,7 @@ Object.assign(env, {
   OPENCODE_CONFIG_CONTENT: JSON.stringify({
     plugin: [[pathToFileURL(join(profile, "responses-guard.js")).href, { diagnosticsPath: join(profile, "provider-diagnostics.jsonl"), appVersion: "qa" }]],
     enabled_providers: ["openai"],
-    provider: { openai: { options: { apiKey: "qa-fake-key", baseURL: `http://127.0.0.1:${mock.address().port}/v1` }, models: { "qa-model": { name: "QA", limit: { context: 200000, output: 32000 } } } } },
+    provider: { openai: { options: { apiKey: "qa-fake-key", baseURL: `http://127.0.0.1:${mock.address().port}/v1` }, models: { "qa-model": { name: "QA", modalities: { input: ["text", "image"], output: ["text"] }, limit: { context: 200000, output: 32000 } } } } },
     agent: { title: { disable: true }, summary: { disable: true } },
   }),
 })
@@ -128,6 +133,56 @@ try {
     } else assert.ok(summary.info.error, "HTTP 200 must not hide a failed summary")
     console.log(`Compaction ${mode}: persisted summary verified after HTTP 200`)
   }
+  // Inspect actual SDK serialization: synthetic text and its capture must stay
+  // in the same user message, with the exact data URL hashed by the frontend.
+  mode = "completed"
+  const captures = await api("POST", "/session", {}, 120000)
+  // Real decodable PNG with a large ancillary metadata chunk, below the
+  // engine's resize threshold. Fake base64 images are rejected before fetch.
+  const png = await readFile(resolve("src-tauri/icons/128x128.png"))
+  const metadata = Buffer.concat([Buffer.from("QA\0"), Buffer.alloc(CHATGPT_REQUEST_BUDGET, 65)])
+  const chunk = Buffer.concat([Buffer.from("tEXt"), metadata])
+  let crc = 0xffffffff
+  for (const byte of chunk) {
+    crc ^= byte
+    for (let i = 0; i < 8; i++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0)
+  }
+  const length = Buffer.alloc(4), checksum = Buffer.alloc(4)
+  length.writeUInt32BE(metadata.length)
+  checksum.writeUInt32BE((crc ^ 0xffffffff) >>> 0)
+  const oldURL = "data:image/png;base64," + Buffer.concat([png.subarray(0, -12), length, chunk, checksum, png.subarray(-12)]).toString("base64")
+  const newURL = "data:image/png;base64," + png.toString("base64")
+  const attachmentURL = "data:image/png;base64," + (await readFile(resolve("src-tauri/icons/32x32.png"))).toString("base64")
+  const marker = (url) => `[GuilleCode desktop capture sha256:${createHash("sha256").update(url).digest("hex")}]`
+  for (const [index, url] of [oldURL, newURL].entries()) {
+    const before = calls
+    await api("POST", `/session/${captures.id}/prompt_async`, {
+      model: { providerID: "openai", modelID: "qa-model" }, agent: "build", parts: [
+        { type: "text", text: `Desktop turn ${index}` },
+        { type: "text", text: `Contexto observado de la aplicación\n${marker(url)}`, synthetic: true },
+        { type: "file", mime: "image/png", filename: "aplicacion-actual.jpg", url },
+        ...(index === 0 ? [{ type: "file", mime: "image/png", filename: "user-attachment.png", url: attachmentURL }] : []),
+      ],
+    })
+    for (let i = 0; i < 100; i++) {
+      const messages = await api("GET", `/session/${captures.id}/message`)
+      const status = await api("GET", "/session/status")
+      if (messages.filter((message) => message.info.role === "assistant" && message.info.time.completed).length === index + 1 && !status[captures.id]) break
+      await delay(200)
+    }
+    assert.equal(calls - before, 1, "Captures must reach the mock provider once per turn")
+  }
+  assert.ok(Buffer.byteLength(wireBody) > CHATGPT_REQUEST_BUDGET)
+  const bounded = budgetChatGPTRequest(wireBody)
+  assert.ok(bounded, "Real engine serialization must permit omitting the old marked capture")
+  assert.ok(Buffer.byteLength(bounded) <= CHATGPT_REQUEST_BUDGET)
+  const parts = JSON.parse(bounded).input.flatMap((item) => Array.isArray(item.content) ? item.content : [])
+  const images = parts.filter((part) => part.type === "input_image").map((part) => part.image_url)
+  assert.deepEqual(images, [attachmentURL, newURL], "Keep user attachment and current capture")
+  assert.ok(parts.some((part) => part.type === "input_text" && /captura anterior omitida/.test(part.text)))
+  const history = await api("GET", `/session/${captures.id}/message`)
+  assert.ok(history.some((message) => message.parts.some((part) => part.type === "file" && part.url === oldURL)), "Full capture stays persisted")
+  console.log("Capture budget: real SDK serialization, old capture omitted, attachment/current capture and persisted history preserved")
 } catch (error) {
   console.error(log)
   throw error

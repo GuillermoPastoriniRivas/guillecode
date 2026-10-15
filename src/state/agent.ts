@@ -23,7 +23,7 @@ import { CONTINUE_INTERRUPTED_TURN, isRetryableProviderError, latestFailedAssist
 import { reconcileHistory } from "../lib/history"
 import { isBubbleWindow } from "../lib/windows"
 import { desktopContextText, prepareDesktopContext } from "../lib/desktop-context"
-import { INTERNAL_SCREENSHOT_FILENAME } from "../lib/internal-context"
+import { desktopCaptureMarker, INTERNAL_SCREENSHOT_FILENAME } from "../lib/internal-context"
 
 export type ChatMessage = { info: Message; parts: Part[] }
 
@@ -1157,7 +1157,8 @@ export async function sendPrompt(
     // the agent can explain what is missing.
     try {
       const context = await prepareDesktopContext(id, trimmed, model?.image === true)
-      contextParts.push({ type: "text", text: desktopContextText(context), synthetic: true })
+      const marker = context.image ? await desktopCaptureMarker(context.image) : ""
+      contextParts.push({ type: "text", text: desktopContextText(context) + (marker ? `\n${marker}` : ""), synthetic: true })
       if (context.image) contextParts.push({ type: "file", mime: "image/jpeg", url: context.image, filename: INTERNAL_SCREENSHOT_FILENAME })
     } catch (e) {
       contextParts.push({ type: "text", text: `Contexto de escritorio no disponible: ${e instanceof Error ? e.message : String(e)}. Decile al usuario qué falta (activar el control de la PC o elegir una aplicación) y no intentes manejar la interfaz de otra forma.`, synthetic: true })
