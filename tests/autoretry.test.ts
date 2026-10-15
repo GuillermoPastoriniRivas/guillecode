@@ -63,14 +63,6 @@ test("elige el último mensaje del usuario con contenido visible", () => {
   assert.equal(lastVisibleUserMessage([assistant("a1", "u1")]), null)
 })
 
-test("el presupuesto local ofrece compactar y muestra un mensaje legible", () => {
-  const error = { name: "UnknownError", data: { message: JSON.stringify({ type: "response.failed", response: { error: { code: "guillecode_request_budget", message: "demasiado grande" } } }) } }
-  assert.equal(isRetryableProviderError(error), true)
-  assert.match(providerErrorMessage(error), /presupuesto de transporte/)
-  assert.match(providerErrorMessage(error), /historial está intacto/)
-  assert.match(providerErrorMessage(error), /Compactá/)
-})
-
 test("no reintenta un turno que ya ejecutó herramientas", () => {
   const clean = [user("u1", [text("hola")]), assistant("a1", "u1", [text("respuesta")])]
   assert.equal(turnExecutedTools(clean, "u1"), false)

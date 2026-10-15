@@ -37,12 +37,10 @@ export function isUpstreamBufferError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false
   const data = (error as { data?: { message?: unknown; responseBody?: unknown } }).data
   return [data?.message, data?.responseBody].some((text) => typeof text === "string"
-    && /exceeded request buffer limit while retrying upstream|request_payload_exceeded_retry_buffer_limit|guillecode_request_budget/i.test(text))
+    && /exceeded request buffer limit while retrying upstream|request_payload_exceeded_retry_buffer_limit/i.test(text))
 }
 
 export function providerErrorMessage(error: { name?: string; data?: { message?: string } }): string | undefined {
-  if (error.data?.message?.includes("guillecode_request_budget"))
-    return "La solicitud supera el presupuesto de transporte de ChatGPT. El historial está intacto. Compactá la conversación para continuar."
   if (isUpstreamBufferError(error))
     return "El servidor de IA superó su búfer al intentar reenviar la solicitud. No es falta de espacio en tu PC. Compactá la conversación para intentar continuar desde el último paso."
   return interruptedStream(error) ?? error.data?.message ?? error.name

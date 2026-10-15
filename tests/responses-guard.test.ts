@@ -27,10 +27,21 @@ test("ChatGPT mide UTF-8 y preserva instrucciones, usuarios y pares de herramien
   assert.match(result.input[3].output, /salida antigua abreviada/)
   assert.equal(JSON.stringify(request), body, "No mutar el historial original")
   assert.equal(budgetChatGPTRequest(bounded), bounded, "Idempotente")
-  assert.equal(budgetChatGPTRequest(JSON.stringify({ input: [{ role: "user", content: "x".repeat(CHATGPT_REQUEST_BUDGET) }] })), null)
+  const irreducible = JSON.stringify({ input: [{ role: "user", content: "x".repeat(CHATGPT_REQUEST_BUDGET) }] })
+  assert.equal(budgetChatGPTRequest(irreducible), irreducible, "Un texto de usuario irreducible se envía igual, nunca falla localmente")
   assert.equal(budgetChatGPTRequest('{ "input": [] }'), '{ "input": [] }')
   const batch = input.filter((item) => item.type)
-  assert.equal(budgetChatGPTRequest(JSON.stringify({ input: batch })), null, "No abreviar un lote paralelo actual aunque tenga más de ocho resultados")
+  const forced = budgetChatGPTRequest(JSON.stringify({ input: batch }))
+  assert.ok(forced, "Un lote paralelo actual se recorta en vez de fallar")
+  assert.ok(Buffer.byteLength(forced) <= CHATGPT_REQUEST_BUDGET)
+  const forcedInput = JSON.parse(forced).input
+  assert.deepEqual(forcedInput.at(-1), batch.at(-1), "La salida más reciente sobrevive al recorte forzado")
+  assert.match(forcedInput.find((item) => item.type === "function_call_output").output, /salida antigua abreviada/)
+  const latestOutput = JSON.stringify({ input: [
+    { type: "function_call", call_id: "latest", name: "read", arguments: "{}" },
+    { type: "function_call_output", call_id: "latest", output: "x".repeat(CHATGPT_REQUEST_BUDGET) },
+  ] })
+  assert.equal(budgetChatGPTRequest(latestOutput), latestOutput, "La última salida se conserva y se envía aunque por sí sola supere el presupuesto")
 })
 
 test("ChatGPT omite capturas identificadas de más vieja a nueva sin campos de imagen residuales", async () => {
@@ -85,29 +96,39 @@ test("ChatGPT preserva adjuntos sin marca, capturas actuales múltiples y razona
   const huge = image("e", CHATGPT_REQUEST_BUDGET)
   // A later text-only instruction does not make the latest capture expendable.
   const latest = { role: "user", content: [huge, { type: "input_text", text: await desktopCaptureMarker(huge.image_url) }] }
-  assert.equal(budgetChatGPTRequest(JSON.stringify({ input: [latest, { role: "user", content: "Continuá" }] })), null)
+  const withInstruction = JSON.stringify({ input: [latest, { role: "user", content: "Continuá" }] })
+  assert.equal(budgetChatGPTRequest(withInstruction), withInstruction, "La observación actual se conserva; si queda irreducible se envía igual")
   // Legacy images and mismatched markers are not inferred to be screenshots.
   const unmarked = { role: "user", content: [huge, { type: "input_text", text: await desktopCaptureMarker(old.image_url) }] }
-  assert.equal(budgetChatGPTRequest(JSON.stringify({ input: [unmarked, input[2]] })), null)
-  assert.equal(budgetChatGPTRequest(JSON.stringify({ input: [{ role: "user", content: [huge, ...current] }] })), null)
+  const mismatched = JSON.stringify({ input: [unmarked, input[2]] })
+  assert.equal(budgetChatGPTRequest(mismatched), mismatched)
+  const unmarkedCurrent = JSON.stringify({ input: [{ role: "user", content: [huge, ...current] }] })
+  assert.equal(budgetChatGPTRequest(unmarkedCurrent), unmarkedCurrent)
   const small = JSON.stringify({ input: [input[2]] })
   assert.equal(budgetChatGPTRequest(small), small, "No tocar solicitudes que ya caben")
 })
 
-test("ChatGPT no envía requests irreducibles; respeta Request, cancelación y otros proveedores", async () => {
+test("ChatGPT recorta y nunca falla localmente; respeta Request, cancelación y otros proveedores", async () => {
   const original = globalThis.fetch
   const key = Symbol.for("guillecode.responses.guard")
   let calls = 0
   let sent
+  let sentBody
   try {
-    globalThis.fetch = async (_input, init) => { calls++; sent = init; return new Response("ok") }
+    globalThis.fetch = async (input, init) => {
+      calls++
+      sent = init
+      sentBody = typeof init?.body === "string" ? init.body : input instanceof Request ? await input.clone().text() : null
+      return new Response("ok")
+    }
     await GuilleCodeResponses()
     const body = JSON.stringify({ input: [{ role: "user", content: "x".repeat(CHATGPT_REQUEST_BUDGET) }] })
     const response = await fetch(new Request("https://chatgpt.com/backend-api/codex/responses", { method: "POST", body }))
-    assert.match(await response.text(), /guillecode_request_budget/)
-    assert.equal(calls, 0)
+    assert.equal(await response.text(), "ok")
+    assert.equal(calls, 1, "Un request irreducible se envía igual: el error, si existe, lo da el proveedor")
+    assert.equal(sentBody, body)
     await fetch("https://api.openai.com/v1/responses", { method: "POST", body })
-    assert.equal(calls, 1)
+    assert.equal(calls, 2)
     const old = { type: "function_call_output", call_id: "old", output: "x".repeat(CHATGPT_REQUEST_BUDGET) }
     const recent = Array.from({ length: 8 }, (_, i) => ({ type: "function_call_output", call_id: `recent-${i}`, output: "ok" }))
     const reducible = JSON.stringify({ input: [old, { role: "assistant", content: "continuar" }, ...recent] })
@@ -115,7 +136,7 @@ test("ChatGPT no envía requests irreducibles; respeta Request, cancelación y o
     assert.ok(Buffer.byteLength(sent.body) <= CHATGPT_REQUEST_BUDGET)
     assert.equal(sent.headers.get("content-length"), null)
     assert.equal(sent.headers.get("authorization"), "Bearer fake")
-    assert.equal(calls, 2)
+    assert.equal(calls, 3)
     const screenshot = "data:image/jpeg;base64," + "A".repeat(CHATGPT_REQUEST_BUDGET)
     const marked = JSON.stringify({ input: [
       { role: "user", content: [{ type: "input_text", text: await desktopCaptureMarker(screenshot) }, { type: "input_image", image_url: screenshot, detail: "high" }] },
@@ -125,11 +146,11 @@ test("ChatGPT no envía requests irreducibles; respeta Request, cancelación y o
     assert.ok(Buffer.byteLength(sent.body) <= CHATGPT_REQUEST_BUDGET)
     assert.deepEqual(JSON.parse(sent.body).input[1], JSON.parse(marked).input[1])
     assert.equal(JSON.parse(sent.body).input[0].content[1].type, "input_text")
-    assert.equal(calls, 3)
+    assert.equal(calls, 4)
     const abort = new AbortController()
     abort.abort()
     await assert.rejects(fetch("https://chatgpt.com/backend-api/codex/responses", { method: "POST", body, signal: abort.signal }), { name: "AbortError" })
-    assert.equal(calls, 3)
+    assert.equal(calls, 4)
   } finally {
     globalThis.fetch = original
     delete globalThis[key]

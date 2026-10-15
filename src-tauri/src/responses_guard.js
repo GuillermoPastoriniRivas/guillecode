@@ -5,10 +5,6 @@ import { budgetChatGPTRequest } from "./responses-budget.js"
 
 const installed = Symbol.for("guillecode.responses.guard")
 
-function payloadFailure() {
-  return terminalFailure("guillecode_request_budget", "La solicitud supera el presupuesto de transporte de ChatGPT incluso abreviando resultados antiguos y omitiendo capturas anteriores. El historial está intacto. Compactá la conversación para continuar; reenviar lo mismo no lo resuelve.")
-}
-
 function terminalFailure(code, message, responseHeaders) {
   const events = [
     { type: "response.created", response: { id: "guillecode-transport-error", model: "unknown", created_at: 0 } },
@@ -138,10 +134,6 @@ export const GuilleCodeResponses = async (_input, options = {}) => {
         : input instanceof Request && init?.body === undefined ? await input.clone().text() : null
       if (body !== null) {
         const bounded = budgetChatGPTRequest(body)
-        if (bounded === null) {
-          diagnostics?.begin(input, { ...init, body })?.finish("request_budget_exceeded")
-          return payloadFailure()
-        }
         if (bounded !== body) {
           const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined))
           headers.delete("content-length")
