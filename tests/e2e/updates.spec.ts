@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test"
 
-async function setup(page: Page) {
-  const state = { available: true, failed: false, busy: false, blocked: false, downloads: 0, installs: 0 }
+async function setup(page: Page, localEdition = false) {
+  const state = { available: true, failed: false, busy: false, blocked: false, downloads: 0, installs: 0, localEdition }
   await page.addInitScript(() => {
     let id = 0
     const callbacks = new Map<number, (event: unknown) => void>()
@@ -14,7 +14,7 @@ async function setup(page: Page) {
         if (command === "plugin:event|listen") { events.set(String(args.event), Number(args.handler)); return ++id }
         if (command === "plugin:app|version") return "0.3.0"
         if (command === "server_config") return { url: `${location.origin}/test-oc`, username: "qa", password: "qa", worktree: "" }
-        if (["update_check", "update_download", "update_install", "live_busy_sessions"].includes(command)) {
+        if (["update_policy", "update_check", "update_download", "update_install", "live_busy_sessions"].includes(command)) {
           if (command === "update_download") callbacks.get(events.get("update://progress")!)?.({ payload: { downloaded: 500, total: 1000 } })
           const response = await fetch(`/test-updates/${command}`)
           const data = await response.json()
@@ -28,6 +28,7 @@ async function setup(page: Page) {
   })
   await page.route("**/test-updates/*", (route) => {
     const command = new URL(route.request().url()).pathname.split("/").pop()
+    if (command === "update_policy") return route.fulfill({ json: { edition: "Equipos IA", requiresSourceIntegration: state.localEdition } })
     if (command === "update_check") return route.fulfill({ json: state.available ? { version: "0.3.1", currentVersion: "0.3.0", notes: "Mejoras de prueba" } : null })
     if (command === "live_busy_sessions") return route.fulfill({ json: state.busy ? ["session-other-project"] : [] })
     if (command === "update_download") {
@@ -68,6 +69,16 @@ test("descarga sin instalar, Más tarde conserva la descarga y reinicio exige co
   await expect(page.getByText("Instalando actualización…")).toBeVisible()
   expect(state.downloads).toBe(1)
   expect(state.installs).toBe(1)
+})
+
+test("edición local muestra novedades sin permitir reemplazar sus mejoras con el instalador público", async ({ page }) => {
+  const state = await setup(page, true)
+  await expect(page.getByRole("note")).toContainText("Edición local · Equipos IA")
+  await expect(page.getByRole("button", { name: "Descargar actualización", exact: true })).toHaveCount(0)
+  await page.evaluate(async () => { const updates = await import(/* @vite-ignore */ "/src/state/updates.ts"); await updates.downloadUpdate(); updates.useUpdates.setState({ phase: "ready" }); await updates.installUpdate() })
+  expect(state.downloads).toBe(0)
+  expect(state.installs).toBe(0)
+  await expect(page.getByRole("button", { name: "Instalar y reiniciar", exact: true })).toHaveCount(0)
 })
 
 test("firma inválida permite reintentar sin instalar y agentes de otro proyecto bloquean reinicio", async ({ page }) => {

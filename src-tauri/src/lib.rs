@@ -321,6 +321,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             updates::update_check,
+            updates::update_policy,
             updates::update_download,
             updates::update_install,
             server_config,

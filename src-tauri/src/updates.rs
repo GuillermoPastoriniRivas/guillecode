@@ -42,6 +42,32 @@ struct Progress {
     total: Option<u64>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdatePolicy {
+    edition: &'static str,
+    requires_source_integration: bool,
+}
+
+const LOCAL_UPDATE_REASON: &str = "Esta edición incluye Equipos IA y cambios locales. Para conservarlos, integrá la actualización en el código de esta rama, verificá y compilá un instalador combinado. El instalador público reemplazaría esta edición.";
+
+fn local_edition(identifier: &str) -> bool {
+    // Isolated QA installers use a different identifier/profile and exercise the
+    // stock updater. The real customized desktop edition must never be replaced
+    // by an upstream binary that cannot merge its local source changes.
+    identifier == "com.guillecode.desktop"
+}
+
+#[tauri::command]
+pub fn update_policy(app: AppHandle) -> UpdatePolicy {
+    UpdatePolicy { edition: "Equipos IA", requires_source_integration: local_edition(&app.config().identifier) }
+}
+
+fn preserve_local_edition(app: &AppHandle) -> Result<(), String> {
+    if local_edition(&app.config().identifier) { return Err(LOCAL_UPDATE_REASON.into()); }
+    Ok(())
+}
+
 pub fn installing(app: &AppHandle) -> bool {
     app.try_state::<UpdatesState>().map(|s| s.installing.load(Ordering::SeqCst)).unwrap_or(false)
 }
@@ -73,6 +99,7 @@ fn info(update: &Update) -> UpdateInfo {
 
 #[tauri::command]
 pub async fn update_download(app: AppHandle) -> Result<(), String> {
+    preserve_local_edition(&app)?;
     let state = app.state::<UpdatesState>();
     let _operation = state.begin()?;
     let update = state.pending.lock().unwrap().clone().ok_or("Buscá una actualización primero")?;
@@ -124,6 +151,7 @@ fn preflight(app: &AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn update_install(app: AppHandle) -> Result<(), String> {
+    preserve_local_edition(&app)?;
     let state = app.state::<UpdatesState>();
     let _operation = state.begin()?;
     state.installing.store(true, Ordering::SeqCst);
@@ -156,6 +184,11 @@ pub async fn update_install(app: AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn customized_desktop_requires_source_integration() {
+        assert!(local_edition("com.guillecode.desktop"));
+        assert!(!local_edition("com.guillecode.upgrade-test-isolated"));
+    }
     #[test]
     fn serializes_operations_and_releases_after_failure() {
         let state = UpdatesState::default();

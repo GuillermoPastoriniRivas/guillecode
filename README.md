@@ -25,6 +25,8 @@ La barra lateral incluye **Equipos IA** para guardar un Lead y especialistas con
 
 Incluye capturas reales antes/después con flujos locales configurables, comparador de imágenes, presupuestos y retención opcionales. Recupera sesiones tras reiniciar sin reenviar ciegamente el objetivo. Ver [uso, arquitectura, pruebas y limitaciones del Modo Equipos IA](docs/equipos-ia.md) y [resultados de validación](docs/equipos-ia-validacion.md).
 
+Esta edición conserva las mejoras locales al integrar actualizaciones desde el código. El instalador público directo queda protegido para evitar que las reemplace. Ver [actualizaciones de la edición local](docs/actualizaciones-edicion-local.md).
+
 ## Memoria
 
 GuilleCode recuerda el proyecto y las conversaciones de forma **100% local**, sin cuentas ni servicios. Un plugin del motor inyecta el contexto antes de cada respuesta, así el recuerdo no depende de que el agente pida nada. En cada conversación hay un interruptor **Memoria** (encendido por defecto): apagado, no se inyecta contexto, no se guardan checkpoints y el agente no puede usar las herramientas `memory_*`. La vista **Memoria** permite leer y editar las notas del proyecto, el estado de cada conversación y las preferencias, y «Continuar en un chat nuevo» arranca una sesión con el checkpoint. Los datos viven en el perfil de datos de GuilleCode, no en la nube.

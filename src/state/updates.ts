@@ -8,6 +8,7 @@ import { useAgent } from "./agent"
 import { useTerminals } from "./terminals"
 
 type UpdateInfo = { version: string; currentVersion: string; notes: string }
+type UpdatePolicy = { edition: string; requiresSourceIntegration: boolean }
 type Phase = "idle" | "checking" | "available" | "downloading" | "ready" | "installing"
 type UpdateState = {
   open: boolean
@@ -18,10 +19,11 @@ type UpdateState = {
   total: number | null
   error: string | null
   checkedAt: number | null
+  policy: UpdatePolicy | null
 }
 
 export const useUpdates = create<UpdateState>(() => ({
-  open: false, version: "", update: null, phase: "idle", downloaded: 0, total: null, error: null, checkedAt: null,
+  open: false, version: "", update: null, phase: "idle", downloaded: 0, total: null, error: null, checkedAt: null, policy: null,
 }))
 
 export function showUpdates(): void {
@@ -34,6 +36,8 @@ export async function checkUpdates(): Promise<void> {
   if (!isTauri || ["checking", "downloading", "ready", "installing"].includes(phase)) return
   useUpdates.setState({ phase: "checking", error: null })
   try {
+    const policy = await call<UpdatePolicy | null>("update_policy")
+    useUpdates.setState({ policy })
     const update = await call<UpdateInfo | null>("update_check")
     useUpdates.setState({ update, phase: update ? "available" : "idle", checkedAt: Date.now() })
   } catch (e) {
@@ -43,6 +47,7 @@ export async function checkUpdates(): Promise<void> {
 
 export async function downloadUpdate(): Promise<void> {
   if (useUpdates.getState().phase !== "available") return
+  if (useUpdates.getState().policy?.requiresSourceIntegration) return
   useUpdates.setState({ phase: "downloading", downloaded: 0, total: null, error: null })
   try {
     await call("update_download")
@@ -55,6 +60,7 @@ export async function downloadUpdate(): Promise<void> {
 let confirming = false
 export async function installUpdate(): Promise<void> {
   if (confirming || useUpdates.getState().phase !== "ready") return
+  if (useUpdates.getState().policy?.requiresSourceIntegration) return
   confirming = true
   try {
     const busy = Object.values(useAgent.getState().statuses).some((s) => s.type !== "idle")
