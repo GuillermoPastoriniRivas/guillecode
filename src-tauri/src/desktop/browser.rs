@@ -23,6 +23,12 @@ const PREFIX: &str = "browser_";
 const START_TIMEOUT: Duration = Duration::from_secs(150);
 const CALL_TIMEOUT: Duration = Duration::from_secs(110);
 const RESULT_LIMIT: usize = 40_000;
+// Only tools whose target resolution is covered by the window-scoped adapter.
+// Browser-global extension/PWA/performance tools must not escape that contract.
+const SCOPED_TOOLS: &[&str] = &["list_pages", "select_page", "new_page", "close_page", "navigate_page",
+    "take_snapshot", "take_screenshot", "click", "fill", "fill_form", "hover", "press_key", "type_text",
+    "drag", "upload_file", "handle_dialog", "wait_for", "evaluate_script", "list_console_messages",
+    "get_console_message", "list_network_requests", "get_network_request"];
 const HINTS: &[(&str, &str)] = &[
     ("list_pages", "Usalo primero para comprobar la conexión y elegir el pageId de la pestaña correcta. Chrome puede pedirle permiso al usuario."),
     ("take_snapshot", "Usá los uid del snapshot más reciente de ese pageId. Preferí verbose=false y no pidas un snapshot después de cada acción."),
@@ -170,7 +176,10 @@ fn ensure_installed(dir: &Path) -> Result<PathBuf, String> {
     match installed_cli(dir) {
         Some(cli) => Ok(cli),
         None => install(dir),
-    }
+    }?;
+    std::fs::write(dir.join("browser_workspace.mjs"), include_str!("browser_workspace.mjs")).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join("browser_launcher.mjs"), include_str!("browser_launcher.mjs")).map_err(|e| e.to_string())?;
+    Ok(dir.join("browser_launcher.mjs"))
 }
 
 pub fn prepare(app: &tauri::AppHandle) {
@@ -182,35 +191,17 @@ pub fn prepare(app: &tauri::AppHandle) {
     });
 }
 
-fn bridge_command() -> Command {
-    let dir = bridge_dir();
-    let cli = dir.as_deref().and_then(|d| match ensure_installed(d) {
-        Ok(cli) => Some(cli),
-        Err(e) => {
-            log::warn!("[browser] no pude instalar {}@{}: {}", PACKAGE, VERSION, e);
-            None
-        }
-    });
-    let mut cmd = match cli {
-        Some(cli) => {
-            let mut cmd = Command::new("node");
-            cmd.arg(cli);
-            cmd
-        }
-        None => {
-            let mut cmd = Command::new("cmd");
-            cmd.args(["/C", "npx", "-y", &format!("{}@{}", PACKAGE, VERSION)]);
-            cmd
-        }
-    };
+fn bridge_command() -> Result<Command, String> {
+    let dir = bridge_dir().ok_or("No se pudo resolver la carpeta del puente Chrome")?;
+    let cli = ensure_installed(&dir)?;
+    let mut cmd = Command::new("node");
+    cmd.arg(cli);
     cmd.args(BRIDGE_ARGS)
         .env("CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS", "1")
         .env("CHROME_DEVTOOLS_MCP_NO_CONFIG_DISCOVERY", "1")
         .env_remove("PLAYWRIGHT_MCP_EXTENSION_TOKEN");
-    if let Some(dir) = dir.filter(|d| d.is_dir()) {
-        cmd.current_dir(dir);
-    }
-    cmd
+    cmd.current_dir(dir);
+    Ok(cmd)
 }
 
 fn launch() -> Result<(), String> {
@@ -222,7 +213,7 @@ fn launch() -> Result<(), String> {
         inner.error = None;
         inner.generation
     };
-    let mut cmd = bridge_command();
+    let mut cmd = bridge_command()?;
     cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     hide_console(&mut cmd);
     let mut child = cmd.spawn().map_err(|e| format!("no pude ejecutar Chrome DevTools MCP (requiere Node.js 20.19+ o 22.12+): {}", e))?;
@@ -340,6 +331,7 @@ fn stop_process_only() {
 fn decorate(tools: Vec<Value>) -> Vec<Value> {
     tools
         .into_iter()
+        .filter(|tool| tool["name"].as_str().is_some_and(|name| SCOPED_TOOLS.contains(&name)))
         .map(|t| {
             let mut t = t;
             let name = t["name"].as_str().unwrap_or_default().to_string();
@@ -462,6 +454,30 @@ pub fn connect() -> Result<BridgeStatus, String> {
         return Err(text_of(&result));
     }
     Ok(status())
+}
+
+pub fn call_session(session: &str, name: &str, mut args: Value) -> Result<Value, String> {
+    if session.is_empty() { return Err("Falta la conversación del navegador".into()); }
+    if !SCOPED_TOOLS.contains(&original_name(name).as_str()) { return Err("Esta herramienta no está limitada a la ventana Chrome asignada".into()); }
+    if !args.is_object() { return Err("Los argumentos del navegador deben ser un objeto".into()); }
+    args["_guillecode"] = json!({ "session": session });
+    call(name, args)
+}
+
+pub fn workspace(session: &str, page_id: Option<u64>) -> Result<Value, String> {
+    let result = call("list_pages", json!({ "_guillecode": {
+        "session": session, "action": if page_id.is_some() { "assign" } else { "inspect" }, "pageId": page_id
+    }}))?;
+    if failed(&result) { return Err(text_of(&result)); }
+    serde_json::from_str(&text_of(&result)).map_err(|e| format!("No se pudo leer el espacio de Chrome: {}", e))
+}
+
+#[tauri::command]
+pub async fn browser_workspace(app: tauri::AppHandle, session: String, page_id: Option<u64>) -> Result<Value, String> {
+    if session.trim().is_empty() { return Err("Falta la conversación del navegador".into()); }
+    super::gate(&app)?;
+    if !super::config(&app).browser { return Err("El navegador está desactivado".into()); }
+    tauri::async_runtime::spawn_blocking(move || workspace(&session, page_id)).await.map_err(|e| e.to_string())?
 }
 
 fn text_of(result: &Value) -> String {

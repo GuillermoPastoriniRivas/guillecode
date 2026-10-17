@@ -380,7 +380,7 @@ fn call_tool(app: &AppHandle, channel: Channel, name: &str, args: &Value) -> Val
         #[cfg(not(windows))]
         Channel::Desktop => json!({ "content": [{ "type": "text", "text": "El control del escritorio solo funciona en Windows." }], "isError": true }),
         Channel::Browser => {
-            let _input = context::input();
+            // Browser CDP input is page-local; it must not acquire the OS input lock.
             if let Err(e) = tasks::check(app) {
                 return json!({ "content": [{ "type": "text", "text": e }], "isError": true });
             }
@@ -395,7 +395,8 @@ fn call_tool(app: &AppHandle, channel: Channel, name: &str, args: &Value) -> Val
             if mutating {
                 if let Err(e) = tasks::flight(app, Some(summary.clone())) { return json!({ "content": [{ "type": "text", "text": e }], "isError": true }); }
             }
-            match browser::call(name, args.clone()) {
+            let session = tasks::current(app).map(|t| t.session).unwrap_or_default();
+            match browser::call_session(&session, name, args.clone()) {
                 Ok(result) => {
                     let failed = result["isError"].as_bool().unwrap_or(false);
                     record(app, "browser", name, &summary, !failed);

@@ -13,14 +13,38 @@ async function setup(page: Page, image = true) {
   await page.addInitScript(({ image }) => {
     let id = 0
     let pinned = false
+    const callbacks = new Map<number, (event: unknown) => void>()
+    const subscriptions = new Map<number, { event: string; handler: number }>()
+    const deliver = (event: string, payload: unknown) => {
+      for (const [listener, sub] of subscriptions) if (sub.event === event) callbacks.get(sub.handler)?.({ event, id: listener, payload })
+    }
     const calls: { command: string; args: unknown }[] = []
     const target = { window: "w123", pid: 22, title: "Reporte - Bloc de notas", process: "notepad.exe", bounds: [0, 0, 900, 600] }
-    Object.assign(window, { qaCalls: calls, __TAURI_INTERNALS__: {
+    Object.assign(window, { qaCalls: calls, qaDeliver: deliver,
+      __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: (_event: string, listener: number) => subscriptions.delete(listener) }, __TAURI_INTERNALS__: {
       metadata: { currentWindow: { label: "bubble-qa" }, currentWebview: { label: "bubble-qa" } },
-      transformCallback: () => ++id, unregisterCallback: () => undefined,
+      transformCallback: (callback: (event: unknown) => void) => { callbacks.set(++id, callback); return id }, unregisterCallback: () => undefined,
       invoke: async (command: string, args: Record<string, unknown> = {}) => {
         calls.push({ command, args })
-        if (command === "plugin:event|listen") return ++id
+        if (command === "plugin:event|listen") { subscriptions.set(++id, { event: args.event as string, handler: args.handler as number }); return id }
+        if (command === "plugin:event|emit_to" && args.event === "bubble://attach" && (window as any).qaAcceptTransfer) {
+          const request = args.payload as { session: string }
+          const key = `guillecode:session-runtime:${request.session}`
+          const runtime = JSON.parse(localStorage.getItem(key) ?? "{}")
+          runtime.transfer.state = "received"
+          localStorage.setItem(key, JSON.stringify(runtime))
+          window.dispatchEvent(new StorageEvent("storage", { key }))
+          deliver("bubble://received", runtime.transfer.id)
+        }
+        if (command === "voice_get") return { kind: "local", baseUrl: "", model: "", language: "es", localModel: "small", keyHint: null, ready: (window as any).qaVoiceReady !== false }
+        if (command === "voice_set") { (window as any).qaVoiceReady = true; return { ...args, keyHint: null, ready: true } }
+        if (command === "whisper_status") return { available: true, running: false, port: null, defaultSize: "small", modelsDir: "C:/qa/whisper", models: [{ size: "small", present: true, bytes: 487601967, totalBytes: 487601967, downloading: false, error: null }] }
+        if (command === "voice_transcribe") {
+          await new Promise<void>(resolve => { (window as any).qaVoiceDone = resolve })
+          return "Audio conservado"
+        }
+        if (command === "browser_workspace") return { assigned: true, missing: false, windowId: 100,
+          pages: [{ id: 1, windowId: 100, url: "https://agent/1" }, { id: 2, windowId: 100, url: "https://agent/2" }, { id: 3, windowId: 200, url: "https://personal/" }] }
         if (command === "window_bubble_info") return { session: "s-bubble", origin: "main" }
         if (command === "server_config") return { url: `${location.origin}/test-oc`, username: "qa", password: "qa", worktree: "C:/qa/bubble" }
         if (command === "desktop_context_get") return { enabled: true, pinned, target, choices: [target] }
@@ -50,8 +74,8 @@ async function setup(page: Page, image = true) {
   await page.route("**/test-oc/**", async (route) => {
     const path = new URL(route.request().url()).pathname.replace("/test-oc", "")
     if (path.endsWith("/event")) return route.fulfill({ contentType: "text/event-stream", body: 'data: {"type":"server.connected","properties":{}}\n\n' })
-    if (path === "/config/providers") return route.fulfill({ json: { providers: [{ id: "openai", name: "ChatGPT", source: "api", options: { apiKey: "test" }, models: { m: { id: "m", name: "QA", capabilities: { input: { image } } } } }] } })
-    if (path === "/agent") return route.fulfill({ json: [{ name: "escritorio", mode: "primary" }] })
+    if (path === "/config/providers") return route.fulfill({ json: { providers: [{ id: "openai", name: "ChatGPT", source: "api", options: { apiKey: "test" }, models: { m: { id: "m", name: "QA", variants: { low: {}, high: {} }, capabilities: { input: { image } } } } }] } })
+    if (path === "/agent") return route.fulfill({ json: [{ name: "escritorio", mode: "primary" }, { name: "plan", mode: "primary" }] })
     if (path === "/session") return route.fulfill({ json: [session] })
     if (path === "/session/s-bubble") return route.fulfill({ json: session })
     if (path === "/session/s-bubble/message") {
@@ -99,6 +123,9 @@ for (const image of [true, false]) {
 
 test("bubble shows partial assistant text before the turn ends", async ({ page }) => {
   const { now } = await setup(page)
+  // REST must agree with the streamed busy event; otherwise a background poll
+  // legitimately marks the fixture idle while this test asserts streaming UI.
+  await page.route("**/test-oc/session/status", route => route.fulfill({ json: { "s-bubble": { type: "busy" } } }))
   await expect(page.locator("textarea").first()).toBeEnabled()
   await expect(page.locator(".chat-empty")).toBeVisible()
   await push(page, "session.status", { sessionID: "s-bubble", status: { type: "busy" } })
@@ -149,4 +176,153 @@ test("bubble hides internal desktop parts in history even without synthetic", as
   await expect(page.locator(".chat-scroll")).not.toContainText("Contexto observado")
   await expect(page.locator(".chat-scroll")).not.toContainText("desktop_execute")
   await expect(page.locator(".msg-user img")).toHaveCount(0)
+})
+
+test("30 acknowledged transfers preserve the draft, agent and explicit reasoning effort", async ({ page }) => {
+  test.setTimeout(45000)
+  const { prompts } = await setup(page)
+  await expect(page.locator("textarea").first()).toBeEnabled()
+  await expect.poll(() => page.evaluate(() => (window as any).qaCalls.some((c: any) => c.command === "plugin:event|listen" && c.args.event === "bubble://attach"))).toBe(true)
+  for (let index = 0; index < 30; index++) {
+    await page.evaluate((index) => {
+      const key = "guillecode:session-runtime:s-bubble"
+      const transfer = { id: `transfer-${index}`, session: "s-bubble", source: "main", target: "bubble-qa", state: "pending", expires: Date.now() + 12000 }
+      localStorage.setItem(key, JSON.stringify({ agent: "escritorio", model: { providerID: "openai", modelID: "m" }, variants: { "openai/m": "high" }, draft: `Borrador ${index}`, transfer }))
+      window.dispatchEvent(new StorageEvent("storage", { key }))
+      ;(window as any).qaDeliver("bubble://attach", transfer)
+    }, index)
+    await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("guillecode:session-runtime:s-bubble")!).transfer.state)).toBe("received")
+    await expect(page.locator("textarea").first()).toHaveValue(`Borrador ${index}`)
+    await expect(page.getByRole("button", { name: "alto", exact: true })).toBeVisible()
+  }
+  await page.locator("textarea").first().press("Enter")
+  await expect.poll(() => prompts.length).toBe(1)
+  expect(prompts[0].agent).toBe("escritorio")
+  expect(prompts[0].variant).toBe("high")
+})
+
+test("cancelled handoff cannot be accepted after its history request finishes", async ({ page }) => {
+  test.setTimeout(30000)
+  const { transport } = await setup(page)
+  await expect(page.locator(".chat-empty")).toBeVisible()
+  let release!: () => void
+  transport.readGate = new Promise<void>(resolve => { release = resolve })
+  const reads = transport.reads
+  await page.evaluate(() => {
+    const key = "guillecode:session-runtime:s-bubble"
+    const transfer = { id: "cancelled", session: "s-bubble", source: "main", target: "bubble-qa", state: "pending", expires: Date.now() + 12000 }
+    localStorage.setItem(key, JSON.stringify({ transfer }))
+    window.dispatchEvent(new StorageEvent("storage", { key }))
+    ;(window as any).qaDeliver("bubble://attach", transfer)
+  })
+  await expect.poll(() => transport.reads).toBeGreaterThan(reads)
+  await page.evaluate(() => {
+    const key = "guillecode:session-runtime:s-bubble"
+    const value = JSON.parse(localStorage.getItem(key)!)
+    value.transfer.state = "cancelled"
+    localStorage.setItem(key, JSON.stringify(value))
+    window.dispatchEvent(new StorageEvent("storage", { key }))
+  })
+  release()
+  await expect(page.locator(".chat-empty")).toBeVisible()
+  const acks = await page.evaluate(() => (window as any).qaCalls.filter((c: any) => c.args?.event === "bubble://received"))
+  expect(acks).toHaveLength(0)
+})
+
+test("another conversation's settings and attachments do not leak into the submitted session", async ({ page }) => {
+  test.setTimeout(30000)
+  const { prompts } = await setup(page)
+  await expect(page.locator("textarea").first()).toBeEnabled()
+  await page.evaluate(async () => {
+    const modulePath = "/src/state/agent.ts"
+    const agent = await import(modulePath)
+    agent.setVariant({ providerID: "openai", modelID: "m" }, "high", "s-bubble")
+    agent.setAgentName("escritorio", "s-bubble")
+    agent.addContext({ kind: "selection", path: "C:/qa/bubble/a.txt", startLine: 1, endLine: 1, text: "ADJUNTO PROPIO" })
+    agent.selectSession("s-other")
+    agent.setVariant({ providerID: "openai", modelID: "m" }, "low", "s-other")
+    agent.setAgentName("plan", "s-other")
+    agent.addContext({ kind: "selection", path: "C:/qa/bubble/b.txt", startLine: 1, endLine: 1, text: "ADJUNTO AJENO" })
+    agent.selectSession("s-bubble")
+  })
+  await expect(page.locator(".agent-pill")).toContainText("escritorio")
+  await expect(page.getByRole("button", { name: "alto", exact: true })).toBeVisible()
+  await expect(page.locator(".context-chip")).toContainText("a.txt")
+  await page.locator("textarea").first().fill("Revisá mi adjunto")
+  await page.locator("textarea").first().press("Enter")
+  await expect.poll(() => prompts.length).toBe(1)
+  expect(prompts[0].variant).toBe("high")
+  expect(prompts[0].agent).toBe("escritorio")
+  expect(JSON.stringify(prompts[0].parts)).toContain("ADJUNTO PROPIO")
+  expect(JSON.stringify(prompts[0].parts)).not.toContain("ADJUNTO AJENO")
+})
+
+test("Browser picker counts only assigned tabs and submitted context excludes personal windows", async ({ page }) => {
+  test.setTimeout(30000)
+  const { prompts } = await setup(page)
+  await expect(page.locator("textarea").first()).toBeEnabled()
+  await page.getByRole("button", { name: "Elegir browser", exact: true }).click()
+  await page.getByRole("button", { name: "https://agent/1", exact: true }).click()
+  await expect(page.getByRole("button", { name: "Browser · 2 pestañas", exact: true })).toBeVisible()
+  await page.locator("textarea").first().fill("Revisá esa página")
+  await page.locator("textarea").first().press("Enter")
+  await expect.poll(() => prompts.length).toBe(1)
+  expect(JSON.stringify(prompts[0].parts)).toContain("https://agent/1")
+  expect(JSON.stringify(prompts[0].parts)).not.toContain("https://personal/")
+  expect(JSON.stringify(prompts[0].parts)).not.toContain("Texto seleccionado")
+})
+
+async function installRecorder(page: Page) {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator.mediaDevices, "getUserMedia", { value: async () => ({ getTracks: () => [{ stop() {} }] }) })
+    class Recorder {
+      static isTypeSupported() { return true }
+      state = "inactive"; mimeType = "audio/webm"
+      ondataavailable: ((event: { data: Blob }) => void) | null = null
+      onstop: (() => void) | null = null
+      start() { this.state = "recording" }
+      stop() { this.state = "inactive"; this.ondataavailable?.({ data: new Blob(["audio"]) }); this.onstop?.() }
+    }
+    Object.assign(window, { MediaRecorder: Recorder })
+  })
+}
+
+test("missing voice configuration stays actionable in the bubble and can start recording after saving", async ({ page }) => {
+  test.setTimeout(30000)
+  await installRecorder(page)
+  await page.addInitScript(() => { (window as any).qaVoiceReady = false })
+  await setup(page)
+  const mic = page.getByRole("button", { name: "Grabar voz", exact: true })
+  await expect(mic).toBeEnabled()
+  await mic.click()
+  const dialog = page.getByRole("dialog", { name: "Configurar voz", exact: true })
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByText("Sin configurar", { exact: true })).toBeVisible()
+  await dialog.getByRole("button", { name: "Grabar voz", exact: true }).click()
+  await expect(dialog.getByRole("alert")).toContainText("Guardá una configuración activa")
+  await dialog.getByRole("button", { name: "Guardar", exact: true }).click()
+  await expect(dialog.getByText("Activo", { exact: true })).toBeVisible()
+  await dialog.getByRole("button", { name: "Grabar voz", exact: true }).click()
+  await expect(dialog).not.toBeVisible()
+  await expect(page.locator(".voice-recording")).toBeVisible()
+  await page.getByRole("button", { name: "Descartar audio", exact: true }).click()
+  await expect(page.getByRole("button", { name: "Grabar voz", exact: true })).toBeEnabled()
+})
+
+test("return waits for pending voice transcription and sends it once before closing", async ({ page }) => {
+  test.setTimeout(30000)
+  await installRecorder(page)
+  await page.addInitScript(() => { (window as any).qaAcceptTransfer = true })
+  const { prompts } = await setup(page)
+  await expect(page.locator("textarea").first()).toBeEnabled()
+  await page.getByRole("button", { name: "Grabar voz", exact: true }).click()
+  await expect(page.locator(".voice-recording")).toBeVisible()
+  await page.waitForTimeout(750)
+  await page.getByRole("button", { name: "Volver", exact: true }).click()
+  await expect.poll(() => page.evaluate(() => typeof (window as any).qaVoiceDone)).toBe("function")
+  expect(await page.evaluate(() => (window as any).qaCalls.filter((c: any) => c.command === "plugin:window|destroy").length)).toBe(0)
+  await page.evaluate(() => (window as any).qaVoiceDone())
+  await expect.poll(() => prompts.length).toBe(1)
+  expect(JSON.stringify(prompts[0].parts)).toContain("Audio conservado")
+  await expect.poll(() => page.evaluate(() => (window as any).qaCalls.filter((c: any) => c.command === "plugin:window|destroy").length)).toBe(1)
 })

@@ -28,3 +28,7 @@ playwright-report/
 src-tauri/target-stream/
 src-tauri/binaries/
 graphify-out/
+
+# Datos de runtime del agente (se siembran solos; los defaults viven en src-tauri)
+/plane/
+/memory/
