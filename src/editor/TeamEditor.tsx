@@ -13,9 +13,10 @@ import { errorMessage } from "../lib/tauri"
 import { Icon } from "../components/ui"
 import { latestSkills, type Employee, type Skill, type Team } from "../team/types"
 import { EvidenceSettings } from "../team/EvidenceSettings"
+import { applySkillProfile, profileSkills, skillProfiles } from "../team/profiles"
 
 function employee(name: string, role: string): Employee {
-  return { id: crypto.randomUUID(), name, role, model: { ...useAgent.getState().model }, variant: null, skillRefs: [], instructions: "", tools: ["read", "glob", "grep", "edit", "write", "apply_patch", "bash"], maxConcurrentTasks: 1 }
+  return { id: crypto.randomUUID(), name, role, model: { ...useAgent.getState().model }, variant: null, skillRefs: profileSkills(role, useTeams.getState().skills), instructions: "", tools: ["read", "glob", "grep", "edit", "write", "apply_patch", "bash"], maxConcurrentTasks: 1 }
 }
 function blank(): Team {
   const root = useProject.getState().root ?? ""
@@ -90,6 +91,7 @@ function TeamEditorForm({ id }: { id: string }) {
         <div className="team-form-grid"><label>Nombre del equipo<input value={draft.name} onChange={(e) => patch({ name: e.target.value })} /></label><label>Concurrencia total<input type="number" min={1} max={16} value={draft.maxParallelTasks} onChange={(e) => patch({ maxParallelTasks: Number(e.target.value) })} /></label><label>Reintentos automáticos por tarea<input type="number" min={0} max={5} value={draft.maxRetriesPerTask} onChange={(e) => patch({ maxRetriesPerTask: Number(e.target.value) })} /></label></div>
         <p className="team-note">Proyecto: {draft.projectRoot}</p>
         <h3>Repositorios autorizados</h3>
+        <p className="team-note">Elegí raíces de repositorios Git. Si el proyecto es una carpeta nueva, inicializá Git desde Control de código antes de ejecutar; el equipo no lo inicializa por su cuenta.</p>
         {draft.allowedRepositories.map((r) => <div className="team-actions" key={r}><code>{r}</code><button className="btn btn-xs" disabled={draft.allowedRepositories.length === 1} onClick={() => patch({ allowedRepositories: draft.allowedRepositories.filter((v) => v !== r) })}>Quitar</button></div>)}
         <button className="btn btn-sm" onClick={() => void openDialog({ directory: true, title: "Autorizar repositorio para este equipo" }).then((p) => { if (typeof p === "string" && !draft.allowedRepositories.includes(p)) patch({ allowedRepositories: [...draft.allowedRepositories, p] }) })}>Agregar repositorio…</button>
         <p className="team-note">Se serializan escrituras en un mismo repositorio. Repositorios distintos pueden ejecutarse en paralelo. El shell conserva los permisos de OpenCode; el revisor usa solo lectura. Límite: 45 minutos por sesión. La ejecución requiere el motor local activo.</p>
@@ -102,6 +104,8 @@ function TeamEditorForm({ id }: { id: string }) {
           <div className="team-form-grid"><label>Nombre del integrante<input value={m.name} onChange={(e) => patchEmployee(m.id, { name: e.target.value })} /></label><label>Rol<input value={m.role} onChange={(e) => patchEmployee(m.id, { role: e.target.value })} /></label><label>Modelo del integrante<select value={modelKey(m.model)} onChange={(e) => { const selected = models.find((v) => modelKey(v) === e.target.value); if (selected) patchEmployee(m.id, { model: { providerID: selected.providerID, modelID: selected.modelID }, variant: null }) }}>{!model && <option value={modelKey(m.model)}>{modelKey(m.model) || "Seleccioná modelo"} · no disponible</option>}{models.map((v) => <option key={modelKey(v)} value={modelKey(v)}>{v.providerName} · {v.name}</option>)}</select></label>
           <label>Variante<select aria-label="Variante" value={m.variant ?? ""} onChange={(e) => patchEmployee(m.id, { variant: e.target.value || null })}><option value="">Predeterminada</option>{model?.variants.map((v) => <option key={v}>{v}</option>)}</select></label><label>Tareas simultáneas<input type="number" min={1} max={16} value={m.maxConcurrentTasks} onChange={(e) => patchEmployee(m.id, { maxConcurrentTasks: Number(e.target.value) })} /></label></div>
           {!model && <p className="team-error">El modelo asignado no está disponible. Elegí otro o reconectá su cuenta.</p>}
+          <label>Aplicar perfil de skills<select value="" onChange={(e) => { if (e.target.value) patchEmployee(m.id, applySkillProfile(m, e.target.value, skills)) }}><option value="">Elegí una especialidad…</option>{skillProfiles.map((p) => <option key={p.role} value={p.role}>{p.name}</option>)}</select></label>
+          <p className="team-note">El perfil agrega skills con guardas y conserva las selecciones adicionales. Los permisos efectivos se controlan por separado; Code Review quita las herramientas de edición.</p>
           <h4>Skills combinables</h4><div className="team-skill-list">{latest.map((s) => {
             const ref = m.skillRefs.find((r) => r.id === s.id)
             return <label key={s.id} className="team-check"><input type="checkbox" checked={!!ref} onChange={(e) => patchEmployee(m.id, { skillRefs: e.target.checked ? [...m.skillRefs, { id: s.id, version: s.version }] : m.skillRefs.filter((r) => r.id !== s.id) })} />{s.name} v{ref?.version ?? s.version}{ref && ref.version !== s.version && <button className="team-link" type="button" onClick={() => patchEmployee(m.id, { skillRefs: m.skillRefs.map((r) => r.id === s.id ? { id: s.id, version: s.version } : r) })}>Actualizar a v{s.version}</button>}</label>

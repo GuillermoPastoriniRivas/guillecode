@@ -111,6 +111,21 @@ test("equipo con modelos distintos y skills combinables persiste; chat normal si
   await expect(page.locator(".team-chat")).toHaveCount(0)
 })
 
+test("perfil Backend conserva skills extra y perfil Review quita herramientas de edición", async ({ page }) => {
+  const { store } = await setup(page)
+  store.skills.push({ id: "security", version: 2, name: "Security", description: "Guards", instructions: "Probar autorización", verificationGuidelines: ["Casos negativos"] })
+  await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
+  await createTeam(page)
+  const member = page.locator(".team-employee").nth(1)
+  await member.getByLabel("Aplicar perfil de skills").selectOption("Backend")
+  await expect(member.getByLabel("Security v2", { exact: true })).toBeChecked()
+  await expect(member.getByLabel("QA v1", { exact: true })).toBeChecked()
+  await member.getByLabel("Aplicar perfil de skills").selectOption("Code Review")
+  await member.getByText("Herramientas permitidas", { exact: true }).click()
+  await expect(member.getByLabel("edit", { exact: true })).not.toBeChecked()
+  await expect(member.getByLabel("write", { exact: true })).not.toBeChecked()
+})
+
 test("objetivo, pausa, entrega pendiente y feedback conservan revisiones en el mismo chat", async ({ page }) => {
   const { store, calls } = await setup(page)
   await createTeam(page)

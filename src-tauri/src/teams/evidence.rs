@@ -5,6 +5,16 @@ use std::process::Command;
 
 pub const LIMIT: usize = 512_000;
 
+pub fn validate_repositories(repositories: &[String]) -> Result<(), String> {
+    for repository in repositories {
+        let root = git(repository, &["rev-parse", "--show-toplevel"], None).map_err(|_| format!("La carpeta {} no es un repositorio Git. Abrí la raíz de un repositorio o inicializá Git desde Control de código antes de iniciar el equipo. No se modificó esa carpeta.", repository))?;
+        if !same_path(root.trim(), repository) {
+            return Err(format!("Autorizá la raíz Git completa {} en lugar de {} para poder registrar cambios y coordinar escritores", root.trim(), repository));
+        }
+    }
+    Ok(())
+}
+
 pub fn sanitize(text: &str) -> String {
     // Evidence is deliberately conservative: omit entire sensitive lines, not just values.
     let sensitive = regex::Regex::new(r"(?i)(authorization|bearer\s|api[_-]?key|password|passwd|secret|access[_-]?token|refresh[_-]?token|cookie|private[_ -]key|[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}|sk-[a-z0-9_-]{12,})").unwrap();
@@ -336,6 +346,22 @@ pub fn deliver(run: &mut Run) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn missing_git_is_an_actionable_preflight_without_initializing_or_modifying_files() {
+        let dir = std::env::temp_dir().join(format!("teams-non-git-{}", id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("user.txt"), "keep").unwrap();
+        let error = validate_repositories(&[dir.to_string_lossy().into()]).unwrap_err();
+        assert!(error.contains("no es un repositorio Git"));
+        assert!(!dir.join(".git").exists());
+        assert_eq!(
+            std::fs::read_to_string(dir.join("user.txt")).unwrap(),
+            "keep"
+        );
+        git(dir.to_str().unwrap(), &["init"], None).unwrap();
+        assert!(validate_repositories(&[dir.to_string_lossy().into()]).is_ok());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
     #[test]
     fn secrets_are_omitted() {
         let s = sanitize("ok\nAuthorization: Bearer abc\nAPI_KEY=xyz\na@b.com\nfin");

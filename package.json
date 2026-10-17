@@ -1,7 +1,7 @@
 {
   "name": "guillecode",
   "private": true,
-  "version": "0.14.0",
+  "version": "0.14.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -14,6 +14,7 @@
     "test:teams:recovery": "node tests/teams-restart.mjs",
     "test:fleet": "node tests/fleet-smoke.mjs",
     "test:upgrade": "node tests/windows-upgrade.mjs",
+    "test:upgrade:native": "node tests/windows-upgrade-native-suite.mjs",
     "preview": "vite preview",
     "build:pwa": "vite build --config vite.pwa.config.ts",
     "release:version": "node scripts/release.mjs version",

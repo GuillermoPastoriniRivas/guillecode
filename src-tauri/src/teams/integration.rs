@@ -41,6 +41,16 @@ fn native_team_end_to_end() {
             team.project_root = repo.clone();
             team.allowed_repositories = vec![repo.clone()];
             team.members[0].model.model_id = "qa-lead".into();
+            team.members[0].skill_refs = vec![
+                SkillRef {
+                    id: "team-lead".into(),
+                    version: 2,
+                },
+                SkillRef {
+                    id: "comportamientos".into(),
+                    version: 2,
+                },
+            ];
             if let Ok(url) = std::env::var("GUILLE_TEAM_TEST_CAPTURE_URL") {
                 team.evidence_targets=vec![serde_json::from_value(serde_json::json!({"id":"project","name":"Módulos del proyecto","url":url,"required":true})).unwrap()];
             }
@@ -50,6 +60,21 @@ fn native_team_end_to_end() {
                 employee.role = id.into();
                 employee.name = id.into();
                 employee.model.model_id = model.into();
+                employee.skill_refs = vec![
+                    SkillRef {
+                        id: if id == "backend" {
+                            "backend"
+                        } else {
+                            "frontend"
+                        }
+                        .into(),
+                        version: 2,
+                    },
+                    SkillRef {
+                        id: "security".into(),
+                        version: 2,
+                    },
+                ];
                 employee.tools = ["read", "glob", "grep", "write", "edit", "bash"]
                     .iter()
                     .map(|s| s.to_string())

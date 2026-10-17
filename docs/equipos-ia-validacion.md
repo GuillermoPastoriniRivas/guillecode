@@ -2,6 +2,8 @@
 
 Fecha: 17/10/2026. Repositorio de trabajo: `D:\APK\guillecode`.
 
+Este registro corresponde a la compilación inicial 0.13.2. Después se integró la base 0.14.0 conservando Equipos IA; ver [actualización de la edición local](actualizaciones-edicion-local.md). El ejecutable 0.13.2 y su hash registrados abajo se conservaron en el backup previo a esa actualización; `target/release/app.exe` se vuelve a generar en builds posteriores.
+
 ## Resultados observados
 
 | Comprobación | Resultado |

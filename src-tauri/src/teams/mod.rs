@@ -7,6 +7,7 @@ mod integration;
 mod restart_tests;
 mod retention;
 mod runner;
+mod skills;
 
 use domain::*;
 use rusqlite::{params, Connection};
@@ -52,6 +53,7 @@ fn read_db(db: &Connection) -> Result<Store, String> {
         return Err("Versión de Equipos IA no compatible. Se preservó el archivo original".into());
     }
     store.schema_version = 2;
+    skills::upgrade(&mut store);
     Ok(store)
 }
 
@@ -306,6 +308,12 @@ pub fn team_runs_start(app: AppHandle, chat_id: String, goal: String) -> Result<
     if crate::updates::installing(&app) {
         return Err("Esperá a que finalice la actualización".into());
     }
+    let chat = read(&app)?
+        .chats
+        .into_iter()
+        .find(|c| c.id == chat_id)
+        .ok_or("Chat inexistente")?;
+    evidence::validate_repositories(&chat.team.allowed_repositories)?;
     let run_id = id();
     let dir = crate::app_data_file(&app, "comportamientos")
         .ok_or("Sin carpeta de datos")?

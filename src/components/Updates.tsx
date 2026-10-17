@@ -29,6 +29,7 @@ export function UpdatesHost() {
   return <section className="updates-panel" role="dialog" aria-label="Actualizaciones de GuilleCode">
     <div className="updates-head"><h2>Actualizaciones de GuilleCode</h2><button type="button" className="btn" aria-label="Cerrar actualizaciones" onClick={close}><Icon name="close" /></button></div>
     <p className="updates-version">Versión instalada: {version || update?.currentVersion || "…"}</p>
+    {policy && !policy.requiresSourceIntegration && <p className="updates-version">Edición: {policy.edition}</p>}
     {policy?.requiresSourceIntegration && <div className="updates-notes" role="note"><strong>Edición local · {policy.edition}</strong><p>Esta app incluye mejoras propias. Para conservarlas, las nuevas versiones se integran en el código y se instala la compilación combinada. El instalador público reemplazaría estas mejoras.</p><p>Se siguen consultando las novedades; la descarga e instalación directas están protegidas.</p></div>}
     {error && <p className="updates-error" role="alert">{error}</p>}
     {update ? <>

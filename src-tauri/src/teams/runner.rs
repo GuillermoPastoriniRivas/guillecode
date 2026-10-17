@@ -492,6 +492,7 @@ fn lead(r: &Run) -> Result<Employee, String> {
 
 fn plan(app: &AppHandle, id: &str) -> Result<(), String> {
     let mut r = run(app, id)?;
+    evidence::validate_repositories(&r.team.allowed_repositories)?;
     if r.baseline.is_empty() {
         r.baseline = evidence::baseline(
             &r.team.allowed_repositories,
@@ -681,6 +682,11 @@ fn worker(app: &AppHandle, run_id: &str, task_id: &str) -> Result<(), String> {
     })?;
     let diff = evidence::changes(&run(app, run_id)?)?;
     let prompt = format!("{}\nSos el Lead revisor, con herramientas SOLO de lectura. Revisá los archivos actuales, los criterios y la evidencia. No confundas cambios previos del usuario con cambios del equipo. Si los comandos no comprueban lo pedido, pedí correcciones. Cualquier criterio incumplido impide aprobar.\nTAREA: {}\nCRITERIOS: {}\nRESULTADO: {}\nCOMANDOS OBSERVADOS: {}\nDIFF DESDE BASELINE: {}\nRespondé SOLO JSON válido: {{\"status\":\"approved|changes_requested|review_error\",\"summary\":\"veredicto y defectos concretos/criterios comprobados\",\"criteriaSatisfied\":true}}", POLICY,t.objective,t.acceptance_criteria.join("; "),summary,serde_json::to_string(&commands).map_err(|e| e.to_string())?,diff);
+    let prompt = format!(
+        "{}\nSKILLS DEL LEAD REVISOR:\n{}",
+        prompt,
+        skills_prompt(&r, &reviewer)
+    );
     let response = execute(
         app,
         run_id,
@@ -877,6 +883,11 @@ fn closeout(app: &AppHandle, id: &str) -> Result<bool, String> {
         "{}\nOBSERVACIONES REALES DE LOS FLUJOS (antes/después y pasos, no inferidas): {}",
         prompt,
         serde_json::to_string(&r.observations).map_err(|e| e.to_string())?
+    );
+    let prompt = format!(
+        "{}\nSKILLS DEL LEAD DE CIERRE:\n{}",
+        prompt,
+        skills_prompt(&r, &a)
     );
     let response = execute(app, id, &client, &session, &a, &prompt, true)?;
     let mut verdict: Closeout = parse_json(&final_text(&response))?;

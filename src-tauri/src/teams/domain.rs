@@ -432,6 +432,10 @@ pub fn parse_json<T: serde::de::DeserializeOwned>(text: &str) -> Result<T, Strin
 }
 
 pub fn catalog() -> Vec<Skill> {
+    super::skills::catalog()
+}
+
+pub(super) fn legacy_catalog() -> Vec<Skill> {
     [
         ("frontend", "Frontend", "React, TypeScript, estado, accesibilidad, formularios y consumo de API", "Comprobar interacción, errores y estados de carga"),
         ("backend", "Backend", "Servicios, DTOs, validaciones, errores y arquitectura existente", "Pruebas de lógica, validación y autorización"),

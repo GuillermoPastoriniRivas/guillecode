@@ -58,7 +58,12 @@ function build(version) {
   const overlay = join(dir, "qa.json")
   writeFileSync(overlay, JSON.stringify({
     productName: "guillecode-upgrade-test", mainBinaryName: binaryName, identifier, version,
-    app: { windows: productionConfig.app.windows.map((window) => ({ ...window, devtools: true })) },
+    app: { windows: productionConfig.app.windows.map((window) => ({ ...window, devtools: true,
+      // Keep this in the disposable build as well as the environment: WebView2
+      // launched through an installed application may ignore inherited flags.
+      additionalBrowserArgs: `--remote-debugging-port=${cdpPort}`,
+      dataDirectory: `upgrade-qa-${identifier.split("-").at(-1)}`,
+    })) },
     plugins: { updater: { pubkey: fixturePubkey, endpoints: [`http://127.0.0.1:${server.address().port}/latest.json`], dangerousInsecureTransportProtocol: true } },
   }))
   execFileSync(process.execPath, [join(root, "node_modules/@tauri-apps/cli/tauri.js"), "build", "--ci", "--config", overlay, "--", "--locked"], {
@@ -142,6 +147,7 @@ try {
   console.log(`[upgrade] compilando instalador QA ${baseVersion}…`)
   const initialInstaller = reuse ? join(dir, `${baseVersion}-setup.exe`) : build(baseVersion)
   if (buildOnly) {
+    if (process.env.GC_UPGRADE_FIXTURE_OUTPUT) writeFileSync(process.env.GC_UPGRADE_FIXTURE_OUTPUT, JSON.stringify({ directory: dir }))
     console.log(`[upgrade] fixtures firmados listos para la prueba nativa: ${dir}`)
   } else {
   console.log(`[upgrade] instalando ${baseVersion} en un directorio aislado…`)
@@ -152,7 +158,9 @@ try {
   const executable = join(installed, `${binaryName}.exe`)
   assert.ok(existsSync(executable), "Falta ejecutable instalado")
   console.log(`[upgrade] abriendo ${baseVersion} y esperando el motor…`)
-  appProcess = spawn(executable, ["--hidden"], { env, windowsHide: true, stdio: "ignore" })
+  // Exercise the same visible launch as a user. An initially invisible WebView
+  // can defer its browser process, leaving CDP unavailable indefinitely.
+  appProcess = spawn(executable, [], { env, windowsHide: true, stdio: "ignore" })
   let connected = await connect()
   browser = connected.connection
   let page = connected.page
