@@ -32,6 +32,8 @@ import { PrCreateEditor, PrEditor } from "./PrEditor"
 import { WelcomeEditor } from "./WelcomeEditor"
 import { AiReviewEditor } from "./AiReviewEditor"
 import { RoutineEditor } from "./RoutineEditor"
+import { TeamEditor } from "./TeamEditor"
+import { useTeams } from "../state/teams"
 import { RemoteEditor } from "./RemoteEditor"
 import { DesktopEditor } from "./DesktopEditor"
 import { MemoryEditor } from "./MemoryEditor"
@@ -66,6 +68,8 @@ function tabIcon(input: EditorInput) {
       return <Icon name="sparkle" className="tab-icon review" />
     case "routine":
       return <Icon name="calendar" className="tab-icon" />
+    case "team":
+      return <Icon name="organization" className="tab-icon" />
     case "remote":
       return <Icon name="device-mobile" className="tab-icon" />
     case "desktop":
@@ -90,6 +94,8 @@ function useTabTitle(input: EditorInput): string {
     input.kind === "chat" || input.kind === "review" ? s.sessions.find((x) => x.id === input.sessionId)?.title : undefined,
   )
   const routineName = useRoutines((s) => (input.kind === "routine" ? s.items.find((r) => r.id === input.id)?.name : undefined))
+  const teamName = useTeams((s) => input.kind === "team" ? s.teams.find((t) => t.id === input.id)?.name : undefined)
+  if (input.kind === "team" && teamName) return teamName
   if (input.kind === "chat") return sessionTitle || "Chat"
   if (input.kind === "review") return `Revisión · ${sessionTitle || "sesión"}`
   if (input.kind === "routine" && routineName) return routineName
@@ -316,6 +322,8 @@ function EditorContent({ tab }: { tab: Tab }) {
       return <PlaneEditor key={tab.id} />
     case "routine":
       return <RoutineEditor key={tab.id} id={input.id} />
+    case "team":
+      return <TeamEditor key={tab.id} id={input.id} />
     case "remote":
       return <RemoteEditor />
     case "desktop":

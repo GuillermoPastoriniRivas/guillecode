@@ -1,0 +1,190 @@
+import { expect, test, type Page } from "@playwright/test"
+import { readFile } from "node:fs/promises"
+import { join } from "node:path"
+import type { Team, TeamChatRecord, TeamStore } from "../../src/team/types"
+
+async function setup(page: Page) {
+  const store: TeamStore = { schemaVersion: 1, teams: [], chats: [], skills: ["Frontend", "Backend", "QA"].map((name) => ({ id: name.toLowerCase(), name, version: 1, description: name, instructions: `Trabajar en ${name}`, verificationGuidelines: ["Comprobar cambios"] })) }
+  const calls: { command: string; args: Record<string, unknown> }[] = []
+  await page.addInitScript(() => {
+    localStorage.clear()
+    let next = 0
+    Object.assign(window, { __TAURI_INTERNALS__: {
+      metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
+      transformCallback: () => ++next, unregisterCallback: () => undefined,
+      invoke: async (command: string, args: Record<string, unknown> = {}) => {
+        if (command === "plugin:event|listen") return ++next
+        if (command === "server_config") return { url: `${location.origin}/test-oc`, username: "qa", password: "qa", worktree: "C:/qa/teams" }
+        if (command.startsWith("plugin:")) return null
+        const response = await fetch("/test-native", { method: "POST", body: JSON.stringify({ command, args }) })
+        return response.json()
+      },
+    } })
+    Object.assign(window, { __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: () => undefined } })
+  })
+  await page.route("**/test-native", async (route) => {
+    const { command, args } = route.request().postDataJSON() as typeof calls[number]
+    calls.push({ command, args })
+    let result: unknown = null
+    if (["recent_projects", "routines_list", "auth_entries", "live_busy_sessions", "fs_read_dir", "fs_list_files", "term_shells", "windows_list", "git_subrepos"].includes(command)) result = []
+    if (command === "teams_state") result = store
+    if (command === "teams_save") {
+      const team = structuredClone(args.team as Team)
+      if (!team.id) team.id = `team-${store.teams.length}`
+      team.updatedAt = Date.now()
+      store.teams = [...store.teams.filter((v) => v.id !== team.id), team]
+      result = team
+    }
+    if (command === "team_chats_create") {
+      const team = store.teams.find((v) => v.id === args.teamId)!
+      const chat: TeamChatRecord = { id: `chat-${store.chats.length}`, title: team.name, team: structuredClone(team), skills: structuredClone(store.skills), archived: false, createdAt: Date.now(), runs: [] }
+      store.chats.push(chat); result = chat
+    }
+    if (command === "team_runs_start") {
+      const chat = store.chats.find((v) => v.id === args.chatId)!
+      const runId = `run-${chat.runs.length}`
+      chat.runs.push({ id: runId, goal: String(args.goal), team: structuredClone(chat.team), skills: structuredClone(chat.skills), status: "running", startedAt: Date.now(), finishedAt: null, planSessionId: "plan", tasks: [], summary: "", error: null, evidenceDir: "C:/qa/evidence/" + runId, artifacts: [], notified: false }); result = runId
+    }
+    if (command === "team_runs_control") {
+      const run = store.chats.flatMap((c) => c.runs).find((r) => r.id === args.runId)!
+      if (args.action === "pause") run.status = "paused"
+      if (args.action === "resume") run.status = "running"
+      if (args.action === "approve") run.status = "qa_approved"
+      result = true
+    }
+    if (command === "team_evidence_read") result = "Evidencia observada por el test de interfaz"
+    if (command === "team_evidence_image") result = { mime: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=", sha256: "fixture" }
+    if (command === "team_evidence_image" && process.env.GUILLE_TEAM_VISUAL_EVIDENCE_DIR) result = { mime: "image/png", data: (await readFile(join(process.env.GUILLE_TEAM_VISUAL_EVIDENCE_DIR, args.path === "before.png" ? "before.png" : "after.png"))).toString("base64"), sha256: "verified-by-native-integration" }
+    if (command === "team_chats_edit") {
+      const chat = store.chats.find((c) => c.id === args.id)!
+      chat.title = String(args.title); chat.archived = Boolean(args.archived)
+    }
+    await route.fulfill({ json: result })
+  })
+  await page.route("**/test-oc/**", (route) => {
+    const path = new URL(route.request().url()).pathname.replace("/test-oc", "")
+    if (path === "/event") return route.fulfill({ contentType: "text/event-stream", body: 'data: {"type":"server.connected","properties":{}}\n\n' })
+    if (path === "/config/providers") return route.fulfill({ json: { providers: [{ id: "openai", name: "ChatGPT", source: "api", options: { apiKey: "test" }, models: { lead: { id: "lead", name: "Lead Model", variants: { high: {} } }, worker: { id: "worker", name: "Worker Model" } } }] } })
+    return route.fulfill({ json: path === "/session/status" ? {} : [] })
+  })
+  await page.goto("/")
+  await page.getByTitle("Equipos IA", { exact: true }).click()
+  await expect(page.getByRole("button", { name: "Crear equipo", exact: true })).toBeVisible()
+  return { store, calls }
+}
+
+async function createTeam(page: Page) {
+  await page.getByRole("button", { name: "Crear equipo", exact: true }).click()
+  await page.getByLabel("Nombre del equipo", { exact: true }).fill("Team Backend")
+  await page.getByRole("button", { name: "Agregar especialista", exact: true }).click()
+  const members = page.locator(".team-employee")
+  await members.nth(0).getByLabel("Modelo del integrante").selectOption("openai/lead")
+  await members.nth(0).getByLabel("Variante", { exact: true }).selectOption("high")
+  await members.nth(1).getByLabel("Nombre del integrante").fill("Ana Backend")
+  await members.nth(1).getByLabel("Rol", { exact: true }).fill("Backend")
+  await members.nth(1).getByLabel("Modelo del integrante").selectOption("openai/worker")
+  await members.nth(1).getByLabel("Backend v1", { exact: true }).check()
+  await members.nth(1).getByLabel("QA v1", { exact: true }).check()
+  await page.screenshot({ path: test.info().outputPath("equipo-configurado.png") })
+  await page.getByRole("button", { name: "Guardar y abrir Team Chat", exact: true }).click()
+  await expect(page.locator(".team-chat-header")).toContainText("Team Backend")
+}
+
+test("equipo con modelos distintos y skills combinables persiste; chat normal sigue accesible", async ({ page }) => {
+  const { store } = await setup(page)
+  await createTeam(page)
+  expect(store.teams[0].members[0].model.modelID).toBe("lead")
+  expect(store.teams[0].members[0].variant).toBe("high")
+  expect(store.teams[0].members[1].model.modelID).toBe("worker")
+  expect(store.teams[0].members[1].skillRefs.map((s) => s.id)).toEqual(["backend", "qa"])
+  await page.reload()
+  await page.getByTitle("Equipos IA", { exact: true }).click()
+  await page.locator(".team-sidebar-card").first().getByRole("button", { name: "Team Backend", exact: true }).click()
+  await expect(page.locator(".team-employee").nth(1).getByLabel("Nombre del integrante")).toHaveValue("Ana Backend")
+  await page.getByRole("button", { name: "Nuevo chat (Ctrl+Alt+N)", exact: true }).click()
+  await page.getByText("Chat normal", { exact: true }).click()
+  await expect(page.locator(".team-chat")).toHaveCount(0)
+  await expect(page.locator(".composer")).toBeVisible()
+  await page.locator(".team-sidebar-card").last().getByRole("button", { name: "Team Backend", exact: true }).click()
+  await expect(page.locator(".team-chat")).toBeVisible()
+  await page.keyboard.press("Control+Alt+n")
+  await expect(page.locator(".team-chat")).toHaveCount(0)
+})
+
+test("objetivo, pausa, entrega pendiente y feedback conservan revisiones en el mismo chat", async ({ page }) => {
+  const { store, calls } = await setup(page)
+  await createTeam(page)
+  await page.getByLabel("Objetivo del equipo").fill("Implementen usuarios y pruebas")
+  await page.getByRole("button", { name: "Iniciar equipo", exact: true }).click()
+  await expect(page.getByRole("button", { name: "Pausar nuevas tareas" })).toBeVisible()
+  const approvals = await page.evaluate(async () => {
+    const a = await import(/* @vite-ignore */ "/src/state/approvals.ts")
+    a.useApprovals.setState({ autoApprove: true, loaded: true })
+    return { team: a.approveFor("plan"), normal: a.approveFor("unrelated") }
+  })
+  expect(approvals).toEqual({ team: false, normal: true })
+  await page.getByRole("button", { name: "Pausar nuevas tareas" }).click()
+  await expect(page.getByRole("button", { name: "Reanudar", exact: true })).toBeVisible()
+  await page.getByRole("button", { name: "Reanudar", exact: true }).click()
+  const first = store.chats[0].runs[0]
+  first.status = "awaiting_manual_qa"; first.finishedAt = Date.now(); first.summary = "Terminamos. Cambios implementados. Pendiente de QA manual."
+  first.artifacts = [{ id: "evidence", taskId: null, phase: "test", kind: "log", relativePath: "pruebas/log.txt", capturedAt: Date.now(), status: "captured", source: "fixture E2E", reason: null }]
+  await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
+  await page.getByRole("button", { name: "Resultados / Comportamientos", exact: true }).click()
+  await expect(page.locator(".team-results").getByRole("heading", { name: "Pendiente de QA manual" })).toBeVisible()
+  await page.getByRole("button", { name: "Ver evidencia", exact: true }).click()
+  await expect(page.locator(".team-evidence-preview")).toContainText("Evidencia observada")
+  await page.screenshot({ path: test.info().outputPath("entrega-qa-pendiente.png") })
+  await page.getByLabel("Feedback de QA / siguiente objetivo").fill("Email duplicado devuelve 500. Corríjanlo")
+  await page.getByRole("button", { name: "Enviar al Lead", exact: true }).click()
+  expect(store.chats).toHaveLength(1)
+  expect(store.chats[0].runs).toHaveLength(2)
+  expect(store.chats[0].runs[0].artifacts[0].relativePath).toBe("pruebas/log.txt")
+  expect(calls.filter((c) => c.command === "team_runs_start")).toHaveLength(2)
+})
+
+test("comparador muestra ambos estados, desliza y conserva la ausencia de una captura", async ({ page }) => {
+  const { store } = await setup(page)
+  await page.setViewportSize({ width: 1600, height: 1600 })
+  await createTeam(page)
+  await page.getByTitle("Foco en el chat (Ctrl+Alt+M)", { exact: true }).click()
+  await page.getByLabel("Objetivo del equipo").fill("Mejorar el flujo visual")
+  await page.getByRole("button", { name: "Iniciar equipo", exact: true }).click()
+  const run = store.chats[0].runs[0]
+  run.status = "awaiting_manual_qa"
+  run.summary = "Terminamos. Archivos modificados y capturas reales registradas. Queda pendiente tu QA manual."
+  run.captureTargets = [{ id: "project", name: "Proyecto de prueba", url: "http://localhost:5173/app", width: 1280, height: 800, actions: [], maskSelectors: [], required: true }]
+  run.observations = ["before", "after"].map((phase) => ({ id: phase, targetId: "project", phase, status: "captured", capturedAt: Date.now(), artifactPath: phase + ".png", reportPath: phase + ".json", sha256: phase, details: { width: 1280, height: 800, source: "fixture de imagen E2E" } }))
+  await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
+  await page.getByRole("button", { name: "Resultados / Comportamientos", exact: true }).click()
+  const compare = page.getByRole("region", { name: "Comparador de evidencias" })
+  await expect(compare.getByAltText("Antes del cambio")).toBeVisible()
+  await expect(compare.getByAltText("Después del cambio")).toBeVisible()
+  await compare.screenshot({ path: test.info().outputPath("comparador-lado-a-lado.png") })
+  await compare.getByRole("button", { name: "Ampliar antes" }).click()
+  await expect(page.getByRole("dialog", { name: "Antes del cambio ampliado" })).toBeVisible()
+  await page.getByRole("button", { name: "Cerrar imagen" }).click()
+  await compare.getByRole("button", { name: "Deslizar antes / después" }).click()
+  await expect(compare.getByRole("slider", { name: "Posición antes y después" })).toHaveValue("50")
+  await compare.getByRole("slider", { name: "Posición antes y después" }).fill("75")
+  await expect(compare.locator(".team-image-divider")).toHaveCSS("left", /px$/)
+  await compare.screenshot({ path: test.info().outputPath("comparador-deslizador.png") })
+  run.observations[0] = { ...run.observations[0], id: "missing", status: "unavailable", artifactPath: null, details: { reason: "La aplicación no estaba iniciada antes del cambio" } }
+  await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
+  await expect(compare.getByText("La aplicación no estaba iniciada antes del cambio")).toBeVisible()
+  await expect(compare.getByRole("button", { name: "Deslizar antes / después" })).toBeDisabled()
+  const previous = structuredClone(run)
+  previous.id = "previous-run"; previous.startedAt = run.startedAt - 1000
+  previous.observations = [structuredClone(run.observations[1])]
+  store.chats[0].runs.unshift(previous)
+  await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
+  await compare.getByLabel("Comparar contra").selectOption("previous-run")
+  await expect(compare.getByAltText("Antes del cambio")).toBeVisible()
+  await expect(compare.getByRole("button", { name: "Deslizar antes / después" })).toBeEnabled()
+  previous.observations[0].status = "expired"
+  previous.observations[0].details.reason = "Expiró según la retención configurada"
+  await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
+  await expect(compare.getByAltText("Antes del cambio")).toHaveCount(0)
+  await expect(compare.getByText("Expiró según la retención configurada")).toBeVisible()
+  await expect(compare.getByRole("button", { name: "Deslizar antes / después" })).toBeDisabled()
+})

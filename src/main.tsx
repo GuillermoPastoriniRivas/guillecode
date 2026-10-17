@@ -10,6 +10,7 @@ import "./styles/views.css"
 import "./styles/agent.css"
 import "./styles/docs.css"
 import "./styles/features.css"
+import "./styles/teams.css"
 import App from "./App"
 
 createRoot(document.getElementById("root")!).render(

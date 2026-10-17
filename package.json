@@ -10,6 +10,8 @@
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "test:e2e": "playwright test",
     "test:engine": "node --experimental-strip-types tests/engine-smoke.mjs && node tests/responses-engine.mjs && node tests/desktop-session-engine.mjs",
+    "test:teams": "node tests/teams-engine.mjs",
+    "test:teams:recovery": "node tests/teams-restart.mjs",
     "test:fleet": "node tests/fleet-smoke.mjs",
     "test:upgrade": "node tests/windows-upgrade.mjs",
     "preview": "vite preview",

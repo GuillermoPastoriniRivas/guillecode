@@ -19,6 +19,15 @@ const guillecodeConfig = JSON.stringify({ mcp: {
   worktrees: { url: "http://127.0.0.1:12345/mcp/worktrees" },
 } })
 
+test("las sesiones de equipos conservan su política específica", async () => {
+  await withConfig(guillecodeConfig, async () => {
+    const plugin = await GuilleCodePolicy()
+    const output = { system: ["[GUILLECODE_TEAM_RUN] El Lead coordina tareas"] }
+    await plugin["experimental.chat.system.transform"]({}, output)
+    assert.equal(output.system.length, 1)
+  })
+})
+
 test("la política global no altera motores ajenos a GuilleCode", async () => {
   for (const config of [undefined, "invalid", "null", "{}", JSON.stringify({ mcp: { terminal: { url: "https://example.com" } } })]) {
     await withConfig(config, async () => assert.deepEqual(await GuilleCodePolicy(), {}))

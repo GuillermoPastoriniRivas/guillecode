@@ -41,6 +41,8 @@ export const GuilleCodePolicy = async () => {
 
   return {
     "experimental.chat.system.transform": async (_input, output) => {
+      // Team sessions carry explicit orchestration instructions; ordinary chats keep POLICY.
+      if (output.system.some((text) => text.includes("[GUILLECODE_TEAM_RUN]"))) return
       // Evita duplicar la política si la app y la instalación actual la cargan.
       if (!output.system.some((text) => text.includes("# GuilleCode: directo al objetivo"))) {
         output.system.push(POLICY)

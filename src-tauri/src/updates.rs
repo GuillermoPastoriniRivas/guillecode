@@ -94,6 +94,7 @@ pub async fn update_download(app: AppHandle) -> Result<(), String> {
 }
 
 fn preflight(app: &AppHandle) -> Result<(), String> {
+    if crate::teams::busy(app) {return Err("Hay equipos IA trabajando o sesiones pendientes. Finalizá o cancelá sus ejecuciones antes de actualizar".into());}
     if crate::routines::views(app).iter().any(|r| r.routine.runs.first().map(|r| r.finished_at.is_none()).unwrap_or(false)) {
         return Err("Hay rutinas trabajando. Esperá a que terminen antes de actualizar".into());
     }

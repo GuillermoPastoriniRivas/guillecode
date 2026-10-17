@@ -2,6 +2,8 @@ import type { Part, Session } from "@opencode-ai/sdk"
 import { api, client } from "./opencode"
 import { gitRangeContext, gitStagedContext } from "./git"
 import { HELPER_TITLE_PREFIX, selectedVariant, useAgent } from "../state/agent"
+import { parseReview, type ReviewResult } from "./reviewResult"
+export type { RawFinding, ReviewResult } from "./reviewResult"
 
 let toolIds: string[] | null = null
 
@@ -114,34 +116,6 @@ const REVIEW_SYSTEM = [
   '"detail": "por qué es un problema y cuándo falla", "suggestion": "cómo arreglarlo"}]}.',
   "Si no hay problemas, devolvé findings vacío. Escribí en español.",
 ].join(" ")
-
-export type RawFinding = {
-  file?: string
-  line?: number | string
-  severity?: string
-  title?: string
-  detail?: string
-  suggestion?: string
-}
-
-export type ReviewResult = { summary: string; findings: RawFinding[] }
-
-function parseReview(text: string): ReviewResult {
-  const start = text.indexOf("{")
-  const end = text.lastIndexOf("}")
-  if (start !== -1 && end > start) {
-    try {
-      const parsed = JSON.parse(text.slice(start, end + 1)) as { summary?: unknown; findings?: unknown }
-      return {
-        summary: typeof parsed.summary === "string" ? parsed.summary : "",
-        findings: Array.isArray(parsed.findings) ? (parsed.findings as RawFinding[]) : [],
-      }
-    } catch {
-      return { summary: text.trim(), findings: [] }
-    }
-  }
-  return { summary: text.trim(), findings: [] }
-}
 
 export async function reviewCode(label: string, prompt: string): Promise<ReviewResult> {
   const state = useAgent.getState()

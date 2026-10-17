@@ -19,6 +19,12 @@ Las cuentas se guardan en el perfil de OpenCode del usuario de Windows (`XDG_DAT
 
 La app del celular actualiza los modelos y verifica disponibilidad antes de enviar. Las rutinas verifican su modelo antes de crear una conversación; si se quitó su cuenta, se informa el error para que el usuario elija otro modelo.
 
+## Equipos IA
+
+La barra lateral incluye **Equipos IA** para guardar un Lead y especialistas con modelos y skills propios. **+ → Nuevo chat de equipo** abre una conversación con planificación, ejecución real en OpenCode, revisiones, evidencias locales y QA manual pendiente. El trabajo continúa al cambiar de vista mientras la app y el motor estén activos.
+
+Incluye capturas reales antes/después con flujos locales configurables, comparador de imágenes, presupuestos y retención opcionales. Recupera sesiones tras reiniciar sin reenviar ciegamente el objetivo. Ver [uso, arquitectura, pruebas y limitaciones del Modo Equipos IA](docs/equipos-ia.md) y [resultados de validación](docs/equipos-ia-validacion.md).
+
 ## Memoria
 
 GuilleCode recuerda el proyecto y las conversaciones de forma **100% local**, sin cuentas ni servicios. Un plugin del motor inyecta el contexto antes de cada respuesta, así el recuerdo no depende de que el agente pida nada. En cada conversación hay un interruptor **Memoria** (encendido por defecto): apagado, no se inyecta contexto, no se guardan checkpoints y el agente no puede usar las herramientas `memory_*`. La vista **Memoria** permite leer y editar las notas del proyecto, el estado de cada conversación y las preferencias, y «Continuar en un chat nuevo» arranca una sesión con el checkpoint. Los datos viven en el perfil de datos de GuilleCode, no en la nube.

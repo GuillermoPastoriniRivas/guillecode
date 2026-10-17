@@ -1,0 +1,343 @@
+// Opt-in Windows test. tests/teams-engine.mjs supplies an isolated real OpenCode
+// instance backed by loopback deterministic inference. No real account is used.
+use super::*;
+use std::sync::atomic::AtomicBool;
+use std::time::{Duration, Instant};
+
+#[test]
+#[ignore = "Run via node tests/teams-engine.mjs (isolated OpenCode + Tauri + Git)"]
+fn native_team_end_to_end() {
+    let url = std::env::var("GUILLE_TEAM_TEST_ENGINE").expect("use tests/teams-engine.mjs");
+    assert!(url.starts_with("http://127.0.0.1:"));
+    let repo = std::env::var("GUILLE_TEAM_TEST_REPO").expect("isolated repository");
+    let mut context = tauri::generate_context!();
+    context.config_mut().identifier = format!("com.guillecode.teams-test-{}", id());
+    context.config_mut().app.windows.clear();
+    let mut app = tauri::Builder::default()
+        .any_thread()
+        .manage(crate::ServerState {
+            child: Mutex::new(None),
+            config: Mutex::new(Some(crate::ServerConfig {
+                url,
+                username: "opencode".into(),
+                password: "qa-password".into(),
+                worktree: repo.clone(),
+            })),
+            project: Mutex::new(Some(repo.clone())),
+            stopping: AtomicBool::new(false),
+        })
+        .manage(crate::updates::UpdatesState::default())
+        .build(context)
+        .expect("isolated Tauri runtime");
+    start(app.handle());
+    crate::approvals::start(app.handle());
+    crate::approvals::approvals_set(app.handle().clone(), true);
+    let data_dir = app.path().app_data_dir().unwrap();
+    let handle = app.handle().clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut team = super::domain::tests::team();
+            team.project_root = repo.clone();
+            team.allowed_repositories = vec![repo.clone()];
+            team.members[0].model.model_id = "qa-lead".into();
+            if let Ok(url) = std::env::var("GUILLE_TEAM_TEST_CAPTURE_URL") {
+                team.evidence_targets=vec![serde_json::from_value(serde_json::json!({"id":"project","name":"Módulos del proyecto","url":url,"required":true})).unwrap()];
+            }
+            for (id, model) in [("backend", "qa-backend"), ("frontend", "qa-frontend")] {
+                let mut employee = team.members[0].clone();
+                employee.id = id.into();
+                employee.role = id.into();
+                employee.name = id.into();
+                employee.model.model_id = model.into();
+                employee.tools = ["read", "glob", "grep", "write", "edit", "bash"]
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect();
+                team.members.push(employee);
+            }
+            let team = teams_save(handle.clone(), team).unwrap();
+            let chat = team_chats_create(handle.clone(), team.id.clone()).unwrap();
+            let run_id = team_runs_start(
+                handle.clone(),
+                chat.id.clone(),
+                "Crear backend y frontend comprobables".into(),
+            )
+            .unwrap();
+            let c = runner::test_client(&handle, &repo).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(180);
+            let result = loop {
+                let r = run(&handle, &run_id).unwrap();
+                // Exercise the normal OpenCode approval API only inside this isolated test.
+                for p in c
+                    .get("/permission")
+                    .unwrap()
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                {
+                    c.post(
+                        &format!("/permission/{}/reply", p["id"].as_str().unwrap()),
+                        serde_json::json!({"reply":"once"}),
+                    )
+                    .unwrap();
+                }
+                if !active(&r.status) {
+                    break r;
+                }
+                assert!(Instant::now() < deadline, "native team timed out: {:?}", r);
+                std::thread::sleep(Duration::from_millis(200));
+            };
+            assert_eq!(result.status, "awaiting_manual_qa", "{:?}", result);
+            assert_eq!(result.tasks.len(), 2);
+            assert_eq!(
+                result.tasks[0].attempts.len(),
+                2,
+                "Lead must request and verify a correction"
+            );
+            assert_eq!(result.tasks[1].attempts.len(), 1);
+            assert!(result.tasks.iter().all(|t| t.status == "completed"));
+            for a in &result.artifacts {
+                if a.status == "captured" {
+                    assert!(std::path::Path::new(&result.evidence_dir)
+                        .join(&a.relative_path)
+                        .is_file());
+                }
+            }
+            let before: serde_json::Value = serde_json::from_str(
+                &std::fs::read_to_string(
+                    std::path::Path::new(&result.evidence_dir).join("manifest.json"),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            assert!(before["artifacts"].as_array().unwrap().len() > 5);
+            assert!(result.notified);
+            if !team.evidence_targets.is_empty() {
+                let before = result
+                    .observations
+                    .iter()
+                    .find(|o| o.phase == "before" && o.status == "captured")
+                    .expect("real before screenshot");
+                let after = result
+                    .observations
+                    .iter()
+                    .find(|o| o.phase == "after" && o.status == "captured")
+                    .expect("real after screenshot");
+                let image = team_evidence_image(
+                    handle.clone(),
+                    result.id.clone(),
+                    after.artifact_path.clone().unwrap(),
+                )
+                .unwrap();
+                assert_eq!(image["sha256"], after.sha256.clone().unwrap());
+                let path = std::path::Path::new(&result.evidence_dir)
+                    .join(after.artifact_path.as_ref().unwrap());
+                let bytes = std::fs::read(&path).unwrap();
+                let mut changed = bytes.clone();
+                changed.push(0);
+                std::fs::write(&path, &changed).unwrap();
+                assert!(team_evidence_image(
+                    handle.clone(),
+                    result.id.clone(),
+                    after.artifact_path.clone().unwrap()
+                )
+                .is_err());
+                std::fs::write(&path, bytes).unwrap();
+                assert_ne!(before.sha256, after.sha256);
+                assert!(before.details["text"].as_str().unwrap().contains("ausente"));
+                assert!(after.details["text"]
+                    .as_str()
+                    .unwrap()
+                    .contains("version 2"));
+                if let Ok(out) = std::env::var("GUILLE_TEAM_TEST_ARTIFACTS") {
+                    let out = std::path::Path::new(&out);
+                    std::fs::create_dir_all(out).unwrap();
+                    for (name, o) in [("before", before), ("after", after)] {
+                        std::fs::copy(
+                            std::path::Path::new(&result.evidence_dir)
+                                .join(o.artifact_path.as_ref().unwrap()),
+                            out.join(format!("{}.png", name)),
+                        )
+                        .unwrap();
+                    }
+                    std::fs::write(
+                        out.join("observations.json"),
+                        evidence::sanitize(
+                            &serde_json::to_string_pretty(&result.observations).unwrap(),
+                        ),
+                    )
+                    .unwrap();
+                }
+            }
+            assert!(!crate::approvals::auto_approve(
+                &handle,
+                result.tasks[0].attempts[0].session_id.as_ref().unwrap()
+            ));
+            assert!(crate::approvals::auto_approve(&handle, "normal-session"));
+            assert_eq!(
+                std::fs::read_to_string(std::path::Path::new(&repo).join("user.txt")).unwrap(),
+                "user work\n"
+            );
+            assert!(read_db(&db(&handle).unwrap()).unwrap().chats[0].runs[0].notified);
+            control(&handle, &run_id, "approve").unwrap();
+            assert_eq!(run(&handle, &run_id).unwrap().status, "qa_approved");
+            // Recovery blocks active attempts without sending another prompt.
+            let mut durable = read(&handle).unwrap();
+            durable.chats[0].runs[0].status = "running".into();
+            recover(&mut durable);
+            assert_eq!(durable.chats[0].runs[0].status, "blocked");
+            assert_eq!(durable.chats[0].runs[0].tasks[0].attempts.len(), 2);
+            let wait_for_run = |id: &str| -> Run {
+                let deadline = Instant::now() + Duration::from_secs(90);
+                loop {
+                    let r = run(&handle, id).unwrap();
+                    for p in c
+                        .get("/permission")
+                        .unwrap()
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                    {
+                        c.post(
+                            &format!("/permission/{}/reply", p["id"].as_str().unwrap()),
+                            serde_json::json!({"reply":"once"}),
+                        )
+                        .unwrap();
+                    }
+                    if !active(&r.status) {
+                        return r;
+                    }
+                    assert!(Instant::now() < deadline, "run timed out: {:?}", r);
+                    std::thread::sleep(Duration::from_millis(200));
+                }
+            };
+            // Model removal blocks, explicit reassignment resumes the same task.
+            let mut missing = team.clone();
+            missing.id = String::new();
+            missing.members[1].model.model_id = "qa-missing".into();
+            let missing = teams_save(handle.clone(), missing).unwrap();
+            let chat = team_chats_create(handle.clone(), missing.id).unwrap();
+            let missing_run =
+                team_runs_start(handle.clone(), chat.id, "Comprobar modelo ausente".into())
+                    .unwrap();
+            let blocked = wait_for_run(&missing_run);
+            assert_eq!(blocked.status, "blocked");
+            assert!(!blocked.notified);
+            assert!(blocked.tasks[0].attempts[0].session_id.is_none());
+            team_runs_model(
+                handle.clone(),
+                missing_run.clone(),
+                "backend".into(),
+                team.members[1].model.clone(),
+                None,
+            )
+            .unwrap();
+            control(&handle, &missing_run, "retry").unwrap();
+            let recovered = wait_for_run(&missing_run);
+            assert_eq!(recovered.status, "awaiting_manual_qa", "{:?}", recovered);
+            assert_eq!(recovered.tasks[0].attempts.len(), 2);
+            assert_eq!(recovered.configuration_changes.len(), 1);
+            // A corrupt reviewer never yields a successful delivery.
+            let mut invalid = team.clone();
+            invalid.id = String::new();
+            invalid.members[0].model.model_id = "qa-invalid-review".into();
+            let invalid = teams_save(handle.clone(), invalid).unwrap();
+            let chat = team_chats_create(handle.clone(), invalid.id).unwrap();
+            let invalid_run =
+                team_runs_start(handle.clone(), chat.id, "Revisión inválida".into()).unwrap();
+            let blocked = wait_for_run(&invalid_run);
+            assert_eq!(blocked.status, "blocked");
+            assert!(!blocked.notified);
+            assert!(matches!(
+                blocked.tasks[0].attempts[0].review.as_ref().unwrap().status,
+                ReviewStatus::ReviewError
+            ));
+            control(&handle, &invalid_run, "cancel").unwrap();
+            assert_eq!(run(&handle, &invalid_run).unwrap().status, "cancelled");
+            // A real usage budget blocks before any worker; adjusting it is audited.
+            let mut limited = team.clone();
+            limited.id = String::new();
+            limited.limits.max_tokens = Some(1);
+            if let Some(target) = limited.evidence_targets.first_mut() {
+                target.url = target.url.replace("/app", "/capture-recovery");
+                target.wait_for_selector = Some("main".into());
+            }
+            let limited = teams_save(handle.clone(), limited).unwrap();
+            let chat = team_chats_create(handle.clone(), limited.id).unwrap();
+            let limited_run = team_runs_start(
+                handle.clone(),
+                chat.id,
+                "Presupuesto y recuperación de evidencia obligatoria".into(),
+            )
+            .unwrap();
+            let blocked = wait_for_run(&limited_run);
+            assert_eq!(blocked.status, "blocked");
+            assert!(!blocked.notified);
+            assert!(blocked.tasks.is_empty());
+            assert!(blocked.error.as_deref().unwrap().contains("presupuesto"));
+            assert!(blocked
+                .session_usage
+                .values()
+                .any(|v| v["tokens"].as_u64().unwrap_or(0) > 0));
+            team_runs_limits(handle.clone(), limited_run.clone(), Limits::default()).unwrap();
+            control(&handle, &limited_run, "retry").unwrap();
+            let blocked = wait_for_run(&limited_run);
+            assert_eq!(blocked.status, "blocked");
+            assert!(blocked.tasks.iter().all(|t| t.status == "completed"));
+            assert!(!blocked.notified);
+            assert!(blocked
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("flujo obligatorio"));
+            let attempts: Vec<_> = blocked.tasks.iter().map(|t| t.attempts.len()).collect();
+            std::fs::write(
+                std::path::Path::new(&repo).join("capture-ready.flag"),
+                "ready",
+            )
+            .unwrap();
+            control(&handle, &limited_run, "retry").unwrap();
+            let recovered = wait_for_run(&limited_run);
+            assert_eq!(recovered.status, "awaiting_manual_qa");
+            assert_eq!(
+                recovered
+                    .tasks
+                    .iter()
+                    .map(|t| t.attempts.len())
+                    .collect::<Vec<_>>(),
+                attempts
+            );
+            assert_eq!(recovered.configuration_changes.len(), 1);
+            assert!(recovered
+                .observations
+                .iter()
+                .any(|o| o.phase == "before" && o.status == "unavailable"));
+            assert!(
+                recovered
+                    .observations
+                    .iter()
+                    .rev()
+                    .find(|o| o.phase == "after")
+                    .unwrap()
+                    .status
+                    == "captured"
+            );
+        }));
+        let _ = tx.send(result);
+    });
+    let deadline = Instant::now() + Duration::from_secs(210);
+    let result = loop {
+        app.run_iteration(|_, _| {});
+        if let Ok(result) = rx.try_recv() {
+            break result;
+        }
+        assert!(Instant::now() < deadline, "Tauri test timed out");
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    drop(app);
+    let _ = std::fs::remove_dir_all(data_dir);
+    if let Err(error) = result {
+        std::panic::resume_unwind(error);
+    }
+}

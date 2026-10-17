@@ -1,7 +1,7 @@
 import { create } from "zustand"
 import { loadJson, saveJson } from "../lib/persist"
 
-export type ViewId = "explorer" | "search" | "scm" | "agents" | "prs" | "routines" | "memory" | "plane"
+export type ViewId = "explorer" | "search" | "scm" | "agents" | "prs" | "routines" | "memory" | "plane" | "teams"
 export type PanelTab = "terminal" | "output"
 
 type LayoutData = {

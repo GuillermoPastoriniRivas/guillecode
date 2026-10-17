@@ -25,6 +25,9 @@ import { shortAgo } from "../lib/time"
 import { projectName } from "../lib/paths"
 import { archivedSessionOwner, unarchivedSessions } from "../lib/sessions"
 import { providerErrorMessage } from "../lib/autoretry"
+import { openMenuAt } from "../components/ContextMenu"
+import { newTeamChat, useTeams } from "../state/teams"
+import { TeamChat } from "./TeamChat"
 
 const SUGGESTIONS = [
   { icon: "telescope", title: "Entender el proyecto", text: "Explicame la arquitectura de este proyecto y dónde está cada cosa." },
@@ -175,6 +178,7 @@ export function SessionPane({ sessionId, variant }: { sessionId: string | null; 
 }
 
 export function AgentPanel() {
+  const teamChatId = useTeams((s) => s.activeChatId)
   const activeId = useAgent((s) => s.activeSessionId)
   const connected = useAgent((s) => s.connected)
   const busyCount = useAgent((s) => Object.values(s.statuses).filter((x) => x.type === "busy").length)
@@ -194,7 +198,7 @@ export function AgentPanel() {
               <Icon name="loading" spin /> {busyCount}
             </span>
           )}
-          {activeId ? (
+          {!teamChatId && (activeId ? (
             <IconButton
               icon="multiple-windows"
               title="Sacar el chat como burbuja flotante"
@@ -206,8 +210,11 @@ export function AgentPanel() {
               title="Abrir una conversación nueva en una burbuja flotante"
               onClick={() => void bubbleDraft()}
             />
-          )}
-          <IconButton icon="add" title="Nueva sesión (Ctrl+Alt+N)" onClick={() => newSession()} />
+          ))}
+          <IconButton icon="add" title="Nuevo chat (Ctrl+Alt+N)" onClick={(e) => openMenuAt(e.currentTarget, [
+            { label: "Chat normal", icon: "comment-discussion", run: () => { useTeams.setState({ activeChatId: null }); newSession() } },
+            { label: "Nuevo chat de equipo", icon: "organization", run: () => void newTeamChat() },
+          ])} />
           <IconButton icon="history" title="Historial de sesiones" onClick={() => useLayout.getState().showView("agents", false)} />
           <IconButton
             icon={focusChat ? "screen-normal" : "screen-full"}
@@ -223,7 +230,7 @@ export function AgentPanel() {
           <Icon name="debug-disconnect" /> Conectando con opencode…
         </div>
       )}
-      <SessionPane sessionId={activeId} variant="panel" />
+      {teamChatId ? <TeamChat key={teamChatId} chatId={teamChatId} /> : <SessionPane sessionId={activeId} variant="panel" />}
     </aside>
   )
 }

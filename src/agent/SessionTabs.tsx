@@ -22,6 +22,9 @@ import { confirmAction } from "../components/Dialog"
 import { openContextMenu, type MenuItem } from "../components/ContextMenu"
 import { Icon } from "../components/ui"
 import { archivedSessionOwner } from "../lib/sessions"
+import { closeTeamChat, selectTeamChat, useTeams } from "../state/teams"
+import { useProject } from "../state/project"
+import { samePath } from "../lib/paths"
 
 function tabMenu(e: React.MouseEvent, id: string, session: Session | null) {
   const items: MenuItem[] = []
@@ -74,6 +77,9 @@ function tabMenu(e: React.MouseEvent, id: string, session: Session | null) {
 }
 
 export function SessionTabs() {
+  const teamState = useTeams()
+  const root = useProject((s) => s.root)
+  const teamChats = teamState.chats.filter((c) => teamState.openChatIds.includes(c.id) && root && samePath(c.team.projectRoot, root))
   const open = useAgent((s) => s.openSessionIds)
   const sessions = useAgent((s) => s.sessions)
   const allSessions = useAgent((s) => s.allSessions)
@@ -90,7 +96,7 @@ export function SessionTabs() {
     el?.scrollIntoView({ block: "nearest", inline: "nearest" })
   }, [activeId, open.length])
 
-  if (open.length === 1 && open[0] === DRAFT_TAB) return null
+  if (open.length === 1 && open[0] === DRAFT_TAB && !teamChats.length) return null
 
   return (
     <div
@@ -103,7 +109,7 @@ export function SessionTabs() {
       {open.map((id) => {
         const draft = id === DRAFT_TAB
         const session = draft ? null : sessions.find((x) => x.id === id) ?? null
-        const active = draft ? activeId === null : activeId === id
+        const active = !teamState.activeChatId && (draft ? activeId === null : activeId === id)
         const mark = draft ? "idle" : sessionMark({ allSessions, permissions, questions, statuses }, unseen, id, approvals)
         const title = draft ? "Nueva conversación" : session?.title || "Sin título"
         const archived = archivedSessionOwner(session, allSessions)
@@ -118,6 +124,7 @@ export function SessionTabs() {
                 e.preventDefault()
                 closeSessionTab(id)
               } else if (e.button === 0) {
+                useTeams.setState({ activeChatId: null })
                 if (draft) newSession()
                 else selectSession(id)
               }
@@ -149,6 +156,7 @@ export function SessionTabs() {
           </div>
         )
       })}
+      {teamChats.map((c) => <div key={c.id} className={`agent-tab team-tab${teamState.activeChatId === c.id ? " active" : ""}`} title={`Equipo · ${c.title}`} onMouseDown={(e) => { if (e.button === 0) selectTeamChat(c.id); else if (e.button === 1) { e.preventDefault(); closeTeamChat(c.id) } }}><Icon name="organization" className="agent-tab-icon" /><span className="agent-tab-label">{c.title}</span><button type="button" className="agent-tab-close" title="Cerrar pestaña de equipo" onMouseDown={(e) => e.stopPropagation()} onClick={() => closeTeamChat(c.id)}><Icon name="close" /></button></div>)}
     </div>
   )
 }
