@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react"
-import { bindAgentProject, ensureSessionView, loadAgentMeta, selectSession, sessionWaiting, startEventStream, useAgent } from "../state/agent"
+import { bindAgentProject, loadAgentMeta, selectSession, sessionWaiting, startEventStream, useAgent } from "../state/agent"
 import { initProject, useProject } from "../state/project"
 import { initApprovals } from "../state/approvals"
-import { dockBubble, minimizeBubble } from "../state/bubbles"
+import { dockBubble, minimizeBubble, listenBubbleDock } from "../state/bubbles"
 import { listenWindowClose } from "../state/hub"
 import { SessionPane } from "../agent/AgentPanel"
 import { DialogHost } from "../components/Dialog"
@@ -63,14 +63,18 @@ function BubbleContext({ sessionId }: { sessionId: string }) {
 
 let bubbleBooted = false
 
-function bootBubble(): void {
+function bootBubble(sessionId: string): void {
   if (bubbleBooted) return
   bubbleBooted = true
   initApprovals()
   void initProject().then(() => {
     const root = useProject.getState().root
     bindAgentProject(root)
+    // initProject publishes ready before this continuation. Selecting in a
+    // separate ready effect races with bindAgentProject resetting activeId.
+    selectSession(sessionId)
     startEventStream()
+    listenBubbleDock()
     void loadAgentMeta().catch(() => undefined)
   })
   listenWindowClose()
@@ -105,14 +109,8 @@ export function BubbleApp({ sessionId, origin }: { sessionId: string; origin: st
   const connected = useAgent((s) => s.connected)
 
   useEffect(() => {
-    bootBubble()
-  }, [])
-
-  useEffect(() => {
-    if (!ready) return
-    selectSession(sessionId)
-    void ensureSessionView(sessionId)
-  }, [ready, sessionId])
+    bootBubble(sessionId)
+  }, [sessionId])
 
   useEffect(() => {
     document.documentElement.classList.add("is-bubble")

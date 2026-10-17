@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   abortSession,
   addContext,
@@ -29,19 +29,22 @@ import { notify } from "../state/toasts"
 import { rankFuzzy } from "../lib/fuzzy"
 import { basename, joinPath, relativePath } from "../lib/paths"
 import { modelKey } from "../lib/opencode"
-import { isBubbleWindow } from "../lib/windows"
+import { isBubbleWindow, windowLabel } from "../lib/windows"
 import { formatTokens, percent } from "../lib/format"
 import { FileIcon, Highlighted, Icon, Kbd } from "../components/ui"
 import { openImage } from "../state/lightbox"
 import { useVoiceRecorder } from "../lib/recorder"
 import { call, errorMessage } from "../lib/tauri"
+import { draftRuntimeKey, patchSessionRuntime, sessionRuntime, useSessionRuntime } from "../state/session-runtime"
+import { registerPendingInput } from "../lib/pending-input"
+import { BrowserWorkspace } from "./BrowserWorkspace"
+import { VoiceSetup } from "./VoiceSetup"
 import { invoke } from "@tauri-apps/api/core"
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024
 const CONNECT_CHATGPT = "__connect_chatgpt__"
 export const PATH_DRAG_TYPE = "application/x-guillecode-path"
 
-const drafts = new Map<string, string>()
 
 async function desktopTranscribe(wav: Blob): Promise<string> {
   const bytes = new Uint8Array(await wav.arrayBuffer())
@@ -135,18 +138,24 @@ export function Composer({
   usage?: ContextUsage | null
 }) {
   const root = useProject((s) => s.root)
-  const context = useAgent((s) => s.context)
+  const runtimeKey = sessionId ?? draftRuntimeKey(root, windowLabel())
+  const runtime = useSessionRuntime(runtimeKey)
+  const globalContext = useAgent((s) => s.context)
+  const context = runtime.context ?? globalContext
   const includeActiveFile = useAgent((s) => s.includeActiveFile)
-  const model = useAgent((s) => s.model)
+  const globalModel = useAgent((s) => s.model)
+  const model = runtime.model ?? globalModel
   const models = useAgent((s) => s.models)
   const modelsError = useAgent((s) => s.modelsError)
   const favoriteModels = useAgent((s) => s.favoriteModels)
-  const variant = useAgent((s) => selectedVariant(s))
-  const modelVariants = useAgent((s) => currentModelInfo(s)?.variants)
-  const agentName = useAgent((s) => s.agentName)
+  const globalVariants = useAgent((s) => s.variants)
+  const variant = selectedVariant({ model, models, variants: runtime.variants ?? globalVariants })
+  const modelVariants = currentModelInfo({ model, models })?.variants
+  const globalAgent = useAgent((s) => s.agentName)
   const agents = useAgent((s) => s.agents)
   const isBubble = isBubbleWindow()
-  const shownAgent = isBubble ? BUBBLE_AGENT : agentName
+  const agentName = runtime.agent ?? (isBubble ? BUBBLE_AGENT : globalAgent)
+  const shownAgent = agentName
   const commands = useAgent((s) => s.commands)
   const composerFocus = useAgent((s) => s.composerFocus)
   const draft = useAgent((s) => s.draft)
@@ -159,25 +168,39 @@ export function Composer({
     const t = g?.tabs.find((x) => x.id === g.activeId)
     return t?.input.kind === "file" ? t.input.path : null
   })
-  const [text, setText] = useState(() => drafts.get(sessionId ?? "") ?? "")
+  const draftKey = runtimeKey
+  const draftState = useSessionRuntime(draftKey)
+  const text = draftState.draft ?? ""
+  const setText = useCallback((value: string | ((previous: string) => string)) => {
+    const previous = sessionRuntime(draftKey).draft ?? ""
+    patchSessionRuntime(draftKey, { draft: typeof value === "function" ? value(previous) : value })
+  }, [draftKey])
   const [popover, setPopover] = useState<Popover>(null)
   const [selected, setSelected] = useState(0)
   const [sending, setSending] = useState(false)
+  const [voiceSetup, setVoiceSetup] = useState(false)
   const [dragging, setDragging] = useState(false)
   const ref = useRef<HTMLTextAreaElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
-  const draftKey = sessionId ?? ""
+  const pendingSubmit = useRef<Promise<void> | null>(null)
 
   const recorder = useVoiceRecorder({
+    key: draftKey,
     transcribe: desktopTranscribe,
-    onText: (heard) => {
-      const message = text.trim() ? `${text.trim()} ${heard}` : heard
-      setText(message)
-      void submit(false, message)
+    onText: async (heard, transcribedAt) => {
+      const message = [sessionRuntime(draftKey).draft?.trim(), heard].filter(Boolean).join(" ")
+      patchSessionRuntime(draftKey, { draft: message, transcribedAt })
+      await pendingSubmit.current
+      await submit(false, message)
     },
     onError: (message) => notify.error("No se pudo transcribir el audio", message),
     unsupportedHint: "Para grabar voz abrí la app de escritorio de GuilleCode.",
   })
+  const finishRecording = recorder.stop
+  useEffect(() => registerPendingInput(draftKey, async () => {
+    await finishRecording()
+    await pendingSubmit.current
+  }), [draftKey, finishRecording])
 
   const toggleVoice = async () => {
     if (recorder.state.status === "recording") {
@@ -188,7 +211,7 @@ export function Composer({
     try {
       const view = await call<{ ready: boolean }>("voice_get")
       if (!view.ready) {
-        openEditor({ kind: "remote" })
+        setVoiceSetup(true)
         return
       }
     } catch (e) {
@@ -209,13 +232,8 @@ export function Composer({
   const [prevSession, setPrevSession] = useState(sessionId)
   if (prevSession !== sessionId) {
     setPrevSession(sessionId)
-    setText(drafts.get(sessionId ?? "") ?? "")
     setPopover(null)
   }
-
-  useEffect(() => {
-    drafts.set(draftKey, text)
-  }, [draftKey, text])
 
   useEffect(() => {
     if (composerFocus === 0) return
@@ -225,13 +243,14 @@ export function Composer({
   useEffect(() => {
     if (!draft) return
     setText(draft.text)
+    useAgent.setState({ draft: null })
     requestAnimationFrame(() => {
       const el = ref.current
       if (!el) return
       el.focus()
       el.setSelectionRange(draft.text.length, draft.text.length)
     })
-  }, [draft])
+  }, [draft, setText])
 
   useEffect(() => {
     const el = ref.current
@@ -289,22 +308,27 @@ export function Composer({
   const submit = async (now = false, override?: string) => {
     const value = (override ?? text).trim()
     if (!value && context.length === 0) return
-    if (busy && findCommand(value, commands)) {
+    if (pendingSubmit.current) return pendingSubmit.current
+    if (useAgent.getState().statuses[sessionId ?? ""]?.type === "busy" && findCommand(value, commands)) {
       notify.info("El agente está trabajando", "Los comandos se mandan cuando termina. Detenelo con Esc si no querés esperar.")
       return
     }
-    setSending(true)
-    try {
-      if (busy && now) await abortSession(sessionId)
-      await sendPrompt(value, root, activeFile, sessionId)
-      setText("")
-      drafts.delete(draftKey)
-      setPopover(null)
-    } catch (e) {
-      notify.error("No se pudo enviar", e instanceof Error ? e.message : String(e))
-    } finally {
-      setSending(false)
-    }
+    const operation = (async () => {
+      setSending(true)
+      try {
+        if (busy && now) await abortSession(sessionId)
+        await sendPrompt(value, root, activeFile, sessionId)
+        // Keep whatever was typed while the message was in flight.
+        if ((sessionRuntime(draftKey).draft ?? "").trim() === value) patchSessionRuntime(draftKey, { draft: "", submittedAt: Date.now() })
+        setPopover(null)
+      } catch (e) {
+        notify.error("No se pudo enviar", e instanceof Error ? e.message : String(e))
+      } finally {
+        setSending(false)
+      }
+    })()
+    pendingSubmit.current = operation
+    try { await operation } finally { if (pendingSubmit.current === operation) pendingSubmit.current = null }
   }
 
   const addImages = async (list: FileList | File[]) => {
@@ -337,22 +361,23 @@ export function Composer({
       return
     }
     const [providerID, ...rest] = item.id.split("/")
-    setModel({ providerID, modelID: rest.join("/") })
+    setModel({ providerID, modelID: rest.join("/") }, sessionId)
   }
 
   const chooseAgent = async () => {
-    if (isBubble) return
     if (agents.length === 0) return
     if (agents.length === 2) {
       const other = agents.find((a) => a.name !== agentName)
-      if (other) setAgentName(other.name)
+      if (other) {
+        setAgentName(other.name, sessionId)
+      }
       return
     }
     const item = await pickOne(
       agents.map((a) => ({ id: a.name, label: a.name, description: a.description, icon: a.name === agentName ? "check" : "hubot" })),
       { title: "Agente", placeholder: "Elegí el modo del agente" },
     )
-    if (item) setAgentName(item.id)
+    if (item) setAgentName(item.id, sessionId)
   }
 
   const chooseVariant = async () => {
@@ -364,7 +389,9 @@ export function Composer({
       ],
       { title: "Esfuerzo de razonamiento", placeholder: "Más esfuerzo: respuestas más pensadas, más lentas y más caras" },
     )
-    if (item) setVariant(model, item.id || null)
+    if (item) {
+      setVariant(model, item.id || null, sessionId)
+    }
   }
 
   const modelName = models.find((m) => m.providerID === model.providerID && m.modelID === model.modelID)?.name ?? "Conectá un proveedor"
@@ -511,6 +538,8 @@ export function Composer({
           e.target.value = ""
         }}
       />
+      {voiceSetup && <VoiceSetup onClose={() => setVoiceSetup(false)} onRecord={recorder.start} />}
+      {shownAgent === BUBBLE_AGENT && sessionId && <BrowserWorkspace key={sessionId} sessionId={sessionId} />}
       <div className="composer-footer">
         <div className="composer-options">
           <button type="button" className="composer-pill agent-pill" onClick={() => void chooseAgent()} title={isBubble ? "La burbuja maneja la PC" : "Modo del agente"}>

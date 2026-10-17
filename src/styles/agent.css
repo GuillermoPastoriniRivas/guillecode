@@ -1794,3 +1794,18 @@ html.is-bubble #root {
   color: var(--warn);
   font-size: 11px;
 }
+.composer-workspace { position: relative; padding: 4px 0; }
+.composer-workspace .composer-popover { position: static; margin-top: 6px; max-height: 240px; overflow: auto; }
+.composer-workspace .composer-popover p,
+.composer-workspace [role="alert"] { margin: 8px 12px; font-size: 12px; white-space: normal; }
+.composer-workspace [role="alert"] { color: var(--errorForeground, #f48771); }
+.composer-workspace button.composer-suggestion { width: 100%; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.composer-workspace button.composer-suggestion:focus-visible { outline: 1px solid var(--focusBorder, #007fd4); outline-offset: -1px; }
+.voice-setup-dialog { width: min(660px, calc(100vw - 24px)); max-height: calc(100vh - 24px); padding: 16px; overflow-y: auto; color: var(--fg); background: var(--bg-overlay); border: 1px solid var(--border); border-radius: 8px; }
+.voice-setup-dialog::backdrop { background: #0009; }
+.voice-setup-head, .voice-setup-actions { display: flex; align-items: center; gap: 8px; }
+.voice-setup-head { justify-content: space-between; }
+.voice-setup-head h2 { margin: 0; font-size: 16px; }
+.voice-setup-dialog > p { font-size: 12px; }
+.voice-setup-dialog [role="alert"] { color: var(--errorForeground, #f48771); }
+.voice-setup-actions { justify-content: flex-end; margin-top: 16px; }

@@ -13,5 +13,5 @@ export function isInternalScreenshot(part: { type: string; filename?: string }):
 }
 
 export function isDesktopContextText(text: string): boolean {
-  return /^Contexto (observado de la aplicación|de escritorio)\b/.test(text)
+  return /^(Contexto (observado de la aplicación|de escritorio|(?:Chrome|Browser) asignado)\b|Espacio (?:Chrome|Browser) de esta conversación\b)/.test(text)
 }

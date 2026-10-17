@@ -451,6 +451,7 @@ pub fn run() {
             desktop::context::desktop_context_get,
             desktop::context::desktop_context_select,
             desktop::context::desktop_context_prepare,
+            desktop::browser::browser_workspace,
             desktop::tasks::desktop_task_get,
             desktop::tasks::desktop_task_cancel,
             desktop::tasks::desktop_task_begin,
