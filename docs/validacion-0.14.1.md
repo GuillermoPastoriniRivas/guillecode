@@ -31,4 +31,4 @@ Para el canal propio se conserva `com.guillecode.desktop`, se cambia el endpoint
 
 El ensayo completo por CDP no pudo conectarse al puerto de WebView2 de la app instalada, aun con flags explícitos; no se cuenta como aprobado. La ventana de prueba sí se observó iniciada. Se ejecutaron en su lugar dos verificaciones independientes reales: comandos de descarga del updater desde Tauri y reemplazo/relanzamiento con NSIS. `npm run test:upgrade:native` reproduce ambas y el workflow de preparación las exige antes de compilar la release productiva. Los instaladores QA quedan excluidos de los assets de release.
 
-Huella canónica de la aplicación instalada: `953a1ecbe9162d64e115d7bc2dbaac722535f10604bb5cab199bab9618cb790b`. Se normaliza únicamente el marcador UNK/NSS que Tauri modifica al empaquetar; cualquier otra diferencia cambia la huella.
+Huella canónica de la compilación final para instalar/publicar: `4cb7794f11735a3810b7cf250d4a05ed7f333657186d2c35e19540149bd1bd2d`. Se normaliza únicamente el marcador UNK/NSS que Tauri modifica al empaquetar; cualquier otra diferencia cambia la huella.
