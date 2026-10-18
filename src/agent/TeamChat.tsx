@@ -44,6 +44,10 @@ export function TeamChat({ chatId }: { chatId: string }) {
   const run = chat.runs.find((r) => r.id === selectedRunId) ?? chat.runs.at(-1)
   const latest = chat.runs.at(-1)
   const usage = Object.values(run?.sessionUsage ?? {}).reduce((sum, v) => ({ tokens: sum.tokens + v.tokens, costUsd: sum.costUsd + v.costUsd }), { tokens: 0, costUsd: 0 })
+  const runError = run?.error ?? ""
+  const automaticPlanRecovery = /plan debe contener entre 1 y 100 tareas|respuesta estructurada inválida/i.test(runError)
+  const budgetBlocked = /presupuesto|límite de tokens|duración máxima/i.test(runError)
+  const modelBlocked = /modelo|proveedor|variante/i.test(runError)
   const busy = !!latest && (runActive(latest.status) || latest.status === "blocked")
   const act = (action: string) => run && teamCall("team_runs_control", { runId: run.id, action })
   const submit = async () => {
@@ -51,7 +55,7 @@ export function TeamChat({ chatId }: { chatId: string }) {
     setSending(true)
     const id = await teamCall<string>("team_runs_start", { chatId, goal: text.trim() })
     setSending(false)
-    if (id) { setSelectedRunId(null); setText(""); setView("Tareas") }
+    if (id) { setSelectedRunId(null); setText(""); setView("Chat") }
   }
   return <section className="team-chat">
     <header className="team-chat-header"><div><strong><Icon name="organization" /> {chat.title}</strong><p>{chat.team.members.length} integrantes · {run ? statusLabel[run.status] : "Listo para recibir tu objetivo"}</p></div></header>
@@ -60,15 +64,15 @@ export function TeamChat({ chatId }: { chatId: string }) {
     {run && <div className="team-run-controls">
       {["planning", "running"].includes(run.status) && <button className="btn btn-xs" onClick={() => void act("pause")}>Pausar nuevas tareas</button>}
       {run.status === "paused" && <button className="btn btn-xs" onClick={() => void act("resume")}>Reanudar</button>}
-      {["blocked", "failed"].includes(run.status) && <button className="btn btn-xs" onClick={() => void act("retry")}>Reconciliar y reintentar</button>}
+      {["blocked", "failed"].includes(run.status) && <button className="btn btn-xs" onClick={() => void act("retry")}>{automaticPlanRecovery ? "Reintentar automáticamente" : "Reconciliar y reintentar"}</button>}
       {(runActive(run.status) || run.status === "blocked") && run.status !== "cancelling" && <button className="btn btn-xs" onClick={() => void confirmAction("Cancelar ejecución", "Se abortan las sesiones y se conservan los cambios ya aplicados. Revisá Git antes de continuar.", "Cancelar ejecución", true).then((yes) => { if (yes) void act("cancel") })}>Cancelar ejecución</button>}
       {run.status === "awaiting_manual_qa" && <button className="btn btn-xs" onClick={() => void act("approve")}>Aprobar QA manual</button>}
     </div>}
-    {run?.error && <div className="team-error" role="status">{run.error}</div>}
-    {run && Object.keys(run.sessionUsage ?? {}).length > 0 && <p className="team-note team-usage">Uso informado por el motor: {usage.tokens.toLocaleString()} tokens · USD {usage.costUsd.toFixed(4)}. Algunos proveedores no informan costo.</p>}
+    {run?.error && <div className="team-error" role="status">{automaticPlanRecovery ? "El Lead devolvió un plan incompleto. GuilleCode lo reparará automáticamente al reintentar." : run.error}</div>}
+    {run && Object.keys(run.sessionUsage ?? {}).length > 0 && <details className="team-usage"><summary>Uso de esta ejecución</summary><p className="team-note">{usage.tokens.toLocaleString()} tokens · USD {usage.costUsd.toFixed(4)}. Algunos proveedores no informan costo.</p></details>}
     <div className="team-chat-body">
-      {run?.status === "blocked" && <RunBudget key={run.id} run={run} />}
-      {run?.status === "blocked" && <details className="team-card"><summary>Reasignar modelos de esta ejecución</summary><p className="team-note">La configuración original del chat y los intentos anteriores se conservan. Reconciliá las sesiones antes de reintentar.</p>{run.team.members.map((a) => <label key={a.id}>{a.name} · {a.role}<select aria-label={`Modelo de ${a.name}`} value={modelKey(a.model)} onChange={(e) => {const m=models.find((v)=>modelKey(v)===e.target.value);if(m)void teamCall("team_runs_model",{runId:run.id,agentId:a.id,model:{providerID:m.providerID,modelID:m.modelID},variant:null})}}><option value={modelKey(a.model)}>{modelKey(a.model)}</option>{models.filter((m)=>modelKey(m)!==modelKey(a.model)).map((m)=><option key={modelKey(m)} value={modelKey(m)}>{m.providerName} · {m.name}</option>)}</select></label>)}</details>}
+      {run?.status === "blocked" && budgetBlocked && <RunBudget key={run.id} run={run} />}
+      {run?.status === "blocked" && modelBlocked && <details className="team-card"><summary>Cambiar el modelo que falló</summary><p className="team-note">La configuración original del chat y los intentos anteriores se conservan.</p>{run.team.members.map((a) => <label key={a.id}>{a.name} · {a.role}<select aria-label={`Modelo de ${a.name}`} value={modelKey(a.model)} onChange={(e) => {const m=models.find((v)=>modelKey(v)===e.target.value);if(m)void teamCall("team_runs_model",{runId:run.id,agentId:a.id,model:{providerID:m.providerID,modelID:m.modelID},variant:null})}}><option value={modelKey(a.model)}>{modelKey(a.model)}</option>{models.filter((m)=>modelKey(m)!==modelKey(a.model)).map((m)=><option key={modelKey(m)} value={modelKey(m)}>{m.providerName} · {m.name}</option>)}</select></label>)}</details>}
       {view === "Chat" && <>
         {!chat.runs.length && <div className="team-chat-welcome"><Icon name="organization" /><h2>Un objetivo para todo el equipo</h2><p>El Lead descubre el proyecto, delega y revisa. Vas a recibir una entrega con evidencias y QA manual pendiente.</p><p className="team-note">Solo se ejecuta con el motor local encendido. La pausa deja terminar los intentos en curso.</p></div>}
         {chat.runs.map((r, i) => <article className="team-chat-message" key={r.id}><small>Objetivo {i + 1} · {formatDateTime(r.startedAt)}</small><p className="selectable">{r.goal}</p><div className="team-lead-message"><strong>Team Lead · {statusLabel[r.status]}</strong>{r.summary ? <Markdown text={r.summary} /> : <p>{r.error ?? "La ejecución está registrada; consultá Tareas y Actividad."}</p>}{r.finishedAt && <button className="btn btn-xs" onClick={() => { setSelectedRunId(r.id); setView("Resultados / Comportamientos") }}>Ver entrega y evidencias</button>}</div></article>)}
@@ -81,6 +85,6 @@ export function TeamChat({ chatId }: { chatId: string }) {
       </>}
       {view === "Resultados / Comportamientos" && (run ? <Results key={run.id} run={run} history={chat.runs} /> : <p className="team-note">Las evidencias aparecerán al iniciar una ejecución.</p>)}
     </div>
-    {chat.archived ? <p className="team-note">Chat archivado. Restauralo desde Equipos IA para continuar.</p> : <form className="team-composer" onSubmit={(e) => { e.preventDefault(); void submit() }}><label htmlFor={`team-goal-${chatId}`}>{latest?.status === "awaiting_manual_qa" || latest?.status === "qa_approved" ? "Feedback de QA / siguiente objetivo" : "Objetivo del equipo"}</label><textarea id={`team-goal-${chatId}`} rows={3} value={text} onChange={(e) => setText(e.target.value)} placeholder="Implementen… El Lead coordina las tareas y la entrega." onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void submit() } }} /><button className="btn btn-primary" type="submit" disabled={sending || busy || !text.trim()}>{sending ? "Iniciando…" : latest?.finishedAt ? "Enviar al Lead" : "Iniciar equipo"}</button></form>}
+    {chat.archived ? <p className="team-note">Chat archivado. Restauralo desde Equipos IA para continuar.</p> : <form className="team-composer" onSubmit={(e) => { e.preventDefault(); void submit() }}><label htmlFor={`team-goal-${chatId}`}>{latest?.status === "awaiting_manual_qa" || latest?.status === "qa_approved" ? "Feedback de QA / siguiente mensaje" : "Mensaje para el equipo"}</label><textarea id={`team-goal-${chatId}`} rows={3} value={text} onChange={(e) => setText(e.target.value)} placeholder="Escribí qué querés que haga el equipo…" onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void submit() } }} /><button className="btn btn-primary" type="submit" disabled={sending || busy || !text.trim()}>{sending ? "Enviando…" : "Enviar"}</button></form>}
   </section>
 }

@@ -490,6 +490,62 @@ fn lead(r: &Run) -> Result<Employee, String> {
         .ok_or("Falta Lead".into())
 }
 
+fn fallback_plan(r: &Run, reason: &str) -> (Plan, String) {
+    let employee = r
+        .team
+        .members
+        .iter()
+        .find(|member| {
+            member
+                .tools
+                .iter()
+                .any(|tool| matches!(tool.as_str(), "edit" | "write" | "apply_patch"))
+        })
+        .or_else(|| {
+            r.team
+                .members
+                .iter()
+                .find(|member| member.id == r.team.lead_agent_id)
+        })
+        .expect("validate_team guarantees at least one Lead");
+    let task = Task {
+        id: "T1".into(),
+        title: "Resolver el objetivo del usuario".into(),
+        objective: r.goal.clone(),
+        assigned_agent_id: employee.id.clone(),
+        repository: r.team.allowed_repositories[0].clone(),
+        dependencies: vec![],
+        expected_files: vec![],
+        acceptance_criteria: vec![
+            "Completar el objetivo y ejecutar las comprobaciones pertinentes".into(),
+            "Informar cambios, resultados observados y cualquier limitación real".into(),
+        ],
+        status: "pending".into(),
+        attempts: vec![],
+        error: None,
+    };
+    (
+        Plan {
+            tasks: vec![task],
+            evidence_targets: vec![],
+        },
+        evidence::sanitize(reason),
+    )
+}
+
+fn usable_plan(text: &str, r: &Run) -> (Plan, Option<String>) {
+    match parse_json::<Plan>(text).and_then(|plan| {
+        validate_plan(&plan, &r.team)?;
+        Ok(plan)
+    }) {
+        Ok(plan) => (plan, None),
+        Err(reason) => {
+            let (plan, reason) = fallback_plan(r, &reason);
+            (plan, Some(reason))
+        }
+    }
+}
+
 fn plan(app: &AppHandle, id: &str) -> Result<(), String> {
     let mut r = run(app, id)?;
     evidence::validate_folders(&r.team.allowed_repositories)?;
@@ -525,8 +581,7 @@ fn plan(app: &AppHandle, id: &str) -> Result<(), String> {
     } else {
         execute(app, id, &client, &session, &a, &prompt, true)?
     };
-    let mut plan: Plan = parse_json(&final_text(&messages))?;
-    validate_plan(&plan, &r.team)?;
+    let (mut plan, automatic_recovery) = usable_plan(&final_text(&messages), &r);
     for t in &mut plan.tasks {
         t.status = "pending".into();
         t.attempts.clear();
@@ -534,6 +589,14 @@ fn plan(app: &AppHandle, id: &str) -> Result<(), String> {
     }
     update_run(app, id, |r| {
         r.tasks = plan.tasks;
+        if let Some(reason) = automatic_recovery {
+            r.configuration_changes.push(json!({
+                "kind": "automaticPlanRecovery",
+                "at": now(),
+                "reason": reason,
+                "result": "Se creó una tarea segura con el objetivo original"
+            }));
+        }
         if r.capture_targets.is_empty() {
             r.capture_targets = plan.evidence_targets;
         }
@@ -807,11 +870,12 @@ pub fn reconcile(app: &AppHandle, r: &Run, abort: bool) -> Result<(), String> {
                 .get(&format!("/session/{}/message", session))?;
             let text = final_text(&messages);
             if let Ok(plan) = parse_json::<Plan>(&text) {
-                validate_plan(&plan, &r.team)?;
-                update_run(app, &r.id, |r| {
-                    r.recovered_plan = Some(text);
-                    Ok(())
-                })?;
+                if validate_plan(&plan, &r.team).is_ok() {
+                    update_run(app, &r.id, |r| {
+                        r.recovered_plan = Some(text);
+                        Ok(())
+                    })?;
+                }
             }
         }
     }
@@ -1209,6 +1273,19 @@ mod tests {
         assert!(check_model_catalog(&catalog, &employee).is_err());
         employee.variant = Some("high".into());
         assert!(check_model_catalog(&catalog, &employee).is_ok());
+    }
+    #[test]
+    fn invalid_or_empty_lead_plan_becomes_one_safe_task() {
+        let team = super::super::domain::tests::team();
+        let r: Run = serde_json::from_value(json!({"id":"run","goal":"Arreglar el formulario","team":team,"skills":[],"status":"planning","startedAt":0,"finishedAt":null,"planSessionId":null,"tasks":[],"summary":"","error":null,"evidenceDir":"unused","artifacts":[],"baseline":[],"notified":false})).unwrap();
+        for response in ["texto inválido", r#"{"tasks":[]}"#] {
+            let (plan, recovery) = usable_plan(response, &r);
+            assert!(recovery.is_some());
+            assert_eq!(plan.tasks.len(), 1);
+            assert_eq!(plan.tasks[0].objective, r.goal);
+            assert_eq!(plan.tasks[0].repository, "D:/repo");
+            assert!(validate_plan(&plan, &r.team).is_ok());
+        }
     }
     #[test]
     fn scheduler_respects_dependencies_repository_locks_and_member_capacity() {

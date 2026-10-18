@@ -76,15 +76,13 @@ async function setup(page: Page) {
 async function createTeam(page: Page) {
   await page.getByRole("button", { name: "Crear equipo", exact: true }).click()
   await page.getByLabel("Nombre del equipo", { exact: true }).fill("Team Backend")
-  await page.getByRole("button", { name: "Agregar especialista", exact: true }).click()
   const members = page.locator(".team-employee")
+  await expect(members).toHaveCount(4)
   await members.nth(0).getByLabel("Modelo del integrante").selectOption("openai/lead")
   await members.nth(0).getByLabel("Variante", { exact: true }).selectOption("high")
-  await members.nth(1).getByLabel("Nombre del integrante").fill("Ana Backend")
-  await members.nth(1).getByLabel("Rol", { exact: true }).fill("Backend")
-  await members.nth(1).getByLabel("Modelo del integrante").selectOption("openai/worker")
-  await members.nth(1).getByLabel("Backend v1", { exact: true }).check()
-  await members.nth(1).getByLabel("QA v1", { exact: true }).check()
+  await members.nth(2).getByLabel("Nombre del integrante").fill("Ana Backend")
+  await members.nth(2).getByLabel("Modelo del integrante").selectOption("openai/worker")
+  await members.nth(2).getByLabel("QA v1", { exact: true }).check()
   await page.screenshot({ path: test.info().outputPath("equipo-configurado.png") })
   await page.getByRole("button", { name: "Guardar y abrir Team Chat", exact: true }).click()
   await expect(page.locator(".team-chat-header")).toContainText("Team Backend")
@@ -95,12 +93,13 @@ test("equipo con modelos distintos y skills combinables persiste; chat normal si
   await createTeam(page)
   expect(store.teams[0].members[0].model.modelID).toBe("lead")
   expect(store.teams[0].members[0].variant).toBe("high")
-  expect(store.teams[0].members[1].model.modelID).toBe("worker")
-  expect(store.teams[0].members[1].skillRefs.map((s) => s.id)).toEqual(["backend", "qa"])
+  const backend = store.teams[0].members.find((member) => member.name === "Ana Backend")!
+  expect(backend.model.modelID).toBe("worker")
+  expect(backend.skillRefs.map((s) => s.id)).toEqual(["backend", "qa"])
   await page.reload()
   await page.getByTitle("Equipos IA", { exact: true }).click()
-  await page.locator(".team-sidebar-card").first().getByRole("button", { name: "Team Backend", exact: true }).click()
-  await expect(page.locator(".team-employee").nth(1).getByLabel("Nombre del integrante")).toHaveValue("Ana Backend")
+  await page.locator(".team-sidebar-card").first().getByRole("button", { name: "Configurar", exact: true }).click()
+  await expect(page.locator(".team-employee").nth(2).getByLabel("Nombre del integrante")).toHaveValue("Ana Backend")
   await page.getByRole("button", { name: "Nuevo chat (Ctrl+Alt+N)", exact: true }).click()
   await page.getByText("Chat normal", { exact: true }).click()
   await expect(page.locator(".team-chat")).toHaveCount(0)
@@ -116,7 +115,7 @@ test("perfil Backend conserva skills extra y perfil Review quita herramientas de
   store.skills.push({ id: "security", version: 2, name: "Security", description: "Guards", instructions: "Probar autorización", verificationGuidelines: ["Casos negativos"] })
   await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
   await createTeam(page)
-  const member = page.locator(".team-employee").nth(1)
+  const member = page.locator(".team-employee").nth(2)
   await member.getByLabel("Aplicar perfil de skills").selectOption("Backend")
   await expect(member.getByLabel("Security v2", { exact: true })).toBeChecked()
   await expect(member.getByLabel("QA v1", { exact: true })).toBeChecked()
@@ -129,8 +128,8 @@ test("perfil Backend conserva skills extra y perfil Review quita herramientas de
 test("objetivo, pausa, entrega pendiente y feedback conservan revisiones en el mismo chat", async ({ page }) => {
   const { store, calls } = await setup(page)
   await createTeam(page)
-  await page.getByLabel("Objetivo del equipo").fill("Implementen usuarios y pruebas")
-  await page.getByRole("button", { name: "Iniciar equipo", exact: true }).click()
+  await page.getByLabel("Mensaje para el equipo").fill("Implementen usuarios y pruebas")
+  await page.getByLabel("Mensaje para el equipo").press("Enter")
   await expect(page.getByRole("button", { name: "Pausar nuevas tareas" })).toBeVisible()
   const approvals = await page.evaluate(async () => {
     const a = await import(/* @vite-ignore */ "/src/state/approvals.ts")
@@ -150,12 +149,31 @@ test("objetivo, pausa, entrega pendiente y feedback conservan revisiones en el m
   await page.getByRole("button", { name: "Ver evidencia", exact: true }).click()
   await expect(page.locator(".team-evidence-preview")).toContainText("Evidencia observada")
   await page.screenshot({ path: test.info().outputPath("entrega-qa-pendiente.png") })
-  await page.getByLabel("Feedback de QA / siguiente objetivo").fill("Email duplicado devuelve 500. Corríjanlo")
-  await page.getByRole("button", { name: "Enviar al Lead", exact: true }).click()
+  await page.getByLabel("Feedback de QA / siguiente mensaje").fill("Email duplicado devuelve 500. Corríjanlo")
+  await page.getByRole("button", { name: "Enviar", exact: true }).click()
   expect(store.chats).toHaveLength(1)
   expect(store.chats[0].runs).toHaveLength(2)
   expect(store.chats[0].runs[0].artifacts[0].relativePath).toBe("pruebas/log.txt")
   expect(calls.filter((c) => c.command === "team_runs_start")).toHaveLength(2)
+})
+
+test("el equipo abre como chat, envía con Enter y oculta controles técnicos irrelevantes", async ({ page }) => {
+  const { store } = await setup(page)
+  await createTeam(page)
+  await expect(page.getByLabel("Presupuesto USD")).not.toBeVisible()
+  await page.getByLabel("Mensaje para el equipo").fill("Corregí el flujo sin pedirme límites")
+  await page.getByLabel("Mensaje para el equipo").press("Enter")
+  const run = store.chats[0].runs[0]
+  run.status = "blocked"
+  run.error = "El plan debe contener entre 1 y 100 tareas"
+  run.sessionUsage = { plan: { tokens: 100, costUsd: 0 } }
+  await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
+  await expect(page.getByRole("status")).toContainText("lo reparará automáticamente")
+  await expect(page.getByRole("button", { name: "Reintentar automáticamente" })).toBeVisible()
+  await expect(page.getByText("Ajustar límites de esta ejecución")).toHaveCount(0)
+  await expect(page.getByText("Cambiar el modelo que falló")).toHaveCount(0)
+  await expect(page.getByText("Uso de esta ejecución")).toBeVisible()
+  await page.screenshot({ path: test.info().outputPath("grupo-recuperacion-automatica.png") })
 })
 
 test("comparador muestra ambos estados, desliza y conserva la ausencia de una captura", async ({ page }) => {
@@ -163,8 +181,8 @@ test("comparador muestra ambos estados, desliza y conserva la ausencia de una ca
   await page.setViewportSize({ width: 1600, height: 1600 })
   await createTeam(page)
   await page.getByTitle("Foco en el chat (Ctrl+Alt+M)", { exact: true }).click()
-  await page.getByLabel("Objetivo del equipo").fill("Mejorar el flujo visual")
-  await page.getByRole("button", { name: "Iniciar equipo", exact: true }).click()
+  await page.getByLabel("Mensaje para el equipo").fill("Mejorar el flujo visual")
+  await page.getByRole("button", { name: "Enviar", exact: true }).click()
   const run = store.chats[0].runs[0]
   run.status = "awaiting_manual_qa"
   run.summary = "Terminamos. Archivos modificados y capturas reales registradas. Queda pendiente tu QA manual."

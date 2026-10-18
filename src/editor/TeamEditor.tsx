@@ -20,9 +20,14 @@ function employee(name: string, role: string): Employee {
 }
 function blank(): Team {
   const root = useProject.getState().root ?? ""
-  const lead = employee("Team Lead", "Lead")
+  const members = [
+    employee("Team Lead", "Lead"),
+    employee("QA", "QA"),
+    employee("Backend", "Backend"),
+    employee("Frontend", "Frontend"),
+  ]
   const repos = activeWorkspace()?.repos.map((r) => r.path) ?? []
-  return { id: "", name: "Team 1", projectRoot: root, allowedRepositories: repos.length ? repos : [root], leadAgentId: lead.id, members: [lead], maxParallelTasks: 2, maxRetriesPerTask: 1, updatedAt: 0 }
+  return { id: "", name: "Team 1", projectRoot: root, allowedRepositories: repos.length ? repos : [root], leadAgentId: members[0].id, members, maxParallelTasks: 3, maxRetriesPerTask: 1, updatedAt: 0 }
 }
 
 function SkillEditor({ skill, onClose }: { skill: Skill | null; onClose: () => void }) {

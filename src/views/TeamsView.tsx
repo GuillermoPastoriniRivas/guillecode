@@ -11,6 +11,11 @@ export function TeamsView() {
   const root = useProject((s) => s.root)
   useEffect(() => startTeams(), [])
   const mine = teams.filter((t) => root && samePath(t.projectRoot, root))
+  const openTeamChat = (teamId: string) => {
+    const existing = chats.slice().reverse().find((chat) => chat.team.id === teamId && !chat.archived)
+    if (existing) selectTeamChat(existing.id)
+    else void newTeamChat(teamId)
+  }
   return <div className="view teams-view">
     <div className="view-header"><span className="view-title">Equipos IA</span><IconButton icon="add" title="Crear equipo" onClick={() => openTeam()} /></div>
     {error && <p className="team-error">{error}</p>}
@@ -22,9 +27,9 @@ export function TeamsView() {
         { label: "Duplicar", icon: "copy", run: () => void duplicateTeam(t) },
         { label: "Eliminar plantilla", icon: "trash", danger: true, run: () => void deleteTeam(t) },
       ])}>
-        <button className="team-link" onClick={() => openTeam(t.id)}><Icon name="organization" /> <strong>{t.name}</strong></button>
+        <button className="team-link" onClick={() => openTeamChat(t.id)}><Icon name="organization" /> <strong>{t.name}</strong></button>
         <p>{t.members.length} integrantes · {t.members.map((m) => m.role).join(", ")}</p>
-        <button className="btn btn-xs" onClick={() => void newTeamChat(t.id)}>Iniciar conversación</button>
+        <div className="team-actions"><button className="btn btn-xs" onClick={() => openTeamChat(t.id)}>Abrir chat</button><button className="btn btn-xs" onClick={() => openTeam(t.id)}>Configurar</button></div>
       </article>)}
       <h3>Historial de Team Chats</h3>
       {chats.filter((c) => root && samePath(c.team.projectRoot, root)).slice().reverse().map((c) => <article className="team-sidebar-card" key={c.id}>

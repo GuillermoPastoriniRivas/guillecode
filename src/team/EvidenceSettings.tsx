@@ -19,11 +19,11 @@ export function EvidenceSettings({ team, update }: { team: Team; update: (patch:
         <div className="team-actions"><button className="btn btn-xs" onClick={() => patch(t.id, { actions: [...t.actions, { kind: "wait", selector: "main" }] })}>Agregar paso</button><button className="btn btn-xs" onClick={() => update({ evidenceTargets: targets.filter((v) => v.id !== t.id) })}>Quitar flujo</button></div>
       </div>)}
     </section>
-    <section className="team-card"><h3>Límites opcionales</h3><p className="team-note">Dejá vacío lo que no quieras limitar. El uso se obtiene del motor; algunos proveedores no informan costo. El tiempo incluye pausas y cierres. La retención conserva las entregas pendientes de QA.</p><div className="team-form-grid">
+    <details className="team-card"><summary>Opciones avanzadas de límites (opcional)</summary><p className="team-note">No necesitás completar nada para usar el equipo. Dejá vacío lo que no quieras limitar. El tiempo incluye pausas y cierres.</p><div className="team-form-grid">
       <label>Duración máxima (minutos)<input type="number" min={1} max={1440} value={team.limits?.maxRunMinutes ?? ""} onChange={(e) => limit("maxRunMinutes", e.target.value)} /></label>
       <label>Presupuesto USD<input type="number" min={0.01} step={0.01} value={team.limits?.maxCostUsd ?? ""} onChange={(e) => limit("maxCostUsd", e.target.value)} /></label>
       <label>Límite de tokens<input type="number" min={1} value={team.limits?.maxTokens ?? ""} onChange={(e) => limit("maxTokens", e.target.value)} /></label>
       <label>Retener evidencias (días)<input type="number" min={1} max={3650} value={team.limits?.retentionDays ?? ""} onChange={(e) => limit("retentionDays", e.target.value)} /></label>
-    </div></section>
+    </div></details>
   </>
 }

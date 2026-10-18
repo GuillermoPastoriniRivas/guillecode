@@ -27,4 +27,4 @@ Los respaldos y claves permanecen en esta PC. No forman parte de la release ni d
 
 `976740f` incorpora Equipos IA; `cebdccd` integra la base upstream 0.14.0. `codex/equipos-ia-pre-0.14.0` conserva el estado previo. La 0.14.0 local bloqueaba por completo descargar/instalar desde el updater porque todavía no existía el canal propio. La 0.14.1 habilita nuestro endpoint firmado y mantiene la protección frente al endpoint original.
 
-La validación actual se registra en [validacion-0.14.1.md](validacion-0.14.1.md). Las pruebas controladas no sustituyen el QA manual del usuario.
+La 0.14.2 simplifica Equipos IA como conversación, agrega el equipo predeterminado Lead/QA/Backend/Frontend y recupera automáticamente planes vacíos o inválidos. La validación actual se registra en [validacion-0.14.2.md](validacion-0.14.2.md). Las pruebas controladas no sustituyen el QA manual del usuario.
