@@ -1213,7 +1213,7 @@ fn schedule(app: &AppHandle, id: &str) -> Result<(), String> {
                 }
                 attempt_update(app, id, &task_id, |t, a| {
                     t.status = "blocked".into();
-                    t.error = Some(evidence::sanitize(&error));
+                    t.error = Some(super::errors::message(&json!(error)));
                     a.status = "blocked".into();
                     a.error = t.error.clone();
                     if settled {

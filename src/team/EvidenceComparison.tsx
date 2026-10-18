@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { call, errorMessage } from "../lib/tauri"
+import { readableTeamError } from "../lib/provider-error"
 import type { Observation, TeamRun } from "./types"
 import { formatDateTime } from "../lib/time"
 
@@ -11,14 +12,14 @@ function useCapture(runId: string, observation: Observation | undefined): { url?
     if (observation?.status !== "captured" || !observation.artifactPath) return
     void call<{ mime: string; data: string }>("team_evidence_image", { runId, path: observation.artifactPath }).then((r) => {
       if (!disposed) setState({ key, url: `data:${r.mime};base64,${r.data}` })
-    }).catch((e) => { if (!disposed) setState({ key, error: errorMessage(e) }) })
+    }).catch((e) => { if (!disposed) setState({ key, error: readableTeamError(errorMessage(e)) }) })
     return () => { disposed = true }
   }, [key, runId, observation?.id, observation?.artifactPath, observation?.status])
   return state.key === key ? state : {}
 }
 
 function Missing({ observation }: { observation?: Observation }) {
-  return <p className="team-note">{observation?.status === "captured" ? "Cargando captura verificada…" : observation?.details.reason ?? "No existe una captura verificada de este estado. Consultá el reporte de ausencia."}</p>
+  return <p className="team-note">{observation?.status === "captured" ? "Cargando captura verificada…" : observation?.details.reason ? readableTeamError(observation.details.reason) : "No existe una captura verificada de este estado. Consultá el reporte de ausencia."}</p>
 }
 
 function ImagePreview({ url, label, close }: { url: string; label: string; close: () => void }) {

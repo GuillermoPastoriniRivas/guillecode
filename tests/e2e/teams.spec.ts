@@ -188,7 +188,7 @@ test("los errores guardados del proveedor son legibles en chat, tareas y activid
   await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
   for (const view of ["Chat", "Tareas", "Actividad"]) {
     await page.getByRole("button", { name: view, exact: true }).click()
-    await expect(page.locator(".team-chat")).toContainText("Alcanzaste el límite de uso de tu cuenta")
+    await expect(page.locator(".team-chat")).toContainText("alcanzó su límite de uso")
     await expect(page.locator(".team-chat")).not.toContainText("responseHeaders")
     await expect(page.locator(".team-chat")).not.toContainText("PRIVATE-")
     const banner = await page.locator(".team-chat > .team-error").boundingBox()
@@ -196,6 +196,13 @@ test("los errores guardados del proveedor son legibles en chat, tareas y activid
   }
   await page.getByRole("button", { name: "Chat", exact: true }).click()
   await expect(page.getByText("Ajustar límites de esta ejecución")).toHaveCount(0)
+  run.error = "fatal: not a git repository (or any of the parent directories): .git"
+  await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
+  await expect(page.locator(".team-chat > .team-error")).toContainText("Eso no impide trabajar en esa carpeta")
+  await expect(page.locator(".team-chat > .team-error")).not.toContainText("fatal:")
+  run.error = "Falta una comprobación satisfactoria observada para cada comando declarado."
+  await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
+  await expect(page.locator(".team-chat > .team-error")).toContainText("No pudimos confirmar que las comprobaciones informadas se hayan ejecutado y pasado")
   await page.screenshot({ path: test.info().outputPath("error-proveedor-legible.png") })
 })
 

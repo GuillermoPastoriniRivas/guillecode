@@ -1,13 +1,13 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { readableProviderError, isAccountLimitError } from "../src/lib/provider-error.ts"
+import { readableProviderError, readableTeamError, isAccountLimitError } from "../src/lib/provider-error.ts"
 import { providerErrorMessage, isRetryableProviderError } from "../src/lib/autoretry.ts"
 
 test("un error de cuota anidado no expone cuerpo, cabeceras ni tokens", () => {
   const error = { name: "APIError", data: { message: "HTTP 429", isRetryable: true, responseBody: JSON.stringify({ error: { type: "usage_limit_reached", message: "The usage limit has been reached" } }), responseHeaders: { "set-cookie": "private-session", "x-codex-turn-state": "private-state" } } }
   for (const value of [error, JSON.stringify(error), new Error(JSON.stringify(error))]) {
     const text = readableProviderError(value)
-    assert.match(text, /límite de uso de tu cuenta/)
+    assert.match(text, /alcanzó su límite de uso/)
     assert.match(text, /Tus cambios se conservan/)
     assert.doesNotMatch(text, /private|responseBody|responseHeaders|HTTP|429/)
     assert.ok(text.length < 250)
@@ -20,14 +20,23 @@ test("un error de cuota anidado no expone cuerpo, cabeceras ni tokens", () => {
 test("errores desconocidos o JSON malformado producen texto breve y seguro", () => {
   for (const value of ['{"data":{"responseHeaders":', { data: { responseHeaders: { cookie: "private" } } }, { data: { message: "Authorization: Bearer private-token" } }]) {
     const text = readableProviderError(value)
-    assert.match(text, /No se pudo completar/)
+    assert.match(text, /no pudo completar la respuesta/)
     assert.doesNotMatch(text, /private|responseHeaders|Bearer/)
   }
   assert.equal(readableProviderError("El modelo de Backend no está disponible"), "El modelo de Backend no está disponible")
-  assert.equal(readableProviderError("x ".repeat(1000)).length, 400)
+  assert.ok(readableProviderError("x ".repeat(1000)).length < 250)
 })
 
 test("autenticación y modelo reciben instrucciones concretas", () => {
   assert.match(readableProviderError({ data: { responseBody: '{"error":{"code":"invalid_api_key"}}' } }), /volver a conectarse/)
   assert.match(readableProviderError({ data: { message: "model_not_found" } }), /Elegí otro modelo/)
+  assert.match(readableProviderError({ data: { message: "The upstream request failed unexpectedly" } }), /proveedor de IA no pudo completar/i)
+})
+
+test("mensajes de equipos explican la causa y el siguiente paso sin mostrar errores crudos", () => {
+  assert.match(readableTeamError("fatal: not a git repository (or any of the parent directories): .git"), /Git.*no tiene un repositorio Git.*no impide trabajar/i)
+  assert.match(readableTeamError("Falta una comprobación satisfactoria observada para cada comando declarado."), /no pudimos confirmar.*ejecutado y pasado.*Actividad.*reintentá/i)
+  assert.match(readableTeamError("El plan debe contener entre 1 y 100 tareas"), /Lead.*plan de trabajo válido.*reintentá/i)
+  assert.match(readableTeamError('{"error":{"code":"ECONNREFUSED","responseHeaders":{"authorization":"private"}}}'), /conexión|proveedor/i)
+  assert.doesNotMatch(readableTeamError('{"error":{"code":"ECONNREFUSED","responseHeaders":{"authorization":"private"}}}'), /ECONNREFUSED|authorization|private/)
 })

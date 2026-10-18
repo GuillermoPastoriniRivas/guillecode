@@ -30,3 +30,5 @@ Los respaldos y claves permanecen en esta PC. No forman parte de la release ni d
 La 0.14.2 simplifica Equipos IA como conversación, agrega el equipo predeterminado Lead/QA/Backend/Frontend y recupera automáticamente planes vacíos o inválidos. La validación actual se registra en [validacion-0.14.2.md](validacion-0.14.2.md). Las pruebas controladas no sustituyen el QA manual del usuario.
 
 La 0.14.3 permite trabajos simultáneos dentro de la misma carpeta con archivos asignados, pedidos entre agentes revisados por el Lead y continuación durable de la misma sesión. Ver [validacion-0.14.3.md](validacion-0.14.3.md).
+
+La 0.14.4 explica en lenguaje claro los errores guardados como JSON, las cuotas y modelos del proveedor, las carpetas sin Git y las comprobaciones que no se pudieron confirmar. Los mensajes indican la causa conocida y el paso para continuar. Ver [validacion-0.14.4.md](validacion-0.14.4.md).
