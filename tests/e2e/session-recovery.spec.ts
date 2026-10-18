@@ -6,7 +6,7 @@ const root = "C:/qa/recovery"
 const sessionID = "s-recovery"
 const now = Date.now()
 const userID = "m-user"
-const errorText = "Service Unavailable: upstream connect error or disconnect/reset before headers. reset reason: remote connection failure"
+const errorText = "El proveedor de IA está ocupado o temporalmente fuera de servicio. Esperá un momento y reintentá; tus cambios se conservan."
 
 function messages(failed = false) {
   return [
@@ -192,8 +192,9 @@ test("el límite de cuenta muestra una explicación breve y no ofrece compactar"
   state.history[1].info.error = { name: "APIError", data: { message: "The usage limit has been reached", statusCode: 429, isRetryable: true, responseBody: JSON.stringify({ error: { type: "usage_limit_reached" } }) } }
   await page.evaluate((sid) => (window as unknown as { __qaPush: (event: unknown) => void }).__qaPush({ type: "session.status", properties: { sessionID: sid, status: { type: "idle" } } }), sessionID)
   const error = page.locator(".msg-error")
-  await expect(error).toContainText("Alcanzaste el límite de uso de tu cuenta")
+  await expect(error).toContainText("La cuenta o el proveedor alcanzó su límite de uso")
   await expect(error).not.toContainText("usage_limit_reached")
+  await expect(error).not.toContainText("The usage limit")
   await expect(error.getByRole("button", { name: "Compactar y continuar" })).toHaveCount(0)
   expect(state.summaries).toBe(0)
   expect(state.prompts).toHaveLength(0)
@@ -299,6 +300,7 @@ test("reconcilia reintentos perdidos y ofrece Compactar y continuar en la misma 
   state.status = {}
   await expect(page.locator(".retry-banner")).toHaveCount(0, { timeout: 10000 })
   await expect(page.locator(".msg-error")).toContainText(errorText)
+  await expect(page.locator(".msg-error")).not.toContainText("Service Unavailable")
   await page.locator(".msg-error").getByRole("button", { name: "Compactar y continuar" }).click()
   await expect.poll(() => state.prompts.length).toBe(1)
   expect(state.summaries).toBe(1)
@@ -318,6 +320,7 @@ test("verifica herramientas con el historial actual y la recuperación continúa
   failed.parts = [{ type: "tool", id: "p-edit", messageID: failed.info.id, sessionID, callID: "c-edit", tool: "apply_patch", state: { status: "completed", input: {}, output: "Archivo editado", title: "Edit", metadata: {}, time: { start: now, end: now + 1 } } }]
   await page.evaluate((info) => (window as unknown as { __qaPush: (event: unknown) => void }).__qaPush({ type: "message.updated", properties: { info } }), failed.info)
   await expect(page.locator(".msg-error")).toContainText(errorText)
+  await expect(page.locator(".msg-error")).not.toContainText("Service Unavailable")
   expect(state.prompts.length).toBe(0)
   await page.locator(".msg-error").getByRole("button", { name: "Compactar y continuar" }).click()
   await expect.poll(() => state.prompts.length).toBe(1)

@@ -9,7 +9,7 @@ Validación local:
 - `npm test`: 52 pruebas correctas.
 - `npm run build`: compilación TypeScript y frontend correcta.
 - `npm run lint`: correcto, con advertencias existentes del repositorio.
-- `npx playwright test tests/e2e/teams.spec.ts -g "los errores guardados del proveedor"`: correcto; comprueba Chat, Tareas y Actividad, más los errores de Git y verificaciones.
+- `npx playwright test tests/e2e/session-recovery.spec.ts tests/e2e/teams.spec.ts`: 21 pruebas correctas; cubre chat normal, Chat/Tareas/Actividad y errores de Git y verificaciones.
 - `cargo test --manifest-path src-tauri/Cargo.toml --release --locked --lib`: 110 correctas, 4 ignoradas.
 - `cargo test --manifest-path src-tauri/Cargo.toml --release --locked --lib teams::errors::tests`: 3 correctas con las traducciones finales.
 
