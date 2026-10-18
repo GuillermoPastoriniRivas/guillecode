@@ -39,12 +39,13 @@ const mock = createServer(async (request, response) => {
   const body = JSON.parse(raw)
   models.add(body.model)
   const text = JSON.stringify(body.input)
+  const latestUserPrompt = JSON.stringify([...body.input].reverse().find((item) => item.role === "user") ?? body.input.at(-1) ?? "")
   let item
   const message = (value) => ({ type: "message", id: `msg-${Date.now()}`, role: "assistant", content: [{ type: "output_text", text: JSON.stringify(value), annotations: [] }], status: "completed" })
   if (["qa-lead", "qa-invalid-review"].includes(body.model)) {
-    if (text.includes("Sos el Lead de cierre")) {
+    if (latestUserPrompt.includes("Sos el Lead de cierre")) {
       item = message({status:"approved",summary:"Objetivo completo y comandos observados verificados",criteriaSatisfied:true,tasks:[]})
-    } else if (text.includes("Sos el Lead revisor")) {
+    } else if (latestUserPrompt.includes("Sos el Lead revisor")) {
       reviews++
       item = body.model === "qa-invalid-review" ? message({status:"invalid"}) : message({ status: reviews === 1 ? "changes_requested" : "approved", summary: reviews === 1 ? "Corregir backend: la versión debe ser 2" : "Criterios y comprobación satisfechos", criteriaSatisfied: reviews !== 1 })
     } else {
