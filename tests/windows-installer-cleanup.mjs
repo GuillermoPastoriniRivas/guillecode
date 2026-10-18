@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
-import { copyFileSync, mkdirSync, mkdtempSync, openSync, closeSync, rmSync, writeFileSync } from "node:fs"
+import { copyFileSync, mkdirSync, mkdtempSync, openSync, closeSync, rmSync, writeFileSync, symlinkSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { tmpdir } from "node:os"
 import { once } from "node:events"
@@ -32,8 +32,12 @@ try {
   }
   await delay(500)
   assert.throws(() => openSync(join(installed, "opencode.exe"), "r+"), "Windows debe bloquear el ejecutable en uso")
+  // CI's TEMP can use RUNNER~1 while Win32_Process returns the long path.
+  // A junction reproduces two names for the same installation on any NTFS host.
+  const alias = join(dir, "installation-alias")
+  symlinkSync(installed, alias, "junction")
   const targetExit = once(children[0], "exit")
-  const result = await cleanup(installed)
+  const result = await cleanup(alias)
   assert.equal(result.code, 0, result.stderr)
   await Promise.race([targetExit, delay(5000).then(() => { throw new Error("El motor no terminó") })])
   assert.equal(children[1].exitCode, null, "El motor de otra instalación debe seguir abierto")
@@ -43,14 +47,18 @@ try {
   // The hook must fail rather than let NSIS skip the engine silently.
   const blockerScript = join(dir, "block.ps1")
   writeFileSync(blockerScript, '$file = [IO.File]::Open($env:GC_LOCK_FILE, "Open", "ReadWrite", "None"); [Console]::WriteLine("locked"); Start-Sleep -Seconds 30; $file.Dispose()')
-  const blocker = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-File", blockerScript], {
+  const blocker = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", blockerScript], {
     windowsHide: true, stdio: "pipe", env: { ...process.env, GC_LOCK_FILE: join(installed, "opencode.exe") },
   })
   children.push(blocker)
-  await once(blocker.stdout, "data")
+  await Promise.race([
+    once(blocker.stdout, "data"),
+    once(blocker, "exit").then(([code]) => { throw new Error(`El fixture de bloqueo terminó antes de abrir el archivo (${code})`) }),
+    delay(10000).then(() => { throw new Error("El fixture de bloqueo no inició") }),
+  ])
   const blocked = await cleanup(installed)
   assert.equal(blocked.code, 1, "No debe continuar la instalación si el archivo sigue bloqueado")
-  console.log("INSTALLER CLEANUP PASS: motor y árbol cerrados; rutas con espacios/apóstrofes/acentos; otros motores conservados; archivo aún bloqueado rechaza instalación")
+  console.log("INSTALLER CLEANUP PASS: motor y árbol cerrados; alias y rutas con espacios/apóstrofes/acentos; otros motores conservados; archivo aún bloqueado rechaza instalación")
 } finally {
   for (const child of children) {
     if (child.exitCode !== null) continue

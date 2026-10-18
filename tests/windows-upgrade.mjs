@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { spawn, execFileSync } from "node:child_process"
 import { createServer } from "node:http"
 import { createServer as createTcpServer } from "node:net"
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, existsSync, readdirSync, rmSync, createReadStream } from "node:fs"
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, existsSync, readdirSync, rmSync, createReadStream, realpathSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { tmpdir } from "node:os"
 import { chromium } from "@playwright/test"
@@ -15,7 +15,7 @@ mkdirSync(join(tmpdir(), "opencode"), { recursive: true })
 // A failed run retains its disposable fixtures. GC_UPGRADE_FIXTURE can retry
 // their runtime checks without rebuilding, provided application code is unchanged.
 const reuse = process.env.GC_UPGRADE_FIXTURE
-const dir = reuse ? resolve(reuse) : mkdtempSync(join(tmpdir(), "opencode", "guillecode-upgrade-"))
+const dir = realpathSync(reuse ? resolve(reuse) : mkdtempSync(join(tmpdir(), "opencode", "guillecode-upgrade-")))
 const fixture = reuse ? JSON.parse(readFileSync(join(dir, "fixture.json"), "utf8")) : null
 const buildOnly = process.argv.includes("--build-only")
 const identifier = fixture?.identifier ?? `com.guillecode.upgrade-test-${Date.now()}`

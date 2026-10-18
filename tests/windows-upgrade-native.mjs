@@ -2,14 +2,14 @@ import assert from "node:assert/strict"
 import { spawn, execFileSync } from "node:child_process"
 import { createServer } from "node:net"
 import { randomUUID } from "node:crypto"
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, realpathSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { once } from "node:events"
 
 // Run against signed QA fixtures produced by windows-upgrade.mjs. This checks
 // NSIS replacement/relaunch without CDP; it does NOT exercise the in-app updater.
 if (process.platform !== "win32" || !process.argv[2]) throw new Error("Uso: node tests/windows-upgrade-native.mjs carpeta-de-fixtures-QA")
-const dir = resolve(process.argv[2])
+const dir = realpathSync(resolve(process.argv[2]))
 const fixture = JSON.parse(readFileSync(join(dir, "fixture.json"), "utf8"))
 const { identifier } = fixture
 assert.match(identifier, /^com\.guillecode\.upgrade-test-\d+$/)
