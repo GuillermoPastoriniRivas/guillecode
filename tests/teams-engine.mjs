@@ -40,12 +40,17 @@ const mock = createServer(async (request, response) => {
   models.add(body.model)
   const text = JSON.stringify(body.input)
   const latestUserPrompt = JSON.stringify([...body.input].reverse().find((item) => item.role === "user") ?? body.input.at(-1) ?? "")
+  const leadPhase = [
+    ["plan", "Actuás como Team Lead."],
+    ["review", "Sos el Lead revisor"],
+    ["closeout", "Sos el Lead de cierre"],
+  ].map(([phase, marker]) => [phase, latestUserPrompt.indexOf(marker)]).filter(([, index]) => index >= 0).sort((a, b) => a[1] - b[1])[0]?.[0]
   let item
   const message = (value) => ({ type: "message", id: `msg-${Date.now()}`, role: "assistant", content: [{ type: "output_text", text: JSON.stringify(value), annotations: [] }], status: "completed" })
   if (["qa-lead", "qa-invalid-review"].includes(body.model)) {
-    if (latestUserPrompt.includes("Sos el Lead de cierre")) {
+    if (leadPhase === "closeout") {
       item = message({status:"approved",summary:"Objetivo completo y comandos observados verificados",criteriaSatisfied:true,tasks:[]})
-    } else if (latestUserPrompt.includes("Sos el Lead revisor")) {
+    } else if (leadPhase === "review") {
       reviews++
       item = body.model === "qa-invalid-review" ? message({status:"invalid"}) : message({ status: reviews === 1 ? "changes_requested" : "approved", summary: reviews === 1 ? "Corregir backend: la versión debe ser 2" : "Criterios y comprobación satisfechos", criteriaSatisfied: reviews !== 1 })
     } else {
