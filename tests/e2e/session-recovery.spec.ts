@@ -122,6 +122,10 @@ async function setup(page: Page, restart = false) {
     return route.fulfill({ json: [] })
   })
   await page.goto("/")
+  // Status can render before the initial history/stream subscription settles.
+  // Inject recovery events only after the original conversation is visible.
+  await expect(page.locator(".msg-user")).toContainText("Continuá con el trabajo pendiente")
+  await expect(page.locator(".retry-banner")).toContainText("Reintentando (1)")
   return state
 }
 
