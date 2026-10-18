@@ -149,6 +149,7 @@ fn native_team_end_to_end() {
             assert!(before["artifacts"].as_array().unwrap().len() > 5);
             assert!(result.notified);
             if !team.evidence_targets.is_empty() {
+                assert!(result.observations.iter().any(|o| o.phase == "before" && o.status == "captured"), "real before screenshot missing: {:?}", result.observations);
                 let before = result
                     .observations
                     .iter()
@@ -319,7 +320,12 @@ fn native_team_end_to_end() {
             control(&handle, &limited_run, "retry").unwrap();
             let blocked = wait_for_run(&limited_run);
             assert_eq!(blocked.status, "blocked");
-            assert!(blocked.tasks.iter().all(|t| t.status == "completed"));
+            assert!(blocked.tasks.iter().all(|t| t.attempts.is_empty()), "required before capture must block every worker");
+            std::fs::write(std::path::Path::new(&repo).join("capture-before-ready.flag"), "ready").unwrap();
+            control(&handle, &limited_run, "retry").unwrap();
+            let blocked = wait_for_run(&limited_run);
+            assert_eq!(blocked.status, "blocked");
+            assert!(blocked.tasks.iter().all(|t| t.status == "completed"), "after capture failure must preserve completed workers");
             assert!(!blocked.notified);
             assert!(blocked
                 .error

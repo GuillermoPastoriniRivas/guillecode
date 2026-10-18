@@ -29,7 +29,12 @@ const mock = createServer(async (request, response) => {
   let raw = ""
   for await (const chunk of request) raw += chunk
   if(request.url==='/capture-recovery'){
-    try{await readFile(join(repo,'capture-ready.flag'))}catch{response.writeHead(404,{'Content-Type':'text/html; charset=utf-8'});return response.end('<h1>Aplicación aún no disponible</h1>')}
+    let available=false
+    try{await readFile(join(repo,'capture-ready.flag'));available=true}catch{
+      try{await readFile(join(repo,'capture-before-ready.flag'));available=true}catch{}
+      try{await readFile(join(repo,'capture-after-failure.flag'));available=false}catch{}
+    }
+    if(!available){response.writeHead(404,{'Content-Type':'text/html; charset=utf-8'});return response.end('<h1>Aplicación aún no disponible</h1>')}
   }
   if(request.url==='/app'||request.url==='/capture-recovery'){
     const content=await Promise.all(['backend','frontend'].map(async(role)=>{try{return await readFile(join(repo,`${role}.txt`),'utf8')}catch{return 'todavía ausente'}}))
@@ -58,6 +63,7 @@ const mock = createServer(async (request, response) => {
       item = message({ tasks: ["backend", "frontend"].map((role) => ({ id: role, title: `Crear ${role}`, objective: `Crear ${role}.txt con versión 2`, assignedAgentId: role, repository: repo, dependencies: [], expectedFiles: [`${role}.txt`], acceptanceCriteria: ["Archivo con versión 2", "Comprobación ejecutada"] })) })
     }
   } else {
+    if(text.includes('Presupuesto y recuperación de evidencia obligatoria'))await writeFile(join(repo,'capture-after-failure.flag'),'after must recover')
     const role = body.model === "qa-backend" ? "backend" : "frontend"
     const outputs = body.input.filter((i) => i.type === "function_call_output")
     if (outputs.length >= 3) item = message({ status: "completed", summary: `Implementado ${role}; comprobación ejecutada`, checks: [commands[role]], limitations: [] })

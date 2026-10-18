@@ -55,6 +55,7 @@ async function capture(config) {
     const { sessionId } = await send('Target.attachToTarget', { targetId: created.targetId, flatten: true })
     const cdp = (method, params) => send(method, params, sessionId)
     await cdp('Page.enable')
+    await cdp('Page.setLifecycleEventsEnabled', { enabled: true })
     await cdp('Runtime.enable')
     await cdp('Network.enable')
     await cdp('Fetch.enable', { patterns: [{ urlPattern: '*', requestStage: 'Request' }] })
@@ -66,8 +67,24 @@ async function capture(config) {
       if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description?.slice(0, 500) || 'El flujo de captura falló')
       return r.result.value
     }
+    // Runtime.evaluate immediately after navigate can run in about:blank's
+    // context, which is destroyed by the navigation. Wait for this loader's
+    // load event, including events delivered before the navigate response.
+    const loaded = new Set()
+    const onLifecycle = ({ data }) => {
+      const event = JSON.parse(data)
+      if (event.sessionId === sessionId && event.method === 'Page.lifecycleEvent' && event.params.name === 'load') loaded.add(event.params.loaderId)
+    }
+    socket.addEventListener('message', onLifecycle)
     const nav = await cdp('Page.navigate', { url: wanted.href })
     if (nav.errorText) throw new Error(`La aplicación no respondió: ${nav.errorText}`)
+    const navigationStarted = Date.now()
+    while (nav.loaderId && !loaded.has(nav.loaderId)) {
+      if (Date.now() - navigationStarted > 15000) throw new Error('La aplicación no terminó de cargar el documento solicitado')
+      await new Promise((done) => setTimeout(done, 50))
+    }
+    socket.removeEventListener('message', onLifecycle)
+    if (httpStatus >= 400) throw new Error(`La aplicación local respondió HTTP ${httpStatus}; no se presenta como una captura del flujo funcionando`)
     await evaluate(async ({ selector, expectedOrigin }) => {
       const start = Date.now()
       while (location.origin!==expectedOrigin || document.readyState !== 'complete' || (selector && !document.querySelector(selector))) {

@@ -218,9 +218,9 @@ pub fn collect(run: &mut Run, phase: &str) -> Result<(), String> {
         if !run.observations.iter().any(|o| {
             o.target_id == target.id
                 && o.phase == phase
+                && o.status == "captured"
                 && (phase == "before"
-                    || (o.status == "captured"
-                        && o.details["revision"].as_u64() == Some(revision as u64)))
+                    || o.details["revision"].as_u64() == Some(revision as u64))
         }) {
             capture_target(run, &target, phase)?;
         }

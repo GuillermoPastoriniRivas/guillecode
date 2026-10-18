@@ -12,6 +12,7 @@ Fecha: 18 de octubre de 2026.
 - La reconciliación ignora planes persistidos inválidos y puede volver a planificar sin bloquearse con «1 a 100 tareas».
 - Los errores de cuota, conexión o autenticación se muestran como mensajes breves. Los errores JSON guardados previamente también se presentan sin cabeceras, cookies ni datos de transporte en Chat, Tareas y Actividad.
 - Un límite de uso de la cuenta no ofrece compactar el historial como solución. El cambio de modelo queda disponible para elegir otra cuenta o proveedor.
+- La captura espera la carga del documento solicitado. Un flujo obligatorio que falla antes de comenzar bloquea las escrituras; puede reintentarse y conserva el registro de la captura fallida. Los errores HTTP no se presentan como un flujo capturado correctamente.
 
 ## Evidencia y pruebas
 

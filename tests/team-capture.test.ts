@@ -18,7 +18,10 @@ test("isolated browser captures real before/after PNGs, executes steps and masks
   const browser = ["C:/Program Files/Google/Chrome/Application/chrome.exe", "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"].find(existsSync)
   assert.ok(browser, "Install Chrome/Edge to run the real visual evidence test")
   let after = false
-  const server = createServer((_request, response) => {
+  const server = createServer(async (_request, response) => {
+    // A cold navigation must finish in its new document before evaluation.
+    await new Promise((done) => setTimeout(done, 200))
+    if (_request.url === "/missing") response.statusCode = 404
     response.setHeader("Content-Type", "text/html; charset=utf-8")
     response.end(`<!doctype html><title>Flujo de evidencia</title><style>body{font:24px system-ui;background:${after ? "#142c24" : "#291b22"};color:white;padding:40px}main{max-width:700px}</style><main><h1>${after ? "Módulo implementado" : "Módulo todavía ausente"}</h1><input id="name"><button id="submit" onclick="document.getElementById('result').textContent=document.getElementById('name').value">Comprobar</button><p id="result"></p><p data-private>PRIVATE TEST VALUE</p></main>`)
   })
@@ -26,16 +29,23 @@ test("isolated browser captures real before/after PNGs, executes steps and masks
   const address = server.address()
   assert.ok(address && typeof address !== "string")
   const dir = await mkdtemp(join(tmpdir(), "team-evidence-test-"))
-  const capture = async (name: string) => {
+  const capture = async (name: string, missing = false) => {
     const output = join(dir, name + ".png")
     const child = spawn(process.execPath, [resolve("src-tauri/src/teams/capture.mjs")], { windowsHide: true, stdio: "pipe" })
     let raw = "", errors = ""
     child.stdout.on("data", (b) => { raw += b })
     child.stderr.on("data", (b) => { errors += b })
-    child.stdin.end(JSON.stringify({ browser, output, target: { url: `http://127.0.0.1:${address.port}/app`, width: 960, height: 640, actions: [{ kind: "fill", selector: "#name", value: "private@example.test" }, { kind: "click", selector: "#submit" }, { kind: "wait", selector: "#result" }], maskSelectors: [] } }))
+    child.stdin.end(JSON.stringify({ browser, output, target: { url: `http://127.0.0.1:${address.port}/${missing ? "missing" : "app"}`, width: 960, height: 640, actions: [{ kind: "fill", selector: "#name", value: "private@example.test" }, { kind: "click", selector: "#submit" }, { kind: "wait", selector: "#result" }], maskSelectors: [] } }))
     const code = await new Promise((done) => child.once("exit", done))
-    assert.equal(code, 0, raw + errors)
     const report = JSON.parse(raw)
+    if (missing) {
+      assert.equal(code, 1)
+      assert.equal(report.status, "unavailable")
+      assert.match(report.reason, /HTTP 404/)
+      await assert.rejects(readFile(output), { code: "ENOENT" })
+      return { hash: "", report }
+    }
+    assert.equal(code, 0, raw + errors)
     assert.equal(report.status, "captured")
     assert.equal(report.steps.length, 3)
     assert.equal(report.httpStatus, 200)
@@ -53,6 +63,7 @@ test("isolated browser captures real before/after PNGs, executes steps and masks
     after = true
     const end = await capture("after")
     assert.notEqual(before.hash, end.hash)
+    await capture("missing", true)
     assert.ok(before.report.text.includes("todavía ausente"))
     assert.ok(end.report.text.includes("implementado"))
   } finally {

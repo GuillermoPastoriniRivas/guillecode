@@ -615,19 +615,19 @@ fn collect_captures(app: &AppHandle, id: &str, phase: &str) -> Result<(), String
         current.observations = r.observations;
         Ok(())
     })?;
-    if phase == "after" {
+    if phase == "before" || phase == "after" {
         for target in r.capture_targets.iter().filter(|t| t.required) {
             if !run(app, id)?
                 .observations
                 .iter()
                 .rev()
-                .find(|o| o.phase == "after" && o.target_id == target.id)
+                .find(|o| o.phase == phase && o.target_id == target.id)
                 .map(|o| o.status == "captured")
                 .unwrap_or(false)
             {
                 return Err(format!(
-                    "No se capturó el flujo obligatorio {}. Iniciá la aplicación local y reintentá",
-                    target.name
+                    "No se capturó el flujo obligatorio {} {} del trabajo. Iniciá la aplicación local y reintentá",
+                    target.name, if phase == "before" { "antes" } else { "después" }
                 ));
             }
         }
