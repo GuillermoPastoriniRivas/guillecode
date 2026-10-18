@@ -18,6 +18,7 @@ Fecha: 18 de octubre de 2026.
 
 - `npm test`: 51 pruebas aprobadas.
 - `cargo test --manifest-path src-tauri/Cargo.toml --release --lib teams::`: 25 pruebas aprobadas.
+- `cargo test --manifest-path src-tauri/Cargo.toml --release --locked --lib`: 102 pruebas aprobadas; las pruebas nativas marcadas como ignoradas se ejecutan mediante sus scripts específicos.
 - `playwright test tests/e2e/teams.spec.ts tests/e2e/session-recovery.spec.ts`: 20 flujos aprobados.
 - Integración nativa aprobada con Git y sin Git: planificación, modelos distintos, escrituras reales, comandos, corrección del Lead, evidencias inmutables y entrega pendiente de QA manual.
 - Recuperación real aprobada con Git y sin Git: reinicio de aplicación y motor, misma sesión e intento, efecto aplicado una sola vez y entrega durable.
