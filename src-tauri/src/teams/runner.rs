@@ -250,7 +250,9 @@ fn scoped_permissions(employee: &Employee, readonly: bool, paths: &[String]) -> 
         "**/id_ed25519",
     ] {
         rules.push(json!({"permission":"read","pattern":pattern,"action":"deny"}));
-        rules.push(json!({"permission":"edit","pattern":pattern,"action":"ask"}));
+        // A sensitive-file rule must not widen a scoped worker's edit access to
+        // files owned by another agent. Unscoped sessions keep the normal ask.
+        rules.push(json!({"permission":"edit","pattern":pattern,"action":if paths.is_empty() {"ask"} else {"deny"}}));
     }
     Value::Array(rules)
 }
@@ -1496,6 +1498,11 @@ mod tests {
             .map(|p| p["pattern"].as_str().unwrap())
             .collect();
         assert_eq!(allowed, vec!["src/web/**", "package.json"]);
+        assert!(!rules
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["permission"] == "edit" && p["action"] == "ask"));
         assert!(!rules
             .as_array()
             .unwrap()
