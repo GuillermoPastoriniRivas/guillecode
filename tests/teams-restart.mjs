@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { spawn, execFileSync } from 'node:child_process'
 import { createServer } from 'node:http'
 import { createServer as tcpServer } from 'node:net'
-import { mkdtemp, mkdir, readFile, writeFile, rm, stat } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, writeFile, rm, stat, realpath } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
@@ -10,7 +10,8 @@ import { randomUUID } from 'node:crypto'
 const delay=(ms)=>new Promise((done)=>setTimeout(done,ms))
 const noGit=process.argv.includes('--no-git')
 const profile=await mkdtemp(join(tmpdir(),'guille-teams-restart-'))
-const repo=join(profile,'repo');await mkdir(repo);if(!noGit)execFileSync('git',['init',repo],{windowsHide:true,stdio:'ignore'})
+await mkdir(join(profile,'repo'))
+const repo=await realpath(join(profile,'repo'));if(!noGit)execFileSync('git',['init',repo],{windowsHide:true,stdio:'ignore'})
 await writeFile(join(repo,'user.txt'),'uncommitted user work\n')
 const identifier=`com.guillecode.recovery-${randomUUID()}`
 const node=`& '${process.execPath.replaceAll("'","''")}'`

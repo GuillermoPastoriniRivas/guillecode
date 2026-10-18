@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { spawn, execFileSync } from "node:child_process"
 import { createServer } from "node:http"
 import { createServer as tcpServer } from "node:net"
-import { mkdtemp, mkdir, writeFile, readFile, rm, stat } from "node:fs/promises"
+import { mkdtemp, mkdir, writeFile, readFile, rm, stat, realpath } from "node:fs/promises"
 import { join, resolve } from "node:path"
 import { tmpdir } from "node:os"
 
@@ -10,8 +10,9 @@ import { tmpdir } from "node:os"
 // Only inference is deterministic/loopback; no account, paid tokens or user repo.
 const noGit = process.argv.includes("--no-git")
 const profile = await mkdtemp(join(tmpdir(), "guillecode-teams-"))
-const repo = join(profile, "repo")
-await mkdir(repo)
+await mkdir(join(profile, "repo"))
+// Windows CI can expose TEMP through an 8.3 alias; match teams_save's canonical root.
+const repo = await realpath(join(profile, "repo"))
 await writeFile(join(repo, "user.txt"), "user work\n")
 let indexBefore
 if (!noGit) {

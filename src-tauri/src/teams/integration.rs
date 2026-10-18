@@ -114,7 +114,7 @@ fn native_team_end_to_end() {
                 std::thread::sleep(Duration::from_millis(200));
             };
             assert_eq!(result.status, "awaiting_manual_qa", "{:?}", result);
-            assert_eq!(result.tasks.len(), 2);
+            assert_eq!(result.tasks.len(), 2, "unexpected deterministic plan: {:?}", result.configuration_changes);
             let mut attempt_counts = result
                 .tasks
                 .iter()
