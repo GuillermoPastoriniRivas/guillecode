@@ -76,7 +76,11 @@ jobs:
         run: |
           npm run test:teams
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run test:teams -- --no-git
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run test:teams:recovery
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run test:teams:recovery -- --no-git
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verificar descarga firmada y actualización NSIS real
         run: npm run test:upgrade:native

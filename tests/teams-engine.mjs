@@ -2,19 +2,23 @@ import assert from "node:assert/strict"
 import { spawn, execFileSync } from "node:child_process"
 import { createServer } from "node:http"
 import { createServer as tcpServer } from "node:net"
-import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises"
+import { mkdtemp, mkdir, writeFile, readFile, rm, stat } from "node:fs/promises"
 import { join, resolve } from "node:path"
 import { tmpdir } from "node:os"
 
-// A real bundled OpenCode and the real Rust scheduler edit a disposable Git repo.
+// A real bundled OpenCode and the real Rust scheduler edit a disposable folder.
 // Only inference is deterministic/loopback; no account, paid tokens or user repo.
+const noGit = process.argv.includes("--no-git")
 const profile = await mkdtemp(join(tmpdir(), "guillecode-teams-"))
 const repo = join(profile, "repo")
 await mkdir(repo)
-execFileSync("git", ["init", repo], { windowsHide: true, stdio: "ignore" })
 await writeFile(join(repo, "user.txt"), "user work\n")
-execFileSync("git", ["-C", repo, "add", "user.txt"], { windowsHide: true })
-const indexBefore = execFileSync("git", ["-C", repo, "diff", "--cached"], { windowsHide: true }).toString()
+let indexBefore
+if (!noGit) {
+  execFileSync("git", ["init", repo], { windowsHide: true, stdio: "ignore" })
+  execFileSync("git", ["-C", repo, "add", "user.txt"], { windowsHide: true })
+  indexBefore = execFileSync("git", ["-C", repo, "diff", "--cached"], { windowsHide: true }).toString()
+}
 const delay = (ms) => new Promise((done) => setTimeout(done, ms))
 const nodeCommand = `& '${process.execPath.replaceAll("'", "''")}'`
 const commands = { backend: `${nodeCommand} -e "process.exit(require('fs').existsSync('backend.txt') ? 0 : 1)"`, frontend: `${nodeCommand} -e "process.exit(require('fs').existsSync('frontend.txt') ? 0 : 1)"` }
@@ -89,15 +93,16 @@ for (const stream of [engine.stdout, engine.stderr]) stream.on("data", (b) => { 
 try {
   for (let n = 0; !origin && n < 100; n++) await delay(200)
   assert.ok(origin, log)
-  const cargo = spawn("cargo", ["test", "--manifest-path", "src-tauri/Cargo.toml", "--release", "--lib", "--features", "desktop-e2e", "teams::integration::native_team_end_to_end", "--", "--ignored", "--nocapture", "--test-threads=1"], { env: { ...process.env, GUILLE_TEAM_TEST_ENGINE: origin, GUILLE_TEAM_TEST_REPO: repo,GUILLE_TEAM_TEST_CAPTURE_URL:`http://127.0.0.1:${mock.address().port}/app`,GUILLE_TEAM_TEST_ARTIFACTS:resolve('test-results/native-team-evidence') }, windowsHide: true, stdio: "inherit" })
+  const cargo = spawn("cargo", ["test", "--manifest-path", "src-tauri/Cargo.toml", "--release", "--lib", "--features", "desktop-e2e", "teams::integration::native_team_end_to_end", "--", "--ignored", "--nocapture", "--test-threads=1"], { env: { ...process.env, GUILLE_TEAM_TEST_ENGINE: origin, GUILLE_TEAM_TEST_REPO: repo,GUILLE_TEAM_TEST_NO_GIT:noGit?'1':'0',GUILLE_TEAM_TEST_CAPTURE_URL:`http://127.0.0.1:${mock.address().port}/app`,GUILLE_TEAM_TEST_ARTIFACTS:resolve(noGit?'test-results/native-team-evidence-no-git':'test-results/native-team-evidence') }, windowsHide: true, stdio: "inherit" })
   const code = await new Promise((done) => cargo.once("exit", done))
   assert.equal(code, 0, `Native runner failed\n${log}`)
   assert.equal(await readFile(join(repo, "backend.txt"), "utf8"), "version 2\n")
   assert.equal(await readFile(join(repo, "frontend.txt"), "utf8"), "version 2\n")
-  assert.equal(execFileSync("git", ["-C", repo, "diff", "--cached"], { windowsHide: true }).toString(), indexBefore)
+  if (noGit) await assert.rejects(() => stat(join(repo, ".git")), { code: "ENOENT" })
+  else assert.equal(execFileSync("git", ["-C", repo, "diff", "--cached"], { windowsHide: true }).toString(), indexBefore)
   assert.deepEqual([...models].sort(), ["qa-backend", "qa-frontend", "qa-invalid-review", "qa-lead"])
   assert.equal(reviews, 8)
-  console.log("Verified: native planning → distinct worker models → real file writes + commands → Lead correction → immutable evidence → awaiting manual QA; pre-existing Git index intact.")
+  console.log(`Verified: native planning → distinct worker models → real file writes + commands → Lead correction → immutable evidence → awaiting manual QA; ${noGit ? "folder remained Git-free" : "pre-existing Git index intact"}.`)
 } finally {
   engine.kill()
   await new Promise((done) => engine.exitCode !== null ? done() : engine.once("exit", done))

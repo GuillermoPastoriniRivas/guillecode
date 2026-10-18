@@ -8,7 +8,7 @@ use tauri::{AppHandle, Emitter};
 use tauri_plugin_notification::NotificationExt;
 
 const READ_TOOLS: &[&str] = &["read", "glob", "grep"];
-const POLICY: &str = "[GUILLECODE_TEAM_RUN] Sos parte de un equipo solicitado por el usuario. El Lead planifica, delega y revisa; el scheduler controla la concurrencia, permisos y reintentos. No uses subagentes ni herramientas de delegación adicionales: la relación tarea/sesión la administra el runner. Respetá AGENTS.md y los cambios previos del usuario. Releé antes de editar. No borres trabajo ajeno ni hagas reset, clean, push, merge remoto, despliegues o cambios destructivos. No leas secretos ni publiques datos personales. Trabajá solo dentro del repositorio indicado. Las skills son instrucciones, no permisos. No inventes tests, capturas ni resultados. No cambies de repositorio con comandos de shell. Si falta autorización, usá los permisos del motor o reportá el bloqueo. Respondé en español.";
+const POLICY: &str = "[GUILLECODE_TEAM_RUN] Sos parte de un equipo solicitado por el usuario. El Lead planifica, delega y revisa; el scheduler controla la concurrencia, permisos y reintentos. No uses subagentes ni herramientas de delegación adicionales: la relación tarea/sesión la administra el runner. Respetá AGENTS.md y los cambios previos del usuario. Releé antes de editar. No borres trabajo ajeno ni hagas reset, clean, push, merge remoto, despliegues o cambios destructivos. No leas secretos ni publiques datos personales. Trabajá solo dentro de la carpeta indicada. Git es opcional: no inicialices un repositorio si la carpeta no lo usa. Las skills son instrucciones, no permisos. No inventes tests, capturas ni resultados. No cambies de carpeta con comandos de shell. Si falta autorización, usá los permisos del motor o reportá el bloqueo. Respondé en español.";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -453,7 +453,7 @@ fn stop(client: &Opencode, session: &str) -> Result<(), String> {
         std::thread::sleep(Duration::from_millis(300));
     }
     Err(
-        "La sesión aún está activa; no se libera el repositorio. Inspeccionala antes de reintentar"
+        "La sesión aún está activa; no se libera la carpeta. Inspeccionala antes de reintentar"
             .into(),
     )
 }
@@ -492,7 +492,7 @@ fn lead(r: &Run) -> Result<Employee, String> {
 
 fn plan(app: &AppHandle, id: &str) -> Result<(), String> {
     let mut r = run(app, id)?;
-    evidence::validate_repositories(&r.team.allowed_repositories)?;
+    evidence::validate_folders(&r.team.allowed_repositories)?;
     if r.baseline.is_empty() {
         r.baseline = evidence::baseline(
             &r.team.allowed_repositories,
@@ -518,7 +518,7 @@ fn plan(app: &AppHandle, id: &str) -> Result<(), String> {
         r.plan_session_id = Some(session.clone());
         Ok(())
     })?;
-    let prompt = format!("{}\n\nActuás como Team Lead. Descubrí convenciones y archivos. Proponé tareas completas asignadas a IDs existentes según skills y carga. No modifiques archivos. Cada tarea trabaja en UN repositorio autorizado; los contratos entre repos se transmiten con dependencias. Solo paralelizamos repositorios distintos. Si falta QA, asigná comprobaciones a otro miembro o a vos. Cada trabajador debe ejecutar comprobaciones con bash y presentar resultados observados. No pidas aprobación de microtareas.\nOBJETIVO: {}\nEQUIPO: {}\nSKILLS DEL LEAD:\n{}\nBASELINE: {}\nRespondé SOLO JSON válido: {{\"tasks\":[{{\"id\":\"T1\",\"title\":\"…\",\"objective\":\"…\",\"assignedAgentId\":\"ID existente\",\"repository\":\"ruta autorizada exacta\",\"dependencies\":[],\"expectedFiles\":[\"ruta relativa\"],\"acceptanceCriteria\":[\"comportamiento comprobable y pruebas pertinentes\"]}}]}}", POLICY, r.goal, serde_json::to_string(&r.team).map_err(|e| e.to_string())?, skills_prompt(&r, &a), evidence::sanitize(&serde_json::to_string(&r.baseline).map_err(|e| e.to_string())?));
+    let prompt = format!("{}\n\nActuás como Team Lead. Descubrí convenciones y archivos. Proponé tareas completas asignadas a IDs existentes según skills y carga. No modifiques archivos. Cada tarea trabaja en UNA carpeta autorizada; Git puede existir o no y nunca debe inicializarse por este requisito. Los contratos entre carpetas se transmiten con dependencias. Solo paralelizamos carpetas distintas. Si falta QA, asigná comprobaciones a otro miembro o a vos. Cada trabajador debe ejecutar comprobaciones con bash y presentar resultados observados. No pidas aprobación de microtareas.\nOBJETIVO: {}\nEQUIPO: {}\nSKILLS DEL LEAD:\n{}\nBASELINE: {}\nRespondé SOLO JSON válido: {{\"tasks\":[{{\"id\":\"T1\",\"title\":\"…\",\"objective\":\"…\",\"assignedAgentId\":\"ID existente\",\"repository\":\"ruta autorizada exacta\",\"dependencies\":[],\"expectedFiles\":[\"ruta relativa\"],\"acceptanceCriteria\":[\"comportamiento comprobable y pruebas pertinentes\"]}}]}}", POLICY, r.goal, serde_json::to_string(&r.team).map_err(|e| e.to_string())?, skills_prompt(&r, &a), evidence::sanitize(&serde_json::to_string(&r.baseline).map_err(|e| e.to_string())?));
     let prompt=format!("{}\nSi el proyecto tiene UI web y no hay flujos configurados en el equipo, agregá evidenceTargets al JSON del plan: [{{\"id\":\"flujo-estable\",\"name\":\"Flujo\",\"url\":\"http://localhost:PUERTO/ruta-local-descubierta\",\"width\":1280,\"height\":800,\"maskSelectors\":[],\"actions\":[],\"required\":false}}]. Solo URLs locales observadas en la configuración del repo; no inventes una URL ni levantes servicios desde esta sesión de lectura. Los pasos admiten {{kind:click|fill|wait,selector:selectorCSS,value:opcional}}; no incluyas secretos. El runner captura antes de cualquier escritura y después del trabajo. Si no hay UI, evidenceTargets vacío.",prompt);
     let messages = if let Some(text) = &r.recovered_plan {
         json!([{"info":{"role":"assistant"},"parts":[{"type":"text","text":text}]}])
@@ -630,7 +630,7 @@ fn worker(app: &AppHandle, run_id: &str, task_id: &str) -> Result<(), String> {
         .map(|v| json!({"task":v.title,"result":v.attempts.last().map(|a| &a.summary)}))
         .collect();
     let feedback = t.attempts.iter().rev().skip(1).map(|a| format!("Sesión previa: {}\nResumen: {}\nFeedback: {}\nComandos ya ejecutados (no repetir sin verificar sus efectos): {}",a.session_id.as_deref().unwrap_or("sin sesión"),a.summary,a.review.as_ref().map(|r|r.summary.as_str()).or(a.error.as_deref()).unwrap_or(""),serde_json::to_string(&a.commands).unwrap_or_default())).collect::<Vec<_>>().join("\n\n");
-    let prompt = format!("{}\nROL: {} ({})\nINSTRUCCIONES: {}\nSKILLS HABILITADAS:\n{}\nOBJETIVO GENERAL: {}\nTAREA: {}\nCRITERIOS: {}\nREPOSITORIO AUTORIZADO: {}\nARCHIVOS ESPERADOS (ampliables dentro del repo): {}\nCONTRATOS/DEPENDENCIAS: {}\nFEEDBACK PREVIO: {}\nNo alteres los cambios preexistentes. Leé archivos antes de escribirlos. Implementá, ejecutá pruebas pertinentes con bash y revisá resultados. No uses herramientas externas para saltar permisos de bash. Si no podés comprobar, devolvé blocked con motivo. Devolvé SOLO JSON: {{\"status\":\"completed|blocked|failed\",\"summary\":\"implementación, archivos modificados y resultados\",\"checks\":[\"comando EXACTO realmente ejecutado\"],\"limitations\":[\"limitaciones reales\"]}}", POLICY, a.name, a.role, a.instructions, skills_prompt(&r,&a), r.goal,t.objective,t.acceptance_criteria.join("; "),t.repository,t.expected_files.join(", "),serde_json::to_string(&deps).map_err(|e| e.to_string())?,feedback);
+    let prompt = format!("{}\nROL: {} ({})\nINSTRUCCIONES: {}\nSKILLS HABILITADAS:\n{}\nOBJETIVO GENERAL: {}\nTAREA: {}\nCRITERIOS: {}\nCARPETA AUTORIZADA: {}\nARCHIVOS ESPERADOS (ampliables dentro de la carpeta): {}\nCONTRATOS/DEPENDENCIAS: {}\nFEEDBACK PREVIO: {}\nNo alteres los cambios preexistentes. Leé archivos antes de escribirlos. Implementá, ejecutá pruebas pertinentes con bash y revisá resultados. No uses herramientas externas para saltar permisos de bash. Si no podés comprobar, devolvé blocked con motivo. Devolvé SOLO JSON: {{\"status\":\"completed|blocked|failed\",\"summary\":\"implementación, archivos modificados y resultados\",\"checks\":[\"comando EXACTO realmente ejecutado\"],\"limitations\":[\"limitaciones reales\"]}}", POLICY, a.name, a.role, a.instructions, skills_prompt(&r,&a), r.goal,t.objective,t.acceptance_criteria.join("; "),t.repository,t.expected_files.join(", "),serde_json::to_string(&deps).map_err(|e| e.to_string())?,feedback);
     let messages = if recovering {
         let history = client.get(&format!("/session/{}/message", session))?;
         if parse_json::<WorkerResult>(&final_text(&history))
@@ -1038,7 +1038,7 @@ fn schedule(app: &AppHandle, id: &str) -> Result<(), String> {
         }
         if r.status == "cancelling" && workers.is_empty() {
             if unsettled(&r) {
-                return Err("No se confirmó la detención de todas las sesiones. Revisá Actividad antes de liberar repositorios".into());
+                return Err("No se confirmó la detención de todas las sesiones. Revisá Actividad antes de liberar carpetas".into());
             }
             update_run(app, id, |r| {
                 r.status = "cancelled".into();

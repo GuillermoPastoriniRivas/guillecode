@@ -5,12 +5,13 @@ use std::process::Command;
 
 pub const LIMIT: usize = 512_000;
 
-pub fn validate_repositories(repositories: &[String]) -> Result<(), String> {
+pub fn validate_folders(repositories: &[String]) -> Result<(), String> {
     for repository in repositories {
-        let root = git(repository, &["rev-parse", "--show-toplevel"], None).map_err(|_| format!("La carpeta {} no es un repositorio Git. Abrí la raíz de un repositorio o inicializá Git desde Control de código antes de iniciar el equipo. No se modificó esa carpeta.", repository))?;
-        if !same_path(root.trim(), repository) {
-            return Err(format!("Autorizá la raíz Git completa {} en lugar de {} para poder registrar cambios y coordinar escritores", root.trim(), repository));
+        if !Path::new(repository).is_dir() {
+            return Err(format!("La carpeta de trabajo no existe: {repository}"));
         }
+        std::fs::read_dir(repository)
+            .map_err(|_| format!("No se puede leer la carpeta de trabajo: {repository}"))?;
     }
     Ok(())
 }
@@ -97,11 +98,21 @@ pub fn git(repo: &str, args: &[&str], index: Option<&Path>) -> Result<String, St
     Ok(String::from_utf8_lossy(&out.stdout).trim_end().to_string())
 }
 
-fn sensitive_path(path: &str) -> bool {
+pub(super) fn sensitive_path(path: &str) -> bool {
     let p = path.to_lowercase();
     p.split('/').any(|part| {
         part.starts_with(".env")
-            || ["auth.json", "credentials.json", "id_rsa", "id_ed25519"].contains(&part)
+            || [
+                "auth.json",
+                "credentials.json",
+                "id_rsa",
+                "id_ed25519",
+                ".npmrc",
+                ".netrc",
+                ".pypirc",
+                ".git-credentials",
+            ]
+            .contains(&part)
     }) || p.ends_with(".pem")
         || p.ends_with(".key")
 }
@@ -142,8 +153,10 @@ fn tree(repo: &str, dir: &Path) -> Result<String, String> {
 pub fn baseline(repos: &[String], dir: &Path) -> Result<Vec<Value>, String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     repos.iter().map(|repo| {
-        let root = git(repo, &["rev-parse", "--show-toplevel"], None)?;
-        if !same_path(&root, repo) { return Err(format!("Elegí la raíz Git del repositorio: {}", root)); }
+        let root = git(repo, &["rev-parse", "--show-toplevel"], None).ok();
+        if !root.as_ref().map(|root| same_path(root, repo)).unwrap_or(false) {
+            return super::folder_snapshot::baseline(repo, dir);
+        }
         Ok(json!({ "repository": repo, "head": git(repo, &["rev-parse", "HEAD"], None).ok(), "branch": git(repo, &["branch", "--show-current"], None).ok(), "status": sanitize(&git(repo, &["status", "--short", "--untracked-files=all"], None)?), "tree": tree(repo, dir)?, "capturedAt": now() }))
     }).collect()
 }
@@ -152,6 +165,11 @@ pub fn changes(run: &Run) -> Result<String, String> {
     let mut chunks = vec![];
     for b in &run.baseline {
         let repo = b["repository"].as_str().ok_or("Baseline sin repo")?;
+        if b["mode"] == "filesystem" {
+            let (diff, _) = super::folder_snapshot::compare(b, Path::new(&run.evidence_dir))?;
+            chunks.push(format!("Carpeta: {}\n{}", repo, diff));
+            continue;
+        }
         let before = b["tree"].as_str().ok_or("Baseline sin árbol")?;
         let after = tree(repo, Path::new(&run.evidence_dir))?;
         let diff = git(
@@ -236,10 +254,10 @@ pub fn initial(run: &mut Run) -> Result<(), String> {
         "antes/repositorios.json",
         "before",
         "report",
-        "Git local",
+        "Instantánea inicial de archivos; Git cuando está disponible",
         &baseline,
     )?;
-    write(run, "antes/estado-inicial.md", "before", "report", "Git local", "Estado Git registrado antes de planificar. repositorios.json incluye cambios preexistentes, branch y commit. La comparación se calcula contra el contenido de trabajo inicial, incluyendo archivos sin commit, y excluye archivos de credenciales conocidos. No se observó todavía un flujo visual; no se presume que antes funcionara o no existiera.")?;
+    write(run, "antes/estado-inicial.md", "before", "report", "Archivos locales", "Contenido inicial registrado antes de planificar. Si existe una raíz Git se conserva también branch/commit; en otras carpetas se guarda una instantánea durable de archivos. Git es opcional y no se inicializa. La comparación distingue el contenido previo de los cambios posteriores; excluye credenciales conocidas y declara sus límites. No se observó todavía un flujo visual; no se presume que antes funcionara o no existiera.")?;
     Ok(())
 }
 
@@ -260,12 +278,17 @@ pub fn deliver(run: &mut Run) -> Result<(), String> {
         "cambios/cambios.diff",
         "change",
         "diff",
-        "Git: árbol inicial contra árbol final",
+        "Contenido inicial contra final (Git o instantánea de carpeta)",
         &diff,
     )?;
     let mut files = vec![];
     for b in &run.baseline {
         let repo = b["repository"].as_str().ok_or("Falta repo")?;
+        if b["mode"] == "filesystem" {
+            let (_, names) = super::folder_snapshot::compare(b, Path::new(&run.evidence_dir))?;
+            files.push(json!({"repository":repo,"mode":"filesystem","files":names}));
+            continue;
+        }
         let after = tree(repo, Path::new(&run.evidence_dir))?;
         files.push(json!({"repository":repo, "files":git(repo, &["diff", "--name-status", b["tree"].as_str().ok_or("Falta tree")?, &after], None)?}));
     }
@@ -274,7 +297,7 @@ pub fn deliver(run: &mut Run) -> Result<(), String> {
         "cambios/archivos.json",
         "change",
         "report",
-        "Git local",
+        "Comparación nativa de archivos",
         &serde_json::to_string_pretty(&files).map_err(|e| e.to_string())?,
     )?;
     let checks: Vec<Value> = run
@@ -308,7 +331,7 @@ pub fn deliver(run: &mut Run) -> Result<(), String> {
             "Ediciones externas simultáneas al equipo no pueden atribuirse automáticamente".into(),
         ])
         .collect();
-    let summary = format!("# {}\n\nObjetivo: {}\n\n{}\n\nPendiente de QA manual.\n\n## Evidencia visual\n{} capturas reales verificadas. Consultá manifest.json y los reportes de cada flujo.\n\n## Límites de la evidencia\n{}\n\nLos comandos se registran solo si OpenCode los devolvió como herramientas completadas. Los diffs comparan contenido inicial y final sin modificar el index del usuario. Los reportes se sanitizan y los archivos ignorados por Git y credenciales conocidas no se incluyen.\n", run.team.name, run.goal, run.summary,run.observations.iter().filter(|o|o.status=="captured").count(),limitations.join("\n"));
+    let summary = format!("# {}\n\nObjetivo: {}\n\n{}\n\nPendiente de QA manual.\n\n## Evidencia visual\n{} capturas reales verificadas. Consultá manifest.json y los reportes de cada flujo.\n\n## Límites de la evidencia\n{}\n\nLos comandos se registran solo si OpenCode los devolvió como herramientas completadas. Los diffs comparan contenido inicial y final sin modificar archivos ni el index del usuario. En carpetas sin Git se usa una instantánea durable con límites declarados. Los reportes se sanitizan y las credenciales conocidas no se incluyen.\n", run.team.name, run.goal, run.summary,run.observations.iter().filter(|o|o.status=="captured").count(),limitations.join("\n"));
     write(
         run,
         "resumen.md",
@@ -347,20 +370,24 @@ pub fn deliver(run: &mut Run) -> Result<(), String> {
 mod tests {
     use super::*;
     #[test]
-    fn missing_git_is_an_actionable_preflight_without_initializing_or_modifying_files() {
+    fn non_git_folder_is_accepted_without_initializing_or_modifying_files() {
         let dir = std::env::temp_dir().join(format!("teams-non-git-{}", id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("user.txt"), "keep").unwrap();
-        let error = validate_repositories(&[dir.to_string_lossy().into()]).unwrap_err();
-        assert!(error.contains("no es un repositorio Git"));
+        validate_folders(&[dir.to_string_lossy().into()]).unwrap();
         assert!(!dir.join(".git").exists());
         assert_eq!(
             std::fs::read_to_string(dir.join("user.txt")).unwrap(),
             "keep"
         );
-        git(dir.to_str().unwrap(), &["init"], None).unwrap();
-        assert!(validate_repositories(&[dir.to_string_lossy().into()]).is_ok());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn missing_work_folder_is_rejected_before_a_run_is_created() {
+        let dir = std::env::temp_dir().join(format!("teams-missing-{}", id()));
+        let error = validate_folders(&[dir.to_string_lossy().into()]).unwrap_err();
+        assert!(error.contains("no existe"));
+        assert!(!dir.exists());
     }
     #[test]
     fn secrets_are_omitted() {

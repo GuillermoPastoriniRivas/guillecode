@@ -140,6 +140,13 @@ fn restart_phase() {
                         std::fs::read_to_string(std::path::Path::new(&repo).join(file)).unwrap(),
                         "once\n"
                     );
+                    if std::env::var("GUILLE_RESTART_NO_GIT").as_deref() == Ok("1") {
+                        assert_eq!(r.baseline[0]["mode"], "filesystem");
+                        assert!(!std::path::Path::new(&repo).join(".git").exists());
+                        assert!(std::path::Path::new(&r.evidence_dir)
+                            .join("cambios/cambios.diff")
+                            .is_file());
+                    }
                     std::fs::write(&signal,serde_json::json!({"status":"recovered","sessionId":r.tasks[0].attempts[0].session_id,"runId":r.id,"attempts":r.tasks[0].attempts.len(),"dataDir":handle.path().app_data_dir().unwrap()}).to_string()).unwrap();
                     break;
                 }

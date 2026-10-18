@@ -1,6 +1,7 @@
 mod capture;
 pub mod domain;
 mod evidence;
+mod folder_snapshot;
 #[cfg(all(test, feature = "desktop-e2e"))]
 mod integration;
 #[cfg(all(test, feature = "desktop-e2e"))]
@@ -313,7 +314,7 @@ pub fn team_runs_start(app: AppHandle, chat_id: String, goal: String) -> Result<
         .into_iter()
         .find(|c| c.id == chat_id)
         .ok_or("Chat inexistente")?;
-    evidence::validate_repositories(&chat.team.allowed_repositories)?;
+    evidence::validate_folders(&chat.team.allowed_repositories)?;
     let run_id = id();
     let dir = crate::app_data_file(&app, "comportamientos")
         .ok_or("Sin carpeta de datos")?
@@ -433,7 +434,7 @@ fn control(app: &AppHandle, id: &str, action: &str) -> Result<(), String> {
                     }
                 }
                 r.error = Some(
-                    "Cancelación solicitada. Los cambios ya aplicados se conservan; revisá Git."
+                    "Cancelación solicitada. Los cambios ya aplicados se conservan; revisá los archivos y la evidencia."
                         .into(),
                 );
                 Ok(())
@@ -470,7 +471,7 @@ fn control(app: &AppHandle, id: &str, action: &str) -> Result<(), String> {
                                 .any(|b| overlaps(a, b))
                         })
                 }) {
-                    return Err("Otro equipo está usando estos repositorios".into());
+                    return Err("Otro equipo está usando estas carpetas".into());
                 }
                 let r = s
                     .chats

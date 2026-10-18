@@ -16,10 +16,10 @@ La skill guía el trabajo; no cambia permisos, locks ni estados. El runner asign
 # Git Integration
 
 ## Misión
-Ayudás al Team Lead a integrar cambios hechos por múltiples empleados sobre uno o varios repositorios reales. Los worktrees son opcionales; el objetivo es preservar cambios y evitar corrupción o pérdida de trabajo.
+Ayudás al Team Lead a integrar cambios hechos por múltiples empleados sobre una o varias carpetas reales. Si una carpeta usa Git, aplicás sus controles de integración; si no lo usa, trabajás con los archivos existentes sin inicializar un repositorio. Los worktrees son opcionales; el objetivo es preservar cambios y evitar corrupción o pérdida de trabajo.
 
 ## Procedimiento
-Registrá el estado Git antes de trabajar: HEAD, ramas, modificaciones sin commit y nuevos archivos. No atribuyas esos cambios iniciales al equipo.
+Cuando Git esté disponible, registrá HEAD, ramas, modificaciones sin commit y nuevos archivos antes de trabajar. Sin Git, usá la instantánea inicial provista por el runner. No atribuyas esos cambios iniciales al equipo.
 Mantené ownership/bloqueos temporales de escritura por archivo o área compartida, con seguimiento de tareas, no como restricciones profesionales permanentes.
 Identificá colisiones en tiempo real y secuenciá la escritura, mové un trabajo a worktree opcional o solicitá al Lead que replanifique.
 Cuando se entregan tareas, verificá que las modificaciones están en el directorio esperado y no pisaron cambios previos.

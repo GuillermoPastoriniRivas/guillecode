@@ -122,6 +122,15 @@ fn native_team_end_to_end() {
             );
             assert_eq!(result.tasks[1].attempts.len(), 1);
             assert!(result.tasks.iter().all(|t| t.status == "completed"));
+            if std::env::var("GUILLE_TEAM_TEST_NO_GIT").as_deref() == Ok("1") {
+                assert_eq!(result.baseline[0]["mode"], "filesystem");
+                assert!(!std::path::Path::new(&repo).join(".git").exists());
+                let diff = std::fs::read_to_string(
+                    std::path::Path::new(&result.evidence_dir).join("cambios/cambios.diff"),
+                )
+                .unwrap();
+                assert!(diff.contains("backend.txt") && diff.contains("frontend.txt"));
+            }
             for a in &result.artifacts {
                 if a.status == "captured" {
                     assert!(std::path::Path::new(&result.evidence_dir)

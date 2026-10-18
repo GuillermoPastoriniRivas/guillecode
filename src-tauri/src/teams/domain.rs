@@ -354,7 +354,7 @@ pub fn validate_team(t: &Team, skills: &[Skill]) -> Result<(), String> {
             .iter()
             .any(|r| overlaps(&t.project_root, r))
     {
-        return Err("Seleccioná al menos un repositorio del proyecto".into());
+        return Err("Seleccioná al menos una carpeta del proyecto".into());
     }
     Ok(())
 }
@@ -385,7 +385,7 @@ pub fn validate_plan(p: &Plan, team: &Team) -> Result<(), String> {
             .iter()
             .any(|r| same_path(r, &t.repository))
         {
-            return Err(format!("Repositorio no autorizado: {}", t.repository));
+            return Err(format!("Carpeta no autorizada: {}", t.repository));
         }
         if t.dependencies
             .iter()
@@ -398,7 +398,7 @@ pub fn validate_plan(p: &Plan, team: &Team) -> Result<(), String> {
                 || p.contains(':')
                 || p.replace('\\', "/").split('/').any(|c| c == "..")
         }) {
-            return Err("Alcance de archivos fuera del repositorio".into());
+            return Err("Alcance de archivos fuera de la carpeta autorizada".into());
         }
     }
     let mut done = HashSet::new();
