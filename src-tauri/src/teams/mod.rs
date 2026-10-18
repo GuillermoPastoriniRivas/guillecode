@@ -1,6 +1,7 @@
 mod capture;
 pub mod domain;
 mod evidence;
+mod errors;
 mod folder_snapshot;
 #[cfg(all(test, feature = "desktop-e2e"))]
 mod integration;

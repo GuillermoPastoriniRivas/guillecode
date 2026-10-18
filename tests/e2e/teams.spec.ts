@@ -176,6 +176,29 @@ test("el equipo abre como chat, envía con Enter y oculta controles técnicos ir
   await page.screenshot({ path: test.info().outputPath("grupo-recuperacion-automatica.png") })
 })
 
+test("los errores guardados del proveedor son legibles en chat, tareas y actividad", async ({ page }) => {
+  const { store } = await setup(page)
+  await createTeam(page)
+  await page.getByLabel("Mensaje para el equipo").fill("Revisá el proyecto")
+  await page.getByRole("button", { name: "Enviar", exact: true }).click()
+  const run = store.chats[0].runs[0]
+  const raw = JSON.stringify({ name: "APIError", data: { isRetryable: true, message: "The usage limit has been reached", responseBody: JSON.stringify({ error: { type: "usage_limit_reached" } }), responseHeaders: { "set-cookie": "PRIVATE-COOKIE", "x-codex-turn-state": "PRIVATE-STATE".repeat(500) } } })
+  run.status = "blocked"; run.error = raw
+  run.tasks = [{ id: "backend", title: "Backend", objective: "Revisar API", assignedAgentId: run.team.members[2].id, repository: "C:/qa/teams", dependencies: [], expectedFiles: [], acceptanceCriteria: ["API comprobada"], status: "blocked", error: raw, attempts: [{ id: "attempt", agent: run.team.members[2], sessionId: "worker", reviewSessionId: null, startedAt: Date.now(), finishedAt: null, status: "blocked", summary: "", error: raw, review: null, commands: [] }] }]
+  await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
+  for (const view of ["Chat", "Tareas", "Actividad"]) {
+    await page.getByRole("button", { name: view, exact: true }).click()
+    await expect(page.locator(".team-chat")).toContainText("Alcanzaste el límite de uso de tu cuenta")
+    await expect(page.locator(".team-chat")).not.toContainText("responseHeaders")
+    await expect(page.locator(".team-chat")).not.toContainText("PRIVATE-")
+    const banner = await page.locator(".team-chat > .team-error").boundingBox()
+    expect(banner!.height).toBeLessThan(160)
+  }
+  await page.getByRole("button", { name: "Chat", exact: true }).click()
+  await expect(page.getByText("Ajustar límites de esta ejecución")).toHaveCount(0)
+  await page.screenshot({ path: test.info().outputPath("error-proveedor-legible.png") })
+})
+
 test("comparador muestra ambos estados, desliza y conserva la ausencia de una captura", async ({ page }) => {
   const { store } = await setup(page)
   await page.setViewportSize({ width: 1600, height: 1600 })

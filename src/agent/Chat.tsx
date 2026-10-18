@@ -192,7 +192,7 @@ function AssistantFooter({ message, onRetry, onCompact, working }: { message: Ch
             {isUpstreamBufferError(error) && (
               <details className="msg-error-details">
                 <summary>Detalles técnicos</summary>
-                <pre>{error.data?.message}{error.data?.responseBody && error.data.responseBody !== error.data.message ? `\n${error.data.responseBody}` : ""}</pre>
+                <pre>Insufficient Storage: exceeded request buffer limit while retrying upstream</pre>
               </details>
             )}
           </div>

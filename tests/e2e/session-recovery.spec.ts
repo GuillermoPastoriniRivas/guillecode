@@ -185,6 +185,20 @@ test("Compactar y continuar conserva el modelo, agente y variante del turno orig
   expect(state.prompts[0].body).toMatchObject({ model: { providerID: "openai", modelID: "qa" }, agent: "build", variant: "high", parts: [{ type: "text", text: CONTINUE_INTERRUPTED_TURN }] })
 })
 
+test("el límite de cuenta muestra una explicación breve y no ofrece compactar", async ({ page }) => {
+  const state = await setup(page)
+  state.status = {}
+  state.history = messages(true)
+  state.history[1].info.error = { name: "APIError", data: { message: "The usage limit has been reached", statusCode: 429, isRetryable: true, responseBody: JSON.stringify({ error: { type: "usage_limit_reached" } }) } }
+  await page.evaluate((sid) => (window as unknown as { __qaPush: (event: unknown) => void }).__qaPush({ type: "session.status", properties: { sessionID: sid, status: { type: "idle" } } }), sessionID)
+  const error = page.locator(".msg-error")
+  await expect(error).toContainText("Alcanzaste el límite de uso de tu cuenta")
+  await expect(error).not.toContainText("usage_limit_reached")
+  await expect(error.getByRole("button", { name: "Compactar y continuar" })).toHaveCount(0)
+  expect(state.summaries).toBe(0)
+  expect(state.prompts).toHaveLength(0)
+})
+
 test("el 507 de búfer explica el problema y compacta sin repetir herramientas ni crear otro chat", async ({ page }) => {
   const state = await setup(page)
   await expect(page.locator(".retry-banner")).toBeVisible()

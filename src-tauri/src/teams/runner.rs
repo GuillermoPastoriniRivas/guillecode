@@ -54,7 +54,7 @@ fn notify(app: &AppHandle, r: &Run, done: bool) {
         )
     } else {
         r.error
-            .clone()
+            .as_ref().map(|error| super::errors::message(&json!(error)))
             .unwrap_or_else(|| "Revisá las sesiones del equipo".into())
     };
     let _ = app
@@ -352,7 +352,7 @@ fn execute(
             .and_then(|v| v.iter().rev().find(|m| m["info"]["role"] == "assistant"));
         if let Some(last) = last {
             if last["info"]["error"].is_object() {
-                return Err(evidence::sanitize(&last["info"]["error"].to_string()));
+                return Err(super::errors::message(&last["info"]["error"]));
             }
             // An idle/missing status alone is not evidence of a completed response.
             if last["info"]["time"]["completed"].as_i64().is_some()
@@ -1019,7 +1019,7 @@ pub fn launch(app: &AppHandle, id: &str) {
     let (app, id) = (app.clone(), id.to_string());
     std::thread::spawn(move || {
         if let Err(e) = schedule(&app, &id) {
-            let error = evidence::sanitize(&e);
+            let error = super::errors::message(&json!(e));
             let cancelled = run(&app, &id)
                 .ok()
                 .filter(|r| r.status == "cancelling")

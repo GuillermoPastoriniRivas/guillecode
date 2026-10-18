@@ -128,7 +128,7 @@ fn restart_phase() {
                     assert_eq!(
                         r.tasks[0].attempts.len(),
                         1,
-                        "restart must reuse attempt, not repeat work"
+                        "restart must reuse attempt, not repeat work: {:?}", r.tasks[0].attempts
                     );
                     assert!(r.tasks[0].attempts[0].recovered);
                     let file = if phase == "resume_engine" {

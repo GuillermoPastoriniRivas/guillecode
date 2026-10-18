@@ -31,7 +31,9 @@ const mock=createServer(async(request,response)=>{
     workerCalls++;if(engine)engineCalls++
     const continuing=text.includes('La aplicación se reinició')
     if(continuing)continuationCalls++
-    const verified=body.input.some((i)=>i.type==='function_call'&&i.arguments?.includes('readFileSync'))
+    // A persisted call can have been interrupted before its result arrived.
+    // Only claim verification after that exact call has a successful output.
+    const verified=body.input.some((i)=>i.type==='function_call'&&i.arguments?.includes('readFileSync')&&outputs.some((o)=>o.call_id===i.call_id&&!/error|abort|interrupt|cancel|timed? ?out/i.test(JSON.stringify(o.output))))
     if((outputs.length>0&&!engine)||(engine&&verified))item=message({status:'completed',summary:'El efecto existe una sola vez; verificado',checks:[engine?verify:command(false)],limitations:[]})
     else {
       const replayingInterruptedEngine=engine&&engineCalls>1&&!continuing
