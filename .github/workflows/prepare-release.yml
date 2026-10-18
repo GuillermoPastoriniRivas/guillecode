@@ -39,6 +39,8 @@ jobs:
           cache-on-failure: true
       - name: Instalar dependencias
         run: npm ci
+      - name: Diagnóstico del escritorio Windows
+        run: node tests/windows-desktop-capabilities.mjs
       - name: Preparar versión y novedades
         shell: pwsh
         run: |
@@ -87,6 +89,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verificar descarga firmada y actualización NSIS real
         run: npm run test:upgrade:native
+      - name: Informe de actualización nativa
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-upgrade-report
+          path: test-results/upgrade-native-report.json
+          if-no-files-found: ignore
       - name: Compilar y firmar instalador
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}

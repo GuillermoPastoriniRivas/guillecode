@@ -172,7 +172,7 @@ test("el equipo abre como chat, envía con Enter y oculta controles técnicos ir
   await expect(page.getByRole("button", { name: "Reintentar automáticamente" })).toBeVisible()
   await expect(page.getByText("Ajustar límites de esta ejecución")).toHaveCount(0)
   await expect(page.getByText("Cambiar el modelo que falló")).toHaveCount(0)
-  await expect(page.getByText("Uso de esta ejecución")).toBeVisible()
+  await expect(page.getByText("Uso de esta ejecución")).toHaveCount(0)
   await page.screenshot({ path: test.info().outputPath("grupo-recuperacion-automatica.png") })
 })
 

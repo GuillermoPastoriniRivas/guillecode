@@ -18,7 +18,7 @@ if (!directory) {
 }
 await run("tests/windows-updater-download.mjs", [directory])
 await run("tests/windows-upgrade-native.mjs", [directory])
-console.log("NATIVE UPGRADE SUITE PASS: signed native download + actual NSIS replacement/relaunch/preservation")
+console.log("NATIVE UPGRADE SUITE PASS: signed native download + actual NSIS replacement/preservation; desktop relaunch result in upgrade-native-report.json")
 // Retain explicitly reused fixtures; remove only the suite's own generated QA tree.
 if (!process.argv[2]) {
   const resolved = resolve(directory)
