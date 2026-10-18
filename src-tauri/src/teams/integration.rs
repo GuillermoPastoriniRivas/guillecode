@@ -115,12 +115,13 @@ fn native_team_end_to_end() {
             };
             assert_eq!(result.status, "awaiting_manual_qa", "{:?}", result);
             assert_eq!(result.tasks.len(), 2);
-            assert_eq!(
-                result.tasks[0].attempts.len(),
-                2,
-                "Lead must request and verify a correction"
-            );
-            assert_eq!(result.tasks[1].attempts.len(), 1);
+            let mut attempt_counts = result
+                .tasks
+                .iter()
+                .map(|task| task.attempts.len())
+                .collect::<Vec<_>>();
+            attempt_counts.sort_unstable();
+            assert_eq!(attempt_counts, vec![1, 2], "Lead must request and verify one correction regardless of which parallel task finishes first");
             assert!(result.tasks.iter().all(|t| t.status == "completed"));
             if std::env::var("GUILLE_TEAM_TEST_NO_GIT").as_deref() == Ok("1") {
                 assert_eq!(result.baseline[0]["mode"], "filesystem");
