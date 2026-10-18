@@ -154,7 +154,12 @@ pub fn baseline(repos: &[String], dir: &Path) -> Result<Vec<Value>, String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     repos.iter().map(|repo| {
         let root = git(repo, &["rev-parse", "--show-toplevel"], None).ok();
-        if !root.as_ref().map(|root| same_path(root, repo)).unwrap_or(false) {
+        let is_root = root.as_ref().map(|root| {
+            same_path(root, repo) || std::fs::canonicalize(root).ok().zip(std::fs::canonicalize(repo).ok())
+                .map(|(root, repo)| same_path(&root.to_string_lossy(), &repo.to_string_lossy()))
+                .unwrap_or(false)
+        }).unwrap_or(false);
+        if !is_root {
             return super::folder_snapshot::baseline(repo, dir);
         }
         Ok(json!({ "repository": repo, "head": git(repo, &["rev-parse", "HEAD"], None).ok(), "branch": git(repo, &["branch", "--show-current"], None).ok(), "status": sanitize(&git(repo, &["status", "--short", "--untracked-files=all"], None)?), "tree": tree(repo, dir)?, "capturedAt": now() }))
