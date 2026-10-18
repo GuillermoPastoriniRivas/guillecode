@@ -199,6 +199,28 @@ test("los errores guardados del proveedor son legibles en chat, tareas y activid
   await page.screenshot({ path: test.info().outputPath("error-proveedor-legible.png") })
 })
 
+test("actividad muestra el pedido entre agentes y las respuestas del Lead", async ({ page }) => {
+  const { store } = await setup(page)
+  await createTeam(page)
+  await page.getByLabel("Mensaje para el equipo").fill("Frontend y Backend en paralelo")
+  await page.getByLabel("Mensaje para el equipo").press("Enter")
+  const run = store.chats[0].runs[0]
+  run.tasks = ["Backend", "Frontend"].map((role, index) => ({ id: role.toLowerCase(), title: role, objective: `Implementar ${role}`, assignedAgentId: run.team.members[index + 2].id, repository: "C:/qa/teams", dependencies: [], expectedFiles: [], writePaths: [`src/${role.toLowerCase()}/`], acceptanceCriteria: ["Integración comprobada"], status: index === 0 ? "running" : "waiting_dependency", attempts: [], error: null }))
+  run.coordination = [{ id: "request", fromTaskId: "frontend", message: "Lead, falta el contrato de la API de usuarios", taskIds: ["backend"], status: "waiting", summary: "Backend está preparando el DTO", createdAt: Date.now(), sessions: ["coordination"], replies: [{ at: Date.now(), sessionId: "coordination", status: "wait", summary: "Backend está preparando el DTO; conservá la UI y seguí después con la integración", taskIds: ["backend"] }] }]
+  await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
+  await page.getByRole("button", { name: "Tareas", exact: true }).click()
+  await expect(page.locator(".team-task-list")).toContainText("src/frontend/")
+  await expect(page.locator(".team-task-list")).toContainText("Esperando respuesta del Lead")
+  await page.getByRole("button", { name: "Actividad", exact: true }).click()
+  await expect(page.locator(".team-chat-body")).toContainText("Frontend → Lead")
+  await expect(page.locator(".team-chat-body")).toContainText("falta el contrato de la API")
+  await expect(page.locator(".team-chat-body")).toContainText("Backend (Trabajando)")
+  await expect(page.locator(".team-chat-body")).toContainText("conservá la UI")
+  const approvals = await page.evaluate(async () => { const a = await import(/* @vite-ignore */ "/src/state/approvals.ts"); a.useApprovals.setState({ autoApprove: true, loaded: true }); return a.approveFor("coordination") })
+  expect(approvals).toBe(false)
+  await page.screenshot({ path: test.info().outputPath("coordinacion-paralela.png") })
+})
+
 test("comparador muestra ambos estados, desliza y conserva la ausencia de una captura", async ({ page }) => {
   const { store } = await setup(page)
   await page.setViewportSize({ width: 1600, height: 1600 })

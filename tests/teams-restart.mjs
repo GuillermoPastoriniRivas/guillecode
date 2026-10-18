@@ -9,14 +9,16 @@ import { randomUUID } from 'node:crypto'
 
 const delay=(ms)=>new Promise((done)=>setTimeout(done,ms))
 const noGit=process.argv.includes('--no-git')
+const coordination=process.argv.includes('--coordination')
 const profile=await mkdtemp(join(tmpdir(),'guille-teams-restart-'))
 await mkdir(join(profile,'repo'))
 const repo=await realpath(join(profile,'repo'));if(!noGit)execFileSync('git',['init',repo],{windowsHide:true,stdio:'ignore'})
 await writeFile(join(repo,'user.txt'),'uncommitted user work\n')
 const identifier=`com.guillecode.recovery-${randomUUID()}`
 const node=`& '${process.execPath.replaceAll("'","''")}'`
-const command=(engine)=>`${node} -e "const recoveryId='${identifier}';const fs=require('fs');fs.writeFileSync('${engine?'engine':'app'}-process.txt',String(process.pid));fs.appendFileSync('${engine?'engine':'app'}-effects.log','once\\n');const timer=setInterval(()=>{if(fs.existsSync('${engine?'engine':'app'}-continue.flag')){clearInterval(timer);process.exit(0)}},100)"`
+const command=(engine)=>`${node} -e "const recoveryId='${identifier}';const fs=require('fs');fs.writeFileSync('${engine?'engine':'app'}-process.txt',String(process.pid));fs.appendFileSync('${engine?'engine':'app'}-effects.log','once\\n');${coordination?'':`const timer=setInterval(()=>{if(fs.existsSync('${engine?'engine':'app'}-continue.flag')){clearInterval(timer);process.exit(0)}},100)`}"`
 const verify=`${node} -e "process.exit(require('fs').readFileSync('engine-effects.log','utf8')==='once\\n'?0:1)"`
+const verifyApp=verify.replace('engine-effects.log','app-effects.log')
 let workerCalls=0, engineCalls=0, continuationCalls=0, engineOriginalRetries=0
 const mock=createServer(async(request,response)=>{
   let raw='';for await(const chunk of request)raw+=chunk
@@ -26,9 +28,27 @@ const mock=createServer(async(request,response)=>{
   const isReview=text.includes('Sos el Lead revisor')||text.includes('Sos el Lead de cierre')
   let item
   const message=(value)=>({type:'message',id:`msg-${randomUUID()}`,role:'assistant',content:[{type:'output_text',text:JSON.stringify(value),annotations:[]}],status:'completed'})
-  if(body.model==='qa-recovery-lead')item=message(isReview?{status:'approved',summary:'Efecto único comprobado',criteriaSatisfied:true,tasks:[]}:{tasks:[{id:'effect',title:'Efecto único',objective:'Aplicar el efecto una sola vez y verificar su existencia',assignedAgentId:'worker',repository:repo,dependencies:[],expectedFiles:[],acceptanceCriteria:['El efecto se aplica exactamente una vez']}]})
+  if(coordination&&body.model==='qa-recovery-front'){
+    const continuing=text.includes('COORDINACIÓN ACTUAL DEL LEAD')
+    if(!continuing)item=message({status:'waiting_dependency',summary:'Preparación independiente terminada; necesito el efecto del backend',checks:[],limitations:[],request:{message:'Lead, revisá la entrega effect antes de integrar',taskIds:['effect']}})
+    else if(outputs.length)item=message({status:'completed',summary:'Integración comprobada tras respuesta del Lead',checks:[verifyApp],limitations:[]})
+    else item={type:'function_call',id:`fc-${randomUUID()}`,call_id:`call-${randomUUID()}`,name:'bash',arguments:JSON.stringify({command:verifyApp,description:'Comprobar contrato de Backend',timeout:10000}),status:'completed'}
+  }
+  else if(body.model==='qa-recovery-lead'){
+    const input=[...body.input].reverse().find((i)=>i.role==='user')
+    const prompt=typeof input?.content==='string'?input.content:(input?.content??[]).map((p)=>p.text??'').join('\n')
+    if(coordination&&prompt.includes('Sos el Lead de coordinación')){
+      const states=JSON.parse(prompt.split('ESTADO ACTUAL DEL EQUIPO: ')[1].split('\nHISTORIAL DE COORDINACIÓN:')[0])
+      const delivered=states.find((t)=>t.id==='effect').status==='completed'
+      item=message({status:delivered?'resume':'wait',summary:delivered?'Entrega effect completada y revisada; integrá ahora':'Backend continúa activo; esperá conservando tu sesión',waitForTaskIds:delivered?[]:['effect'],tasks:[]})
+    }else item=message(isReview?{status:'approved',summary:'Efecto único comprobado',criteriaSatisfied:true,tasks:[]}:{tasks:[{id:'effect',title:'Efecto único',objective:'Aplicar el efecto una sola vez y verificar su existencia',assignedAgentId:'worker',repository:repo,dependencies:[],expectedFiles:[],writePaths:coordination?['app-effects.log','app-process.txt','app-continue.flag']:[],acceptanceCriteria:['El efecto se aplica exactamente una vez']},...(coordination?[{id:'front',title:'Integrar Frontend',objective:'Preparar UI y pedir el contrato al Lead',assignedAgentId:'front',repository:repo,dependencies:[],expectedFiles:[],writePaths:['front.txt'],acceptanceCriteria:['Contrato integrado y comprobado']}]:[])]})
+  }
   else {
     workerCalls++;if(engine)engineCalls++
+    if(coordination&&outputs.length){
+      const deadline=Date.now()+110000
+      while(Date.now()<deadline){try{await stat(join(repo,'app-continue.flag'));break}catch{await delay(100)}}
+    }
     const continuing=text.includes('La aplicación se reinició')
     if(continuing)continuationCalls++
     // A persisted call can have been interrupted before its result arrived.
@@ -48,7 +68,7 @@ await new Promise((done)=>mock.listen(0,'127.0.0.1',done))
 const reserve=tcpServer();await new Promise((done)=>reserve.listen(0,'127.0.0.1',done));const port=reserve.address().port;await new Promise((done)=>reserve.close(done))
 const origin=`http://127.0.0.1:${port}`
 const env=Object.fromEntries(['PATH','SystemRoot','WINDIR','COMSPEC','TEMP','TMP'].filter((k)=>process.env[k]).map((k)=>[k,process.env[k]]))
-Object.assign(env,{USERPROFILE:profile,HOME:profile,APPDATA:profile,LOCALAPPDATA:profile,XDG_DATA_HOME:join(profile,'data'),XDG_CONFIG_HOME:join(profile,'config'),XDG_CACHE_HOME:join(profile,'cache'),XDG_STATE_HOME:join(profile,'state'),OPENCODE_CONFIG_DIR:join(profile,'config','opencode'),OPENCODE_DISABLE_EXTERNAL_SKILLS:'true',OPENCODE_DISABLE_PROJECT_CONFIG:'true',OPENCODE_SERVER_PASSWORD:'qa-password',OPENCODE_CONFIG_CONTENT:JSON.stringify({enabled_providers:['openai'],provider:{openai:{options:{apiKey:'test-fake',baseURL:`http://127.0.0.1:${mock.address().port}/v1`},models:Object.fromEntries(['qa-recovery-lead','qa-recovery-worker'].map((id)=>[id,{name:id,limit:{context:200000,output:16000}}]))}},agent:{title:{disable:true},summary:{disable:true}}})})
+Object.assign(env,{USERPROFILE:profile,HOME:profile,APPDATA:profile,LOCALAPPDATA:profile,XDG_DATA_HOME:join(profile,'data'),XDG_CONFIG_HOME:join(profile,'config'),XDG_CACHE_HOME:join(profile,'cache'),XDG_STATE_HOME:join(profile,'state'),OPENCODE_CONFIG_DIR:join(profile,'config','opencode'),OPENCODE_DISABLE_EXTERNAL_SKILLS:'true',OPENCODE_DISABLE_PROJECT_CONFIG:'true',OPENCODE_SERVER_PASSWORD:'qa-password',OPENCODE_CONFIG_CONTENT:JSON.stringify({enabled_providers:['openai'],provider:{openai:{options:{apiKey:'test-fake',baseURL:`http://127.0.0.1:${mock.address().port}/v1`},models:Object.fromEntries(['qa-recovery-lead','qa-recovery-worker','qa-recovery-front'].map((id)=>[id,{name:id,limit:{context:200000,output:16000}}]))}},agent:{title:{disable:true},summary:{disable:true}}})})
 await mkdir(env.OPENCODE_CONFIG_DIR,{recursive:true})
 let engine,app,dataDir,appLog='',engineLog=''
 async function startEngine(){
@@ -77,7 +97,7 @@ try{
   async function phase(name,terminate=false){
     const signal=join(profile,`${name}.json`)
     appLog=''
-    app=spawn(executable,['teams::restart_tests::restart_phase','--ignored','--exact','--nocapture','--test-threads=1'],{env:{...process.env,GUILLE_RESTART_REPO:repo,GUILLE_RESTART_NO_GIT:noGit?'1':'0',GUILLE_RESTART_PHASE:name,GUILLE_RESTART_SIGNAL:signal,GUILLE_RESTART_APP:identifier,GUILLE_RESTART_ENGINE:origin},windowsHide:true,stdio:'pipe'})
+    app=spawn(executable,['teams::restart_tests::restart_phase','--ignored','--exact','--nocapture','--test-threads=1'],{env:{...process.env,GUILLE_RESTART_REPO:repo,GUILLE_RESTART_COORDINATION:coordination?'1':'0',GUILLE_RESTART_NO_GIT:noGit?'1':'0',GUILLE_RESTART_PHASE:name,GUILLE_RESTART_SIGNAL:signal,GUILLE_RESTART_APP:identifier,GUILLE_RESTART_ENGINE:origin},windowsHide:true,stdio:'pipe'})
     const exited=new Promise((done)=>app.once('exit',done))
     for(const stream of [app.stdout,app.stderr])stream.on('data',(b)=>{appLog=(appLog+b).slice(-15000)})
     let report
@@ -115,6 +135,15 @@ try{
   const resumed=await phase('resume')
   assert.equal(resumed.sessionId,first.sessionId);assert.equal(workerCalls,count,'A completed worker must not receive another implementation prompt')
   await phase('reopen');assert.equal(workerCalls,count)
+  if(coordination){
+    assert.equal(resumed.frontSessionId,first.frontSessionId,'waiting worker must retain its original session across process termination')
+    assert.equal(resumed.coordinationId,first.coordinationId,'the same durable request must be resolved after restart')
+    assert.equal(await readFile(join(repo,'app-effects.log'),'utf8'),'once\n')
+    assert.equal(await readFile(join(repo,'user.txt'),'utf8'),'uncommitted user work\n')
+    const reportDir='test-results/coordination-recovery'+(noGit?'-no-git':'')
+    await mkdir(reportDir,{recursive:true});await writeFile(join(reportDir,'report.json'),JSON.stringify({appProcessKilled:true,noGit,phases,requestPreserved:true,sameWorkerSession:true,sideEffects:1},null,2))
+    console.log('Verified: parallel workers, Lead request persisted during actual process termination, same waiting session resumed, no repeated side effect.')
+  }else{
   const second=await phase('prepare_engine',true)
   kill(engine);await killFixtureTool('engine');await delay(500);await startEngine()
   const recovered=await phase('resume_engine')
@@ -127,6 +156,7 @@ try{
   const reportDir=noGit?'test-results/recovery-no-git':'test-results/recovery'
   await mkdir(reportDir,{recursive:true});await writeFile(join(reportDir,'report.json'),JSON.stringify({appProcessKilled:true,engineProcessKilled:true,noGit,workerCalls,continuationCalls,engineOriginalRetries,phases,sideEffects:{app:1,engine:1},userChangesPreserved:true},null,2))
   console.log('Verified actual app restart and engine restart: same session/attempt, side effect exactly once, completed work not replayed, durable final delivery.')
+  }
 }finally{
   kill(app);kill(engine);mock.closeAllConnections();await new Promise((done)=>mock.close(done))
   await killFixtureTool('app');await killFixtureTool('engine')

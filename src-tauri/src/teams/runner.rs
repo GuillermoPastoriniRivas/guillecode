@@ -17,6 +17,16 @@ struct WorkerResult {
     summary: String,
     checks: Vec<String>,
     limitations: Vec<String>,
+    #[serde(default)]
+    request: Option<DependencyRequest>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DependencyRequest {
+    message: String,
+    #[serde(default)]
+    task_ids: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -28,9 +38,10 @@ struct Closeout {
 }
 
 pub fn unsettled(r: &Run) -> bool {
-    r.tasks.iter().flat_map(|t| &t.attempts).any(|a| {
-        a.finished_at.is_none() && (a.session_id.is_some() || a.review_session_id.is_some())
-    })
+    r.coordination.iter().any(|c| c.status == "checking")
+        || r.tasks.iter().flat_map(|t| &t.attempts).any(|a| {
+            a.finished_at.is_none() && (a.session_id.is_some() || a.review_session_id.is_some())
+        })
 }
 
 fn notify(app: &AppHandle, r: &Run, done: bool) {
@@ -54,7 +65,8 @@ fn notify(app: &AppHandle, r: &Run, done: bool) {
         )
     } else {
         r.error
-            .as_ref().map(|error| super::errors::message(&json!(error)))
+            .as_ref()
+            .map(|error| super::errors::message(&json!(error)))
             .unwrap_or_else(|| "Revisá las sesiones del equipo".into())
     };
     let _ = app
@@ -88,7 +100,7 @@ fn notify(app: &AppHandle, r: &Run, done: bool) {
     );
 }
 
-fn client(app: &AppHandle, repo: &str) -> Result<Opencode, String> {
+pub(super) fn client(app: &AppHandle, repo: &str) -> Result<Opencode, String> {
     Ok(Opencode::new(&crate::ensure_server(app)?, repo))
 }
 
@@ -158,7 +170,7 @@ fn ready_tasks(r: &Run, running: &HashSet<String>) -> Result<Vec<String>, String
             .iter()
             .filter(|v| running.contains(&v.id) || dispatch.contains(&v.id))
             .collect();
-        if live.iter().any(|v| overlaps(&v.repository, &t.repository))
+        if live.iter().any(|v| task_conflict(v, t))
             || live.iter().filter(|v| v.assigned_agent_id == a.id).count() >= a.max_concurrent_tasks
         {
             continue;
@@ -169,6 +181,10 @@ fn ready_tasks(r: &Run, running: &HashSet<String>) -> Result<Vec<String>, String
 }
 
 pub fn session_permissions(employee: &Employee, readonly: bool) -> Value {
+    scoped_permissions(employee, readonly, &[])
+}
+
+fn scoped_permissions(employee: &Employee, readonly: bool, paths: &[String]) -> Value {
     let mut rules = vec![json!({"permission":"*","pattern":"*","action":"deny"})];
     let tools: Vec<&str> = if readonly {
         READ_TOOLS.to_vec()
@@ -176,6 +192,18 @@ pub fn session_permissions(employee: &Employee, readonly: bool) -> Value {
         employee.tools.iter().map(String::as_str).collect()
     };
     for tool in tools {
+        if !paths.is_empty() && ["write", "edit", "apply_patch"].contains(&tool) {
+            for path in paths {
+                let path = path.replace('\\', "/");
+                let pattern = if path.ends_with('/') {
+                    format!("{}**", path)
+                } else {
+                    path
+                };
+                rules.push(json!({"permission":"edit","pattern":pattern,"action":"allow"}));
+            }
+            continue;
+        }
         rules.push(json!({"permission": if ["write","edit","apply_patch"].contains(&tool) { "edit" } else {tool}, "pattern":"*", "action":if tool == "bash" {"ask"} else {"allow"}}));
     }
     if !readonly && employee.tools.iter().any(|t| t == "bash") {
@@ -227,7 +255,7 @@ pub fn session_permissions(employee: &Employee, readonly: bool) -> Value {
     Value::Array(rules)
 }
 
-fn create_session(
+pub(super) fn create_session(
     client: &Opencode,
     employee: &Employee,
     title: &str,
@@ -237,7 +265,7 @@ fn create_session(
     client.post("/session", json!({"title":format!("Equipo · {}",title), "permission":session_permissions(employee, readonly)}))?["id"].as_str().map(String::from).ok_or("OpenCode no devolvió la sesión".into())
 }
 
-fn skills_prompt(r: &Run, a: &Employee) -> String {
+pub(super) fn skills_prompt(r: &Run, a: &Employee) -> String {
     a.skill_refs
         .iter()
         .filter_map(|reference| {
@@ -258,7 +286,7 @@ fn skills_prompt(r: &Run, a: &Employee) -> String {
         .join("\n\n")
 }
 
-fn execute(
+pub(super) fn execute(
     app: &AppHandle,
     run_id: &str,
     client: &Opencode,
@@ -458,7 +486,7 @@ fn stop(client: &Opencode, session: &str) -> Result<(), String> {
     )
 }
 
-fn final_text(messages: &Value) -> String {
+pub(super) fn final_text(messages: &Value) -> String {
     messages
         .as_array()
         .and_then(|v| v.iter().rev().find(|m| m["info"]["role"] == "assistant"))
@@ -481,7 +509,7 @@ pub fn observed_commands(messages: &Value) -> Vec<Value> {
     }).collect()
 }
 
-fn lead(r: &Run) -> Result<Employee, String> {
+pub(super) fn lead(r: &Run) -> Result<Employee, String> {
     r.team
         .members
         .iter()
@@ -516,6 +544,7 @@ fn fallback_plan(r: &Run, reason: &str) -> (Plan, String) {
         repository: r.team.allowed_repositories[0].clone(),
         dependencies: vec![],
         expected_files: vec![],
+        write_paths: vec![],
         acceptance_criteria: vec![
             "Completar el objetivo y ejecutar las comprobaciones pertinentes".into(),
             "Informar cambios, resultados observados y cualquier limitación real".into(),
@@ -574,7 +603,7 @@ fn plan(app: &AppHandle, id: &str) -> Result<(), String> {
         r.plan_session_id = Some(session.clone());
         Ok(())
     })?;
-    let prompt = format!("{}\n\nActuás como Team Lead. Descubrí convenciones y archivos. Proponé tareas completas asignadas a IDs existentes según skills y carga. No modifiques archivos. Cada tarea trabaja en UNA carpeta autorizada; Git puede existir o no y nunca debe inicializarse por este requisito. Los contratos entre carpetas se transmiten con dependencias. Solo paralelizamos carpetas distintas. Si falta QA, asigná comprobaciones a otro miembro o a vos. Cada trabajador debe ejecutar comprobaciones con bash y presentar resultados observados. No pidas aprobación de microtareas.\nOBJETIVO: {}\nEQUIPO: {}\nSKILLS DEL LEAD:\n{}\nBASELINE: {}\nRespondé SOLO JSON válido: {{\"tasks\":[{{\"id\":\"T1\",\"title\":\"…\",\"objective\":\"…\",\"assignedAgentId\":\"ID existente\",\"repository\":\"ruta autorizada exacta\",\"dependencies\":[],\"expectedFiles\":[\"ruta relativa\"],\"acceptanceCriteria\":[\"comportamiento comprobable y pruebas pertinentes\"]}}]}}", POLICY, r.goal, serde_json::to_string(&r.team).map_err(|e| e.to_string())?, skills_prompt(&r, &a), evidence::sanitize(&serde_json::to_string(&r.baseline).map_err(|e| e.to_string())?));
+    let prompt = format!("{}\n\nActuás como Team Lead. Descubrí convenciones y archivos. Proponé tareas completas asignadas a IDs existentes según skills y carga. No modifiques archivos. Cada tarea trabaja en UNA carpeta autorizada; Git puede existir o no y nunca debe inicializarse por este requisito. Frontend, Backend y QA deben avanzar simultáneamente en archivos propios incluso dentro de la misma carpeta. Definí writePaths con archivos relativos o directorios terminados en /; son los únicos lugares que ese agente puede escribir. Repartí archivos compartidos a un único responsable. No agregues dependencias entre Frontend y Backend solo por consumir una API: acordá el contrato en los objetivos y dejá la integración final como tarea dependiente. Usá dependencies solo cuando no existe ningún trabajo útil antes de la entrega. Una tarea sin writePaths reserva toda la carpeta y se ejecuta sola. QA puede preparar pruebas en paralelo y ejecutar la integración al terminar ambos. Si falta QA, asigná comprobaciones a otro miembro o a vos. Cada trabajador debe ejecutar comprobaciones con bash y presentar resultados observados. No pidas aprobación de microtareas.\nOBJETIVO: {}\nEQUIPO: {}\nSKILLS DEL LEAD:\n{}\nBASELINE: {}\nRespondé SOLO JSON válido: {{\"tasks\":[{{\"id\":\"T1\",\"title\":\"…\",\"objective\":\"…\",\"assignedAgentId\":\"ID existente\",\"repository\":\"ruta autorizada exacta\",\"dependencies\":[],\"expectedFiles\":[\"ruta relativa\"],\"writePaths\":[\"ruta relativa o directorio/\"],\"acceptanceCriteria\":[\"comportamiento comprobable y pruebas pertinentes\"]}}]}}", POLICY, r.goal, serde_json::to_string(&r.team).map_err(|e| e.to_string())?, skills_prompt(&r, &a), evidence::sanitize(&serde_json::to_string(&r.baseline).map_err(|e| e.to_string())?));
     let prompt=format!("{}\nSi el proyecto tiene UI web y no hay flujos configurados en el equipo, agregá evidenceTargets al JSON del plan: [{{\"id\":\"flujo-estable\",\"name\":\"Flujo\",\"url\":\"http://localhost:PUERTO/ruta-local-descubierta\",\"width\":1280,\"height\":800,\"maskSelectors\":[],\"actions\":[],\"required\":false}}]. Solo URLs locales observadas en la configuración del repo; no inventes una URL ni levantes servicios desde esta sesión de lectura. Los pasos admiten {{kind:click|fill|wait,selector:selectorCSS,value:opcional}}; no incluyas secretos. El runner captura antes de cualquier escritura y después del trabajo. Si no hay UI, evidenceTargets vacío.",prompt);
     let messages = if let Some(text) = &r.recovered_plan {
         json!([{"info":{"role":"assistant"},"parts":[{"type":"text","text":text}]}])
@@ -676,12 +705,8 @@ fn worker(app: &AppHandle, run_id: &str, task_id: &str) -> Result<(), String> {
             .and_then(|a| a.session_id.clone())
             .ok_or("La sesión recuperada no está registrada")?
     } else {
-        create_session(
-            &client,
-            &a,
-            &format!("{} · {} · {}", r.team.name, a.name, t.title),
-            false,
-        )?
+        check_model(&client, &a)?;
+        client.post("/session", json!({"title":format!("Equipo · {} · {} · {}", r.team.name, a.name, t.title), "permission":scoped_permissions(&a, false, &t.write_paths)}))?["id"].as_str().map(String::from).ok_or("OpenCode no devolvió la sesión")?
     };
     attempt_update(app, run_id, task_id, |_, at| {
         at.session_id = Some(session.clone())
@@ -693,7 +718,8 @@ fn worker(app: &AppHandle, run_id: &str, task_id: &str) -> Result<(), String> {
         .map(|v| json!({"task":v.title,"result":v.attempts.last().map(|a| &a.summary)}))
         .collect();
     let feedback = t.attempts.iter().rev().skip(1).map(|a| format!("Sesión previa: {}\nResumen: {}\nFeedback: {}\nComandos ya ejecutados (no repetir sin verificar sus efectos): {}",a.session_id.as_deref().unwrap_or("sin sesión"),a.summary,a.review.as_ref().map(|r|r.summary.as_str()).or(a.error.as_deref()).unwrap_or(""),serde_json::to_string(&a.commands).unwrap_or_default())).collect::<Vec<_>>().join("\n\n");
-    let prompt = format!("{}\nROL: {} ({})\nINSTRUCCIONES: {}\nSKILLS HABILITADAS:\n{}\nOBJETIVO GENERAL: {}\nTAREA: {}\nCRITERIOS: {}\nCARPETA AUTORIZADA: {}\nARCHIVOS ESPERADOS (ampliables dentro de la carpeta): {}\nCONTRATOS/DEPENDENCIAS: {}\nFEEDBACK PREVIO: {}\nNo alteres los cambios preexistentes. Leé archivos antes de escribirlos. Implementá, ejecutá pruebas pertinentes con bash y revisá resultados. No uses herramientas externas para saltar permisos de bash. Si no podés comprobar, devolvé blocked con motivo. Devolvé SOLO JSON: {{\"status\":\"completed|blocked|failed\",\"summary\":\"implementación, archivos modificados y resultados\",\"checks\":[\"comando EXACTO realmente ejecutado\"],\"limitations\":[\"limitaciones reales\"]}}", POLICY, a.name, a.role, a.instructions, skills_prompt(&r,&a), r.goal,t.objective,t.acceptance_criteria.join("; "),t.repository,t.expected_files.join(", "),serde_json::to_string(&deps).map_err(|e| e.to_string())?,feedback);
+    let prompt = format!("{}\nROL: {} ({})\nINSTRUCCIONES: {}\nSKILLS HABILITADAS:\n{}\nOBJETIVO GENERAL: {}\nTAREA: {}\nCRITERIOS: {}\nCARPETA AUTORIZADA: {}\nARCHIVOS ESPERADOS (respetar la propiedad de escritura): {}\nCONTRATOS/DEPENDENCIAS: {}\nFEEDBACK PREVIO: {}\nNo alteres los cambios preexistentes. Leé archivos antes de escribirlos. Implementá, ejecutá pruebas pertinentes con bash y revisá resultados. No uses herramientas externas para saltar permisos de bash. Si no podés comprobar, devolvé blocked con motivo. Devolvé SOLO JSON: {{\"status\":\"completed|waiting_dependency|blocked|failed\",\"summary\":\"implementación, archivos modificados y resultados\",\"checks\":[\"comando EXACTO realmente ejecutado\"],\"limitations\":[\"limitaciones reales\"]}}", POLICY, a.name, a.role, a.instructions, skills_prompt(&r,&a), r.goal,t.objective,t.acceptance_criteria.join("; "),t.repository,t.expected_files.join(", "),serde_json::to_string(&deps).map_err(|e| e.to_string())?,feedback);
+    let prompt = format!("{}\nESTADO DEL EQUIPO (IDs para pedidos al Lead): {}\nPROPIEDAD DE ESCRITURA: {}\nCOORDINACIÓN CON EL LEAD: {}\nOtros agentes trabajan simultáneamente. Solo escribí en writePaths cuando no esté vacío; no uses bash para modificar archivos ajenos. Podés leer los contratos de otros. Avanzá en todo lo independiente sin esperar a que termine otro agente. Si necesitás algo de otro, devolvé status=waiting_dependency y request={{message:pedido concreto,taskIds:[IDs de tareas relacionadas]}}; no lo trates como fallo. El Lead revisará archivos y el estado real, y continuará ESTA sesión con su respuesta. No inventes contratos como si estuvieran implementados.", prompt, serde_json::to_string(&r.tasks.iter().map(|v| json!({"id":v.id,"title":v.title,"agentId":v.assigned_agent_id,"status":v.status,"writePaths":v.write_paths})).collect::<Vec<_>>()).unwrap_or_default(), serde_json::to_string(&t.write_paths).unwrap_or_default(), serde_json::to_string(&r.coordination).unwrap_or_default());
     let messages = if recovering {
         let history = client.get(&format!("/session/{}/message", session))?;
         if parse_json::<WorkerResult>(&final_text(&history))
@@ -702,7 +728,7 @@ fn worker(app: &AppHandle, run_id: &str, task_id: &str) -> Result<(), String> {
         {
             history
         } else {
-            let continuation=format!("{}\nLa aplicación se reinició. Continuá ESTA sesión desde el estado actual de los archivos y la historia de herramientas. No vuelvas a ejecutar el objetivo original ni repitas herramientas con efectos ya observados. Releé y verificá sus efectos, completá solo lo pendiente y devolvé el mismo contrato JSON del resultado. Contexto: {}\nTelemetría previa: {}",POLICY,t.objective,evidence::sanitize(&history.to_string()));
+            let continuation=format!("{}\nLa aplicación se reinició o el Lead resolvió un pedido. Continuá ESTA sesión desde el estado actual y la historia de herramientas. No repitas efectos ya observados. Releé y verificá, completá solo lo pendiente y devolvé el contrato JSON del resultado.\nCOORDINACIÓN ACTUAL DEL LEAD: {}\nContexto: {}\nTelemetría previa: {}",POLICY,serde_json::to_string(&r.coordination).unwrap_or_default(),prompt,evidence::sanitize(&history.to_string()));
             execute(app, run_id, &client, &session, &a, &continuation, false)?
         }
     } else {
@@ -721,6 +747,47 @@ fn worker(app: &AppHandle, run_id: &str, task_id: &str) -> Result<(), String> {
         at.summary = summary.clone();
         t.status = "verifying".into();
     })?;
+    if result.status == "waiting_dependency" {
+        let request = result
+            .request
+            .ok_or("Falta el pedido concreto para el Lead")?;
+        if request.message.trim().is_empty() {
+            return Err("Pedido vacío para el Lead".into());
+        }
+        return update_run(app, run_id, |r| {
+            if r.coordination
+                .iter()
+                .filter(|c| c.from_task_id == task_id)
+                .count()
+                >= 8
+            {
+                return Err("El Lead debe revisar un bloqueo que se repitió ocho veces".into());
+            }
+            // Suggested dependencies are a question for the Lead, not a new
+            // execution edge. Only its validated decision may establish a wait.
+            r.coordination.push(Coordination {
+                id: id(),
+                from_task_id: task_id.into(),
+                message: evidence::sanitize(&request.message),
+                task_ids: request.task_ids,
+                status: "pending".into(),
+                summary: String::new(),
+                created_at: now(),
+                sessions: vec![],
+                replies: vec![],
+            });
+            let task = r
+                .tasks
+                .iter_mut()
+                .find(|t| t.id == task_id)
+                .ok_or("Tarea inexistente")?;
+            task.status = "waiting_dependency".into();
+            let attempt = task.attempts.last_mut().ok_or("Intento inexistente")?;
+            attempt.status = "waiting_dependency".into();
+            attempt.recovered = true;
+            Ok(())
+        });
+    }
     if result.status != "completed" {
         return Err(summary);
     }
@@ -830,6 +897,15 @@ pub fn reconcile(app: &AppHandle, r: &Run, abort: bool) -> Result<(), String> {
         .iter()
         .chain(r.closing_sessions.iter())
         .map(|s| (&r.team.allowed_repositories[0], s))
+        .chain(r.coordination.iter().flat_map(|c| {
+            let repo = r
+                .tasks
+                .iter()
+                .find(|t| t.id == c.from_task_id)
+                .map(|t| &t.repository)
+                .unwrap_or(&r.team.allowed_repositories[0]);
+            c.sessions.iter().map(move |s| (repo, s))
+        }))
         .chain(r.tasks.iter().flat_map(|t| {
             t.attempts
                 .iter()
@@ -898,6 +974,13 @@ pub fn reconcile(app: &AppHandle, r: &Run, abort: bool) -> Result<(), String> {
         }
     }
     update_run(app, &r.id, |r| {
+        if abort {
+            for c in &mut r.coordination {
+                if c.status != "resolved" {
+                    c.status = "cancelled".into();
+                }
+            }
+        }
         for t in &mut r.tasks {
             for a in &mut t.attempts {
                 if a.finished_at.is_none() {
@@ -1052,7 +1135,53 @@ fn schedule(app: &AppHandle, id: &str) -> Result<(), String> {
         collect_captures(app, id, "before")?;
     }
     let mut workers: HashMap<String, std::thread::JoinHandle<Result<(), String>>> = HashMap::new();
+    let mut coordinator: Option<(String, std::thread::JoinHandle<Result<(), String>>)> = None;
     loop {
+        if coordinator
+            .as_ref()
+            .map(|(_, h)| h.is_finished())
+            .unwrap_or(false)
+        {
+            let (request_id, handle) = coordinator.take().unwrap();
+            if let Err(error) = handle
+                .join()
+                .unwrap_or_else(|_| Err("Se interrumpió la coordinación del Lead".into()))
+            {
+                let r = run(app, id)?;
+                let c = r
+                    .coordination
+                    .iter()
+                    .find(|c| c.id == request_id)
+                    .ok_or("Pedido inexistente")?;
+                let task = r
+                    .tasks
+                    .iter()
+                    .find(|t| t.id == c.from_task_id)
+                    .ok_or("Tarea inexistente")?;
+                let stopped = c
+                    .sessions
+                    .last()
+                    .map(|s| {
+                        client(app, &task.repository)
+                            .and_then(|client| stop(&client, s))
+                            .is_ok()
+                    })
+                    .unwrap_or(true);
+                update_run(app, id, |r| {
+                    let c = r
+                        .coordination
+                        .iter_mut()
+                        .find(|c| c.id == request_id)
+                        .unwrap();
+                    c.summary = super::errors::message(&json!(error));
+                    c.status = if stopped { "blocked" } else { "checking" }.into();
+                    let t = r.tasks.iter_mut().find(|t| t.id == c.from_task_id).unwrap();
+                    t.status = "blocked".into();
+                    t.error = Some(c.summary.clone());
+                    Ok(())
+                })?;
+            }
+        }
         let finished: Vec<_> = workers
             .iter()
             .filter(|(_, h)| h.is_finished())
@@ -1093,14 +1222,14 @@ fn schedule(app: &AppHandle, id: &str) -> Result<(), String> {
         }
         let r = run(app, id)?;
         if let Err(e) = enforce_limits(&r) {
-            if workers.is_empty() {
+            if workers.is_empty() && coordinator.is_none() {
                 return Err(e);
             } else {
                 std::thread::sleep(Duration::from_millis(500));
                 continue;
             }
         }
-        if r.status == "cancelling" && workers.is_empty() {
+        if r.status == "cancelling" && workers.is_empty() && coordinator.is_none() {
             if unsettled(&r) {
                 return Err("No se confirmó la detención de todas las sesiones. Revisá Actividad antes de liberar carpetas".into());
             }
@@ -1116,7 +1245,10 @@ fn schedule(app: &AppHandle, id: &str) -> Result<(), String> {
             })?;
             return Ok(());
         }
-        if r.tasks.iter().any(|t| t.status == "blocked") && workers.is_empty() {
+        if r.tasks.iter().any(|t| t.status == "blocked")
+            && workers.is_empty()
+            && coordinator.is_none()
+        {
             return Err(r
                 .tasks
                 .iter()
@@ -1131,7 +1263,21 @@ fn schedule(app: &AppHandle, id: &str) -> Result<(), String> {
             std::thread::sleep(Duration::from_millis(500));
             continue;
         }
-        if r.tasks.iter().all(|t| t.status == "completed") && workers.is_empty() {
+        if coordinator.is_none() {
+            if let Some(request_id) = super::coordination::ready(&r) {
+                let app = app.clone();
+                let run_id = id.to_string();
+                let rid = request_id.clone();
+                coordinator = Some((
+                    request_id,
+                    std::thread::spawn(move || super::coordination::check(&app, &run_id, &rid)),
+                ));
+            }
+        }
+        if r.tasks.iter().all(|t| t.status == "completed")
+            && workers.is_empty()
+            && coordinator.is_none()
+        {
             collect_captures(app, id, "after")?;
             if !closeout(app, id)? {
                 continue;
@@ -1168,6 +1314,9 @@ fn schedule(app: &AppHandle, id: &str) -> Result<(), String> {
             return Ok(());
         }
         let dispatch = ready_tasks(&r, &workers.keys().cloned().collect())?;
+        if dispatch.is_empty() && workers.is_empty() && coordinator.is_none() {
+            return Err("No hay tareas que puedan avanzar. El Lead debe revisar las dependencias pendientes".into());
+        }
         for task_id in dispatch {
             let (app, id) = (app.clone(), id.to_string());
             let started = update_run(&app, &id, |r| {
@@ -1313,5 +1462,44 @@ mod tests {
         r.tasks[1].status = "completed".into();
         r.tasks[2].status = "completed".into();
         assert_eq!(ready_tasks(&r, &HashSet::new()).unwrap(), vec!["d"]);
+    }
+
+    #[test]
+    fn shared_folder_dispatches_disjoint_owners_but_locks_shared_files() {
+        let mut r: Run = serde_json::from_value(json!({"id":"r","goal":"g","team":super::super::domain::tests::team(),"skills":[],"status":"running","startedAt":0,"finishedAt":null,"planSessionId":null,"tasks":[],"summary":"","error":null,"evidenceDir":"unused","artifacts":[],"baseline":[],"notified":false})).unwrap();
+        let mut backend = r.team.members[0].clone();
+        backend.id = "backend".into();
+        let mut frontend = backend.clone();
+        frontend.id = "frontend".into();
+        r.team.members.extend([backend, frontend]);
+        r.tasks = ["backend", "frontend"].iter().map(|role| serde_json::from_value(json!({"id":role,"title":role,"objective":role,"assignedAgentId":role,"repository":"D:/repo","dependencies":[],"expectedFiles":[],"writePaths":[format!("src/{}/",role)],"acceptanceCriteria":["check"]})).unwrap()).collect();
+        assert_eq!(
+            ready_tasks(&r, &HashSet::new()).unwrap(),
+            vec!["backend", "frontend"]
+        );
+        r.tasks[1].write_paths.push("src/backend/api.ts".into());
+        assert_eq!(ready_tasks(&r, &HashSet::new()).unwrap(), vec!["backend"]);
+        r.tasks[1].write_paths.clear();
+        assert_eq!(ready_tasks(&r, &HashSet::new()).unwrap(), vec!["backend"]);
+    }
+
+    #[test]
+    fn scoped_edits_do_not_grant_writes_to_the_whole_project() {
+        let mut a = super::super::domain::tests::team().members.remove(0);
+        a.tools = vec!["read".into(), "write".into(), "bash".into()];
+        let rules = scoped_permissions(&a, false, &["src/web/".into(), "package.json".into()]);
+        let allowed: Vec<_> = rules
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|p| p["permission"] == "edit" && p["action"] == "allow")
+            .map(|p| p["pattern"].as_str().unwrap())
+            .collect();
+        assert_eq!(allowed, vec!["src/web/**", "package.json"]);
+        assert!(!rules
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["permission"] == "bash" && p["pattern"] == "*" && p["action"] == "allow"));
     }
 }

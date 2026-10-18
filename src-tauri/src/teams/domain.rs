@@ -162,6 +162,9 @@ pub struct Task {
     pub repository: String,
     pub dependencies: Vec<String>,
     pub expected_files: Vec<String>,
+    /// Explicit relative files/directories owned by this task. Empty means exclusive folder.
+    #[serde(default)]
+    pub write_paths: Vec<String>,
     pub acceptance_criteria: Vec<String>,
     #[serde(default = "pending")]
     pub status: String,
@@ -213,6 +216,8 @@ pub struct Run {
     pub closing_reviews: Vec<Review>,
     #[serde(default)]
     pub configuration_changes: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub coordination: Vec<Coordination>,
     pub tasks: Vec<Task>,
     pub summary: String,
     pub error: Option<String>,
@@ -230,6 +235,58 @@ pub struct Run {
     pub session_usage: std::collections::BTreeMap<String, serde_json::Value>,
     #[serde(default)]
     pub evidence_expired_at: Option<i64>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Coordination {
+    pub id: String,
+    pub from_task_id: String,
+    pub message: String,
+    pub task_ids: Vec<String>,
+    pub status: String,
+    pub summary: String,
+    pub created_at: i64,
+    #[serde(default)]
+    pub sessions: Vec<String>,
+    #[serde(default)]
+    pub replies: Vec<serde_json::Value>,
+}
+
+pub fn valid_write_path(path: &str) -> bool {
+    let path = path.replace('\\', "/");
+    !path.is_empty()
+        && !path.starts_with('/')
+        && !path.contains([':', '*', '?', '[', ']', '{', '}'])
+        && path
+            .trim_end_matches('/')
+            .split('/')
+            .all(|c| !c.is_empty() && c != "." && c != ".." && c.trim() == c && !c.ends_with('.'))
+}
+
+pub fn task_conflict(a: &Task, b: &Task) -> bool {
+    if !overlaps(&a.repository, &b.repository) {
+        return false;
+    }
+    if a.write_paths.is_empty() || b.write_paths.is_empty() {
+        return true;
+    }
+    a.write_paths.iter().any(|p| {
+        b.write_paths.iter().any(|q| {
+            overlaps(
+                &format!(
+                    "{}/{}",
+                    a.repository.trim_end_matches(['/', '\\']),
+                    p.trim_end_matches(['/', '\\'])
+                ),
+                &format!(
+                    "{}/{}",
+                    b.repository.trim_end_matches(['/', '\\']),
+                    q.trim_end_matches(['/', '\\'])
+                ),
+            )
+        })
+    })
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -369,6 +426,9 @@ pub fn validate_plan(p: &Plan, team: &Team) -> Result<(), String> {
         return Err("IDs de tareas duplicados o vacíos".into());
     }
     for t in &p.tasks {
+        if t.write_paths.iter().any(|p| !valid_write_path(p)) {
+            return Err("writePaths debe contener archivos relativos o directorios terminados en /, sin comodines ni escapes".into());
+        }
         if t.title.trim().is_empty()
             || t.objective.trim().is_empty()
             || t.acceptance_criteria.is_empty()
@@ -490,6 +550,7 @@ pub(super) mod tests {
             repository: "D:/repo".into(),
             dependencies: deps.iter().map(|s| s.to_string()).collect(),
             expected_files: vec![],
+            write_paths: vec![],
             acceptance_criteria: vec!["Comprobar".into()],
             status: pending(),
             attempts: vec![],

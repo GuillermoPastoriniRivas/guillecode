@@ -114,7 +114,12 @@ fn native_team_end_to_end() {
                 std::thread::sleep(Duration::from_millis(200));
             };
             assert_eq!(result.status, "awaiting_manual_qa", "{:?}", result);
-            assert_eq!(result.tasks.len(), 2, "unexpected deterministic plan: {:?}", result.configuration_changes);
+            assert_eq!(
+                result.tasks.len(),
+                2,
+                "unexpected deterministic plan: {:?}",
+                result.configuration_changes
+            );
             let mut attempt_counts = result
                 .tasks
                 .iter()
@@ -123,6 +128,21 @@ fn native_team_end_to_end() {
             attempt_counts.sort_unstable();
             assert_eq!(attempt_counts, vec![1, 2], "Lead must request and verify one correction regardless of which parallel task finishes first");
             assert!(result.tasks.iter().all(|t| t.status == "completed"));
+            let backend = result.tasks.iter().find(|t| t.id == "backend").unwrap();
+            let frontend = result.tasks.iter().find(|t| t.id == "frontend").unwrap();
+            assert!(backend.attempts[0].started_at < frontend.attempts[0].finished_at.unwrap());
+            assert!(frontend.attempts[0].started_at < backend.attempts[0].finished_at.unwrap());
+            assert_eq!(
+                frontend.attempts.len(),
+                1,
+                "dependency coordination must resume the SAME attempt"
+            );
+            assert_eq!(result.coordination.len(), 1);
+            assert_eq!(result.coordination[0].status, "resolved");
+            assert!(
+                result.coordination[0].sessions.len() >= 2,
+                "Lead checks progress, waits, then checks the delivered contract"
+            );
             if std::env::var("GUILLE_TEAM_TEST_NO_GIT").as_deref() == Ok("1") {
                 assert_eq!(result.baseline[0]["mode"], "filesystem");
                 assert!(!std::path::Path::new(&repo).join(".git").exists());
@@ -149,7 +169,14 @@ fn native_team_end_to_end() {
             assert!(before["artifacts"].as_array().unwrap().len() > 5);
             assert!(result.notified);
             if !team.evidence_targets.is_empty() {
-                assert!(result.observations.iter().any(|o| o.phase == "before" && o.status == "captured"), "real before screenshot missing: {:?}", result.observations);
+                assert!(
+                    result
+                        .observations
+                        .iter()
+                        .any(|o| o.phase == "before" && o.status == "captured"),
+                    "real before screenshot missing: {:?}",
+                    result.observations
+                );
                 let before = result
                     .observations
                     .iter()
@@ -223,7 +250,10 @@ fn native_team_end_to_end() {
             durable.chats[0].runs[0].status = "running".into();
             recover(&mut durable);
             assert_eq!(durable.chats[0].runs[0].status, "blocked");
-            assert_eq!(durable.chats[0].runs[0].tasks[0].attempts.len(), 2);
+            assert_eq!(
+                durable.chats[0].runs[0].tasks[0].attempts.len(),
+                result.tasks[0].attempts.len()
+            );
             let wait_for_run = |id: &str| -> Run {
                 let deadline = Instant::now() + Duration::from_secs(90);
                 loop {
@@ -320,12 +350,22 @@ fn native_team_end_to_end() {
             control(&handle, &limited_run, "retry").unwrap();
             let blocked = wait_for_run(&limited_run);
             assert_eq!(blocked.status, "blocked");
-            assert!(blocked.tasks.iter().all(|t| t.attempts.is_empty()), "required before capture must block every worker");
-            std::fs::write(std::path::Path::new(&repo).join("capture-before-ready.flag"), "ready").unwrap();
+            assert!(
+                blocked.tasks.iter().all(|t| t.attempts.is_empty()),
+                "required before capture must block every worker"
+            );
+            std::fs::write(
+                std::path::Path::new(&repo).join("capture-before-ready.flag"),
+                "ready",
+            )
+            .unwrap();
             control(&handle, &limited_run, "retry").unwrap();
             let blocked = wait_for_run(&limited_run);
             assert_eq!(blocked.status, "blocked");
-            assert!(blocked.tasks.iter().all(|t| t.status == "completed"), "after capture failure must preserve completed workers");
+            assert!(
+                blocked.tasks.iter().all(|t| t.status == "completed"),
+                "after capture failure must preserve completed workers"
+            );
             assert!(!blocked.notified);
             assert!(blocked
                 .error

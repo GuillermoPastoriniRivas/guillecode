@@ -10,6 +10,7 @@ fn restart_phase() {
     let phase = std::env::var("GUILLE_RESTART_PHASE").unwrap();
     let signal = std::env::var("GUILLE_RESTART_SIGNAL").unwrap();
     let identifier = std::env::var("GUILLE_RESTART_APP").unwrap();
+    let coordination = std::env::var("GUILLE_RESTART_COORDINATION").as_deref() == Ok("1");
     assert!(identifier.starts_with("com.guillecode.recovery-"));
     let mut context = tauri::generate_context!();
     context.config_mut().identifier = identifier;
@@ -55,6 +56,13 @@ fn restart_phase() {
                 worker.model.model_id = "qa-recovery-worker".into();
                 worker.tools = vec!["read".into(), "bash".into()];
                 team.members.push(worker);
+                if coordination {
+                    let mut front = team.members[1].clone();
+                    front.id = "front".into();
+                    front.name = "Frontend".into();
+                    front.model.model_id = "qa-recovery-front".into();
+                    team.members.push(front);
+                }
                 let team = teams_save(handle.clone(), team).unwrap();
                 let chat = team_chats_create(handle.clone(), team.id).unwrap();
                 run_id = Some(
@@ -107,6 +115,7 @@ fn restart_phase() {
                 let r = run(&handle, &run_id).unwrap();
                 if phase.starts_with("prepare")
                     && !ready
+                    && (!coordination || r.coordination.iter().any(|c| c.status == "waiting"))
                     && std::path::Path::new(&repo)
                         .join(if phase == "prepare_engine" {
                             "engine-effects.log"
@@ -116,21 +125,29 @@ fn restart_phase() {
                         .exists()
                 {
                     let attempt = r.tasks[0].attempts[0].clone();
-                    std::fs::write(&signal,serde_json::json!({"status":"ready","pid":std::process::id(),"runId":r.id,"sessionId":attempt.session_id,"dataDir":handle.path().app_data_dir().unwrap()}).to_string()).unwrap();
+                    std::fs::write(&signal,serde_json::json!({"status":"ready","pid":std::process::id(),"runId":r.id,"sessionId":attempt.session_id,"frontSessionId":r.tasks.get(1).and_then(|t|t.attempts.last()).and_then(|a|a.session_id.as_ref()),"coordinationId":r.coordination.first().map(|c|&c.id),"dataDir":handle.path().app_data_dir().unwrap()}).to_string()).unwrap();
                     ready = true;
                 }
                 if !active(&r.status) {
                     assert!(
                         !phase.starts_with("prepare"),
-                        "process should have been terminated during command"
+                        "process should have been terminated during command: {:?}", r
                     );
                     assert_eq!(r.status, "awaiting_manual_qa", "{:?}", r);
                     assert_eq!(
                         r.tasks[0].attempts.len(),
                         1,
-                        "restart must reuse attempt, not repeat work: {:?}", r.tasks[0].attempts
+                        "restart must reuse attempt, not repeat work: {:?}",
+                        r.tasks[0].attempts
                     );
                     assert!(r.tasks[0].attempts[0].recovered);
+                    if coordination {
+                        assert_eq!(r.tasks[1].attempts.len(), 1);
+                        assert!(r.tasks[1].attempts[0].recovered);
+                        assert_eq!(r.coordination.len(), 1);
+                        assert_eq!(r.coordination[0].status, "resolved");
+                        assert!(r.coordination[0].sessions.len() >= 2);
+                    }
                     let file = if phase == "resume_engine" {
                         "engine-effects.log"
                     } else {
@@ -147,7 +164,7 @@ fn restart_phase() {
                             .join("cambios/cambios.diff")
                             .is_file());
                     }
-                    std::fs::write(&signal,serde_json::json!({"status":"recovered","sessionId":r.tasks[0].attempts[0].session_id,"runId":r.id,"attempts":r.tasks[0].attempts.len(),"dataDir":handle.path().app_data_dir().unwrap()}).to_string()).unwrap();
+                    std::fs::write(&signal,serde_json::json!({"status":"recovered","sessionId":r.tasks[0].attempts[0].session_id,"frontSessionId":r.tasks.get(1).and_then(|t|t.attempts.last()).and_then(|a|a.session_id.as_ref()),"coordinationId":r.coordination.first().map(|c|&c.id),"runId":r.id,"attempts":r.tasks[0].attempts.len(),"dataDir":handle.path().app_data_dir().unwrap()}).to_string()).unwrap();
                     break;
                 }
                 assert!(

@@ -1,7 +1,8 @@
 mod capture;
+mod coordination;
 pub mod domain;
-mod evidence;
 mod errors;
+mod evidence;
 mod folder_snapshot;
 #[cfg(all(test, feature = "desktop-e2e"))]
 mod integration;
@@ -82,6 +83,9 @@ pub fn is_team_session(app: &AppHandle, session: &str) -> bool {
                 s.chats.iter().flat_map(|c| &c.runs).any(|r| {
                     r.plan_session_id.as_deref() == Some(session)
                         || r.closing_sessions.iter().any(|id| id == session)
+                        || r.coordination
+                            .iter()
+                            .any(|c| c.sessions.iter().any(|id| id == session))
                         || r.tasks.iter().flat_map(|t| &t.attempts).any(|a| {
                             a.session_id.as_deref() == Some(session)
                                 || a.review_session_id.as_deref() == Some(session)
@@ -372,6 +376,7 @@ pub fn team_runs_start(app: AppHandle, chat_id: String, goal: String) -> Result<
             closing_sessions: vec![],
             closing_reviews: vec![],
             configuration_changes: vec![],
+            coordination: vec![],
             tasks: vec![],
             summary: String::new(),
             error: None,
@@ -482,8 +487,22 @@ fn control(app: &AppHandle, id: &str, action: &str) -> Result<(), String> {
                     .ok_or("Ejecución inexistente")?;
                 for t in &mut r.tasks {
                     if t.status != "completed" {
-                        t.status = "pending".into();
+                        t.status = if r
+                            .coordination
+                            .iter()
+                            .any(|c| c.from_task_id == t.id && c.status != "resolved")
+                        {
+                            "waiting_dependency"
+                        } else {
+                            "pending"
+                        }
+                        .into();
                         t.error = None;
+                    }
+                }
+                for c in &mut r.coordination {
+                    if c.status == "blocked" {
+                        c.status = "pending".into();
                     }
                 }
                 r.status = if r.tasks.is_empty() {
