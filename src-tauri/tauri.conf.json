@@ -62,9 +62,9 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMzQjczNTNGOTEwMUQ2MEMKUldRTTFnR1JQelczdy9pTDgzY21GVE1NVVkxN2QwaGNxa1cwOGl5NVYxT1ZnMitFdkkwazl3SWgK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRCNjAxMjRFQTE5N0EzMDIKUldRQ281ZWhUaEpnUzJ0ZnFoSy9od0dtbFdxTzM4QnROaWFFLzJvM29uUE1TTW9RR2pJcE1sdHoK",
       "endpoints": [
-        "https://github.com/Kaitach/guillecode/releases/latest/download/latest.json"
+        "https://github.com/GuillermoPastoriniRivas/guillecode/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "quiet"

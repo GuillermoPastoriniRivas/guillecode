@@ -25,7 +25,7 @@ La barra lateral incluye **Equipos IA** para guardar un Lead y especialistas con
 
 Incluye capturas reales antes/después con flujos locales configurables, comparador de imágenes, presupuestos y retención opcionales. Recupera sesiones tras reiniciar sin reenviar ciegamente el objetivo. Ver [uso, arquitectura, pruebas y limitaciones del Modo Equipos IA](docs/equipos-ia.md) y [resultados de validación](docs/equipos-ia-validacion.md).
 
-Desde la 0.14.1 esta edición usa el canal firmado propio de **Kaitach/guillecode**. Sus actualizaciones incluyen Equipos IA y las 13 skills con guardas; el canal del upstream sigue protegido. Ver [skills y perfiles](docs/skills-equipos.md) y [actualizaciones de la edición local](docs/actualizaciones-edicion-local.md).
+Las actualizaciones de esta versión usan el canal firmado de **GuillermoPastoriniRivas/guillecode** e incluyen Equipos IA y las 13 skills con guardas. Ver [skills y perfiles](docs/skills-equipos.md) y [actualizaciones de la edición local](docs/actualizaciones-edicion-local.md).
 
 ## Memoria
 

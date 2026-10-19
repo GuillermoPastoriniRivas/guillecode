@@ -17,7 +17,7 @@ test("release selects its exact product/version and never an old or QA installer
 test("manifiesto apunta a la release inmutable y contiene la firma, no su URL", () => {
   const manifest = makeManifest("0.3.0", "Mejoras", "guillecode_0.3.0_x64-setup.exe", "YWJjZA==\n")
   assert.equal(manifest.platforms["windows-x86_64"].signature, "YWJjZA==")
-  assert.equal(manifest.platforms["windows-x86_64"].url, "https://github.com/Kaitach/guillecode/releases/download/v0.3.0/guillecode_0.3.0_x64-setup.exe")
+  assert.equal(manifest.platforms["windows-x86_64"].url, "https://github.com/GuillermoPastoriniRivas/guillecode/releases/download/v0.3.0/guillecode_0.3.0_x64-setup.exe")
   assert.throws(() => makeManifest("0.3.0", "", "app.exe", "YWJjZA=="))
   assert.throws(() => makeManifest("0.3.0", "Mejoras", "app.exe", "https://example.test/app.sig"))
 })

@@ -55,7 +55,7 @@ pub struct UpdatePolicy {
 const LOCAL_UPDATE_REASON: &str = "Esta edición incluye Equipos IA y cambios locales. Para conservarlos, integrá la actualización en el código de esta rama, verificá y compilá un instalador combinado. El instalador público reemplazaría esta edición.";
 
 const EDITION_ENDPOINT: &str =
-    "https://github.com/Kaitach/guillecode/releases/latest/download/latest.json";
+    "https://github.com/GuillermoPastoriniRivas/guillecode/releases/latest/download/latest.json";
 
 fn local_edition(identifier: &str, endpoints: &[&str]) -> bool {
     // This edition has its own signed release channel. A production build using
@@ -321,7 +321,7 @@ mod tests {
     #[test]
     fn customized_desktop_requires_source_integration() {
         assert!(local_edition("com.guillecode.desktop", &[]));
-        assert!(local_edition("com.guillecode.desktop", &["https://github.com/GuillermoPastoriniRivas/guillecode/releases/latest/download/latest.json"]));
+        assert!(local_edition("com.guillecode.desktop", &["https://github.com/Kaitach/guillecode/releases/latest/download/latest.json"]));
         assert!(local_edition(
             "com.guillecode.desktop",
             &["https://github.com/Kaitach/guillecode-evil/releases/latest/download/latest.json"]
