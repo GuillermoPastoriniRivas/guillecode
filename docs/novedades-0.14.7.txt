@@ -1,0 +1,5 @@
+Equipos IA: el chat ahora permite adjuntar, pegar o arrastrar imágenes y enviarlas incluso sin texto. Se ven miniaturas ampliables, los archivos quedan guardados con sus metadatos y SHA256, y al reabrir se comprueba su integridad. El Lead y los pasos del equipo reciben las imágenes reales, incluidas las referencias de una conversación anterior que se convierte en trabajo.
+
+El botón Configuración muestra proveedor, modelo y razonamiento del Lead y de cada especialista para la ejecución elegida. Distingue la asignación actual del modelo inmutable de cada intento y deja el historial técnico plegado; es una vista de consulta, no modifica modelos ni relanza tareas.
+
+Límites: PNG, JPEG, WebP o GIF, hasta 5 imágenes de 10 MB cada una y 20 MB por mensaje. Los adjuntos del usuario son referencias y no cuentan como capturas de comprobación del resultado. Las actualizaciones siguen saliendo exclusivamente del canal firmado de este repositorio.
