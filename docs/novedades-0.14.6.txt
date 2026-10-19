@@ -1,0 +1,5 @@
+Equipos IA: ahora podés hablar con el Lead durante una ejecución activa o bloqueada, preguntar qué falló y pedir una corrección sin perder las tareas ya terminadas. Las consultas de estado habituales se responden con el registro local, incluso si la cuenta de IA llegó a su límite, y las indicaciones nuevas llegan a los siguientes pasos del equipo.
+
+Los mensajes identifican responsable, tarea, causa y siguiente paso; las comprobaciones declaradas y sus resultados observados se conservan, y los detalles técnicos quedan plegados. Reintentar reconcilia lo pendiente y mantiene lo completado; una respuesta interrumpida al reiniciar queda registrada sin reenviarse sola.
+
+OpenCode Zen tiene una conexión independiente con clave propia, selector de modelos y filtro de modelos gratuitos. Conectar Go después conserva la clave de Zen, y guardar una clave no realiza una generación de pago ni declara el acceso como verificado.
