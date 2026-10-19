@@ -435,7 +435,9 @@ test("configuración muestra asignación actual y modelos históricos de cada in
   const run = store.chats[0].runs[0], agent = run.team.members[2]
   run.tasks=[{id:"t",title:"API",objective:"API",assignedAgentId:agent.id,repository:run.team.projectRoot,dependencies:[],expectedFiles:[],acceptanceCriteria:[],status:"running",error:null,attempts:[{id:"a",agent:{...structuredClone(agent),model:{providerID:"openai",modelID:"lead"},variant:"high"},sessionId:"s",reviewSessionId:null,startedAt:Date.now(),finishedAt:null,status:"running",summary:"",error:null,review:null,commands:[]}]}]
   await page.evaluate(async()=>{const {refreshTeams}=await import(/* @vite-ignore */ "/src/state/teams.ts");await refreshTeams()})
+  await page.locator(".team-chat-body").evaluate(element => { element.scrollTop = element.scrollHeight })
   await page.getByRole("button",{name:"Configuración del equipo",exact:true}).click()
+  await expect(page.getByRole("heading",{name:"Configuración del equipo",exact:true})).toBeInViewport()
   const backend = page.locator(".team-settings > .team-card").filter({has:page.getByRole("heading",{name:"Ana Backend · Backend",exact:true})})
   await expect(backend).toContainText("Worker Model")
   await backend.getByText("Modelo del intento en curso · API",{exact:true}).click()

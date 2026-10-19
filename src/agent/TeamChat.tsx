@@ -58,8 +58,10 @@ export function TeamChat({ chatId }: { chatId: string }) {
   const [view, setView] = useState("Chat")
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const bottom = useRef<HTMLDivElement>(null)
+  const body = useRef<HTMLDivElement>(null)
   const messages = chat?.messages ?? []
   useEffect(() => { if (view === "Chat") bottom.current?.scrollIntoView({ block: "nearest" }) }, [messages.length, messages.at(-1)?.status, view])
+  useEffect(() => { if (view === "Configuración" && body.current) body.current.scrollTop = 0 }, [view, selectedRunId])
   if (!chat) return <div className="team-note">Cargando conversación de equipo…</div>
   const run = chat.runs.find((r) => r.id === selectedRunId) ?? chat.runs.at(-1)
   const roster = run?.team ?? chat.team
@@ -82,7 +84,7 @@ export function TeamChat({ chatId }: { chatId: string }) {
       {run.status === "awaiting_manual_qa" && <button className="btn btn-xs" onClick={() => void act("approve")}>Aprobar QA manual</button>}
     </div>}
     {run?.error && <div className="team-error" role="status">{automaticPlanRecovery ? "El Lead devolvió un plan incompleto. GuilleCode lo reparará automáticamente al reintentar." : runProblem(run)}</div>}
-    <div className="team-chat-body">
+    <div className="team-chat-body" ref={body}>
       {run?.status === "blocked" && budgetBlocked && <RunBudget key={run.id} run={run} />}
       {run?.status === "blocked" && modelBlocked && <details className="team-card"><summary>Cambiar el modelo que falló</summary><p className="team-note">La configuración original del chat y los intentos anteriores se conservan.</p>{run.team.members.map((a) => <label key={a.id}>{a.name} · {a.role}<select aria-label={`Modelo de ${a.name}`} value={modelKey(a.model)} onChange={(e) => {const m=models.find((v)=>modelKey(v)===e.target.value);if(m)void teamCall("team_runs_model",{runId:run.id,agentId:a.id,model:{providerID:m.providerID,modelID:m.modelID},variant:null})}}><option value={modelKey(a.model)}>{modelKey(a.model)}</option>{models.filter((m)=>modelKey(m)!==modelKey(a.model)).map((m)=><option key={modelKey(m)} value={modelKey(m)}>{m.providerName} · {m.name}</option>)}</select></label>)}</details>}
       {view === "Chat" && <>
