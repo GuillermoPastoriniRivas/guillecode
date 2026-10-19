@@ -37,6 +37,19 @@ const KEYS: &[(&str, &str)] = &[
     ("left", "\x1b[D"),
 ];
 
+pub const RESULT_PREFIX: &str = "GUILLECODE_TERMINAL_RESULT_V1 ";
+
+fn receipt(id: &str, state: &ScreenState, command: Option<&str>, expected: Option<&str>) -> String {
+    let capture = state.capture.as_ref().filter(|c| expected.is_none_or(|line| line == c.command));
+    let finished = capture.and_then(|c| c.finished());
+    // Keep the shell's completion separate from arbitrary text in its output.
+    format!("{}{}\n", RESULT_PREFIX, json!({
+        "terminalId": id, "command": command,
+        "executedCommand": capture.map(|c| &c.command),
+        "finished": finished.is_some(), "exitCode": finished.flatten(),
+    }))
+}
+
 fn prop(kind: &str, description: &str) -> Value {
     json!({ "type": kind, "description": description })
 }
@@ -405,7 +418,7 @@ fn run(app: &AppHandle, args: &Value) -> Result<String, String> {
         format!("Sigue corriendo después de {} s.", elapsed)
     };
     let output = state.capture.as_mut().map(|c| c.lines()).unwrap_or_default();
-    let mut text = format!("{}\nComando: {}\nEstado: {}", header, line, status);
+    let mut text = format!("{}{}\nComando: {}\nEstado: {}", receipt(&id, &state, Some(command), Some(&line)), header, line, status);
     if !ready {
         text.push_str("\nAviso: el shell no mostró el prompt a tiempo; el estado puede no detectarse.");
     }
@@ -442,7 +455,7 @@ fn read(app: &AppHandle, args: &Value) -> Result<String, String> {
     }
     let header = describe(app, id);
     let mut state = screen.state.lock().unwrap();
-    let mut text = format!("{}\nEstado: {}", header, status_line(&state));
+    let mut text = format!("{}{}\nEstado: {}", receipt(id, &state, None, None), header, status_line(&state));
     if let Some(m) = matched {
         text.push_str(&format!("\nApareció «{}».", m));
     } else if until.is_some() && wait > 0 {
@@ -554,6 +567,30 @@ fn close(app: &AppHandle, args: &Value) -> Result<String, String> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn receipt_uses_shell_completion_not_success_text() {
+        let mut state = ScreenState {
+            parser: vt100::Parser::new_with_callbacks(24, 80, 100, term::Marks::default()),
+            capture: None, exited: None, received: 0, last_activity: Instant::now(),
+        };
+        state.begin_capture("node qa/check.mjs");
+        state.capture.as_mut().unwrap().parser.process(b"PASS / exit code 0\r\n");
+        let parse = |s: String| serde_json::from_str::<Value>(s.trim_start_matches(RESULT_PREFIX).trim()).unwrap();
+        let running = parse(receipt("agent-one", &state, Some("node qa/check.mjs"), Some("node qa/check.mjs")));
+        assert_eq!(running["finished"], false);
+        assert!(running["exitCode"].is_null());
+        state.capture.as_mut().unwrap().parser.process(b"\x1b]133;D;1\x07");
+        let failed = parse(receipt("agent-one", &state, None, None));
+        assert_eq!(failed["finished"], true);
+        assert_eq!(failed["exitCode"], 1);
+        assert_eq!(failed["executedCommand"], "node qa/check.mjs");
+        state.begin_capture("node qa/other.mjs");
+        state.capture.as_mut().unwrap().parser.process(b"\x1b]133;D;0\x07");
+        assert_eq!(parse(receipt("agent-one", &state, None, None))["exitCode"], 0);
+        let replaced = parse(receipt("agent-one", &state, Some("node qa/check.mjs"), Some("node qa/check.mjs")));
+        assert_eq!(replaced["finished"], false);
+        assert!(replaced["executedCommand"].is_null());
+    }
     #[test]
     fn clip_keeps_the_tail_and_reports_omitted_lines() {
         let lines: Vec<String> = (0..10).map(|i| format!("l{}", i)).collect();

@@ -26,6 +26,7 @@ pub mod push;
 pub mod remote;
 mod responses;
 pub mod routines;
+pub mod teams;
 pub mod search;
 pub mod term;
 pub mod usage;
@@ -320,6 +321,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             updates::update_check,
+            updates::update_policy,
             updates::update_download,
             updates::update_install,
             server_config,
@@ -333,6 +335,21 @@ pub fn run() {
             routines::routines_delete,
             routines::routines_set_enabled,
             routines::routines_run_now,
+            teams::teams_state,
+            teams::teams_save,
+            teams::teams_delete,
+            teams::team_skills_save,
+            teams::team_chats_create,
+        teams::team_chats_auto,
+            teams::team_chats_edit,
+            teams::team_runs_start,
+            teams::team_runs_control,
+            teams::team_tasks_reassign,
+            teams::team_runs_model,
+            teams::team_runs_limits,
+            teams::team_evidence_read,
+            teams::team_evidence_image,
+            teams::team_evidence_open,
             remote::remote_status,
             remote::remote_set_enabled,
             remote::remote_regenerate_token,
@@ -489,6 +506,7 @@ pub fn run() {
             memory::start(app.handle());
             desktop::start(app.handle());
             routines::start(app.handle());
+            teams::start(app.handle());
             push::start(app.handle());
             remote::start(app.handle());
             approvals::start(app.handle());

@@ -10,6 +10,8 @@ import { initApprovals } from "../state/approvals"
 import { initUnseen } from "../state/unseen"
 import { startUsagePolling } from "../state/usage"
 import { startRoutines } from "../state/routines"
+import { startTeams } from "../state/teams"
+import { TeamsView } from "../views/TeamsView"
 import { startOutputCapture } from "../state/output"
 import { ensureShells, startAgentTerminals } from "../state/terminals"
 import { bindRoot } from "../state/workspace"
@@ -52,6 +54,7 @@ const VIEW_COMPONENTS: Record<ViewId, () => React.ReactElement> = {
   agents: AgentsView,
   prs: PullRequestsView,
   routines: RoutinesView,
+  teams: TeamsView,
   memory: MemoryView,
   plane: PlaneView,
 }
@@ -76,6 +79,7 @@ function boot() {
     void loadAgentMeta()
     startUsagePolling()
     startRoutines()
+    startTeams()
     if (!root) return
     bindRoot(root)
     initFeatures()

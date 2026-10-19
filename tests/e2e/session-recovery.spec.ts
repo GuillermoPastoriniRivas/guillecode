@@ -6,7 +6,7 @@ const root = "C:/qa/recovery"
 const sessionID = "s-recovery"
 const now = Date.now()
 const userID = "m-user"
-const errorText = "Service Unavailable: upstream connect error or disconnect/reset before headers. reset reason: remote connection failure"
+const errorText = "El proveedor de IA está ocupado o temporalmente fuera de servicio. Esperá un momento y reintentá; tus cambios se conservan."
 
 function messages(failed = false) {
   return [
@@ -122,8 +122,48 @@ async function setup(page: Page, restart = false) {
     return route.fulfill({ json: [] })
   })
   await page.goto("/")
+  // Status can render before the initial history/stream subscription settles.
+  // Inject recovery events only after the original conversation is visible.
+  await expect(page.locator(".msg-user")).toContainText("Continuá con el trabajo pendiente")
+  await expect(page.locator(".retry-banner")).toContainText("Reintentando (1)")
   return state
 }
+
+test("las sesiones del Lead presentan respuestas humanas al cargar, transmitir y recargar", async ({ page }) => {
+  const state = await setup(page)
+  const summary = "Frontend y Backend están terminados. Las comprobaciones HTTP pasaron. La prueba visual sigue pendiente."
+  const protocol = JSON.stringify({ status: "approved", summary, criteriaSatisfied: true, tasks: [] })
+  state.history = messages()
+  state.history[0].parts[0] = { type: "text", id: "p-user", messageID: userID, sessionID, text: "[GUILLECODE_TEAM_RUN] Instrucciones internas del revisor" }
+  state.history[1].parts = [{ type: "text", id: "p-review", messageID: "m-assistant", sessionID, text: protocol }]
+  state.status = {}
+  await page.evaluate(sessionID => (window as unknown as { __qaPush: (event: unknown) => void }).__qaPush({ type: "session.status", properties: { sessionID, status: { type: "idle" } } }), sessionID)
+  await expect(page.locator(".team-response")).toContainText("Revisión aprobada")
+  await expect(page.locator(".team-response")).toContainText(summary)
+  await expect(page.locator(".msg-assistant")).not.toContainText('"criteriaSatisfied"')
+  await expect(page.getByRole("button", { name: "Instrucciones del equipo" })).toBeVisible()
+  await page.evaluate(({ sessionID, now }) => {
+    const push = (window as unknown as { __qaPush: (event: unknown) => void }).__qaPush
+    push({ type: "session.status", properties: { sessionID, status: { type: "busy" } } })
+    push({ type: "message.part.updated", properties: { part: { type: "text", id: "p-review", messageID: "m-assistant", sessionID, text: '{"status":"approved","summary":', time: { start: now } } } })
+  }, { sessionID, now })
+  await expect(page.locator(".msg-assistant")).toContainText("El equipo está preparando su respuesta")
+  await expect(page.locator(".msg-assistant")).not.toContainText('"status"')
+  await page.reload()
+  await expect(page.locator(".team-response")).toContainText(summary)
+  await expect(page.locator(".msg-assistant")).not.toContainText('"criteriaSatisfied"')
+})
+
+test("las respuestas JSON de un chat normal se conservan", async ({ page }) => {
+  const state = await setup(page)
+  const text = '{"status":"approved","summary":"Ejemplo solicitado","criteriaSatisfied":true}'
+  state.history = messages()
+  state.history[1].parts = [{ type: "text", id: "p-json", messageID: "m-assistant", sessionID, text }]
+  state.status = {}
+  await page.evaluate(sessionID => (window as unknown as { __qaPush: (event: unknown) => void }).__qaPush({ type: "session.status", properties: { sessionID, status: { type: "idle" } } }), sessionID)
+  await expect(page.locator(".msg-assistant")).toContainText(text)
+  await expect(page.locator(".team-response")).toHaveCount(0)
+})
 
 test("un 503 de historial conserva mensajes y ofrece recargar", async ({ page }) => {
   await page.clock.install()
@@ -183,6 +223,21 @@ test("Compactar y continuar conserva el modelo, agente y variante del turno orig
   expect(state.summaries).toBe(1)
   expect(state.summaryRequests[0]).toEqual({ body: { providerID: "openai", modelID: "qa" }, directory: encodeURIComponent(root) })
   expect(state.prompts[0].body).toMatchObject({ model: { providerID: "openai", modelID: "qa" }, agent: "build", variant: "high", parts: [{ type: "text", text: CONTINUE_INTERRUPTED_TURN }] })
+})
+
+test("el límite de cuenta muestra una explicación breve y no ofrece compactar", async ({ page }) => {
+  const state = await setup(page)
+  state.status = {}
+  state.history = messages(true)
+  state.history[1].info.error = { name: "APIError", data: { message: "The usage limit has been reached", statusCode: 429, isRetryable: true, responseBody: JSON.stringify({ error: { type: "usage_limit_reached" } }) } }
+  await page.evaluate((sid) => (window as unknown as { __qaPush: (event: unknown) => void }).__qaPush({ type: "session.status", properties: { sessionID: sid, status: { type: "idle" } } }), sessionID)
+  const error = page.locator(".msg-error")
+  await expect(error).toContainText("La cuenta o el proveedor alcanzó su límite de uso")
+  await expect(error).not.toContainText("usage_limit_reached")
+  await expect(error).not.toContainText("The usage limit")
+  await expect(error.getByRole("button", { name: "Compactar y continuar" })).toHaveCount(0)
+  expect(state.summaries).toBe(0)
+  expect(state.prompts).toHaveLength(0)
 })
 
 test("el 507 de búfer explica el problema y compacta sin repetir herramientas ni crear otro chat", async ({ page }) => {
@@ -285,6 +340,7 @@ test("reconcilia reintentos perdidos y ofrece Compactar y continuar en la misma 
   state.status = {}
   await expect(page.locator(".retry-banner")).toHaveCount(0, { timeout: 10000 })
   await expect(page.locator(".msg-error")).toContainText(errorText)
+  await expect(page.locator(".msg-error")).not.toContainText("Service Unavailable")
   await page.locator(".msg-error").getByRole("button", { name: "Compactar y continuar" }).click()
   await expect.poll(() => state.prompts.length).toBe(1)
   expect(state.summaries).toBe(1)
@@ -304,6 +360,7 @@ test("verifica herramientas con el historial actual y la recuperación continúa
   failed.parts = [{ type: "tool", id: "p-edit", messageID: failed.info.id, sessionID, callID: "c-edit", tool: "apply_patch", state: { status: "completed", input: {}, output: "Archivo editado", title: "Edit", metadata: {}, time: { start: now, end: now + 1 } } }]
   await page.evaluate((info) => (window as unknown as { __qaPush: (event: unknown) => void }).__qaPush({ type: "message.updated", properties: { info } }), failed.info)
   await expect(page.locator(".msg-error")).toContainText(errorText)
+  await expect(page.locator(".msg-error")).not.toContainText("Service Unavailable")
   expect(state.prompts.length).toBe(0)
   await page.locator(".msg-error").getByRole("button", { name: "Compactar y continuar" }).click()
   await expect.poll(() => state.prompts.length).toBe(1)

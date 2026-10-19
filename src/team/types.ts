@@ -1,0 +1,23 @@
+import type { ModelRef } from "../lib/opencode"
+
+export type Skill = { id: string; name: string; version: number; description: string; instructions: string; verificationGuidelines: string[] }
+export type Employee = { id: string; name: string; role: string; model: ModelRef; variant: string | null; skillRefs: { id: string; version: number }[]; instructions: string; tools: string[]; maxConcurrentTasks: number }
+export type CaptureAction = { kind: "click" | "fill" | "wait"; selector: string; value?: string }
+export type CaptureTarget = { id: string; name: string; url: string; width: number; height: number; waitForSelector?: string | null; maskSelectors: string[]; actions: CaptureAction[]; required: boolean }
+export type RunLimits = { maxRunMinutes?: number | null; maxCostUsd?: number | null; maxTokens?: number | null; retentionDays?: number | null }
+export type Observation = { id: string; targetId: string; phase: string; capturedAt: number; status: string; artifactPath: string | null; reportPath: string; sha256: string | null; details: { reason?: string; source?: string; title?: string; text?: string; width?: number; height?: number; httpStatus?: number; steps?: { kind: string; selector: string; status: string }[] } }
+export type Team = { autonomous?: boolean; id: string; name: string; projectRoot: string; allowedRepositories: string[]; leadAgentId: string; members: Employee[]; maxParallelTasks: number; maxRetriesPerTask: number; updatedAt: number; evidenceTargets?: CaptureTarget[]; limits?: RunLimits }
+export type Review = { status: "approved" | "changes_requested" | "review_error"; summary: string; criteriaSatisfied: boolean }
+export type Attempt = { id: string; agent: Employee; sessionId: string | null; reviewSessionId: string | null; startedAt: number; finishedAt: number | null; status: string; summary: string; error: string | null; review: Review | null; commands: { command: string; exitCode: number | null; output: string }[]; recovered?: boolean }
+export type TeamTask = { id: string; title: string; objective: string; assignedAgentId: string; repository: string; dependencies: string[]; expectedFiles: string[]; writePaths?: string[]; acceptanceCriteria: string[]; status: string; attempts: Attempt[]; error: string | null }
+export type Coordination = { id: string; fromTaskId: string; message: string; taskIds: string[]; status: string; summary: string; createdAt: number; sessions: string[]; replies?: {at: number; sessionId: string | null; status: string; summary: string; taskIds: string[]}[] }
+export type Artifact = { id: string; taskId: string | null; phase: string; kind: string; relativePath: string; capturedAt: number; status: string; source: string; reason: string | null }
+export type RunStatus = "planning" | "running" | "paused" | "blocked" | "delivering" | "awaiting_manual_qa" | "qa_approved" | "cancelling" | "cancelled" | "failed"
+export type ChatSummary = { done: string; tested: string; pending: string }
+export type TeamRun = { chatSummary?: ChatSummary | null; id: string; goal: string; team: Team; skills: Skill[]; status: RunStatus; startedAt: number; finishedAt: number | null; planSessionId: string | null; closingSessions?: string[]; coordination?: Coordination[]; closingReviews?: Review[]; tasks: TeamTask[]; summary: string; error: string | null; evidenceDir: string; artifacts: Artifact[]; notified: boolean; captureTargets?: CaptureTarget[]; observations?: Observation[]; sessionUsage?: Record<string, {costUsd: number; tokens: number}>; evidenceExpiredAt?: number | null }
+export type TeamChatRecord = { id: string; title: string; archived: boolean; team: Team; skills: Skill[]; createdAt: number; runs: TeamRun[] }
+export type TeamStore = { schemaVersion: number; teams: Team[]; skills: Skill[]; chats: TeamChatRecord[] }
+
+export const statusLabel: Record<string, string> = { waiting_dependency: "Esperando respuesta del Lead", checking: "Lead revisando pedido", waiting: "Esperando entrega", resolved: "Resuelto", planning: "Planificando", running: "Trabajando", paused: "Pausado", blocked: "Necesita atención", delivering: "Guardando entrega", awaiting_manual_qa: "Pendiente de QA manual", qa_approved: "Aprobado por usuario", cancelling: "Deteniendo sesiones", cancelled: "Cancelado · cambios conservados", failed: "Falló", pending: "Pendiente", verifying: "Revisando", completed: "Completada", changes_requested: "Correcciones solicitadas", interrupted: "Interrumpido", review_error: "Error de revisión" }
+export const runActive = (status: string) => ["planning", "running", "paused", "delivering", "cancelling"].includes(status)
+export const latestSkills = (skills: Skill[]) => skills.filter((s) => !skills.some((v) => v.id === s.id && v.version > s.version))

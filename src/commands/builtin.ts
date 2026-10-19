@@ -2,6 +2,7 @@ import { registerCommands, type Command } from "./registry"
 import { useLayout } from "../state/layout"
 import { openMemory } from "../state/memory"
 import { openPlane } from "../state/plane"
+import { newTeamChat } from "../state/teams"
 import { showQuickOpen } from "../state/quickinput"
 import {
   openInNewWindow,
@@ -141,6 +142,8 @@ export function registerBuiltinCommands(): void {
     },
     { id: "workbench.view.scm", title: "Control de código", category: "Ver", icon: "source-control", keys: ["ctrl+shift+g"], run: () => useLayout.getState().showView("scm", false) },
     { id: "workbench.view.agents", title: "Sesiones del agente", category: "Ver", icon: "comment-discussion", keys: ["ctrl+shift+a"], run: () => useLayout.getState().showView("agents", false) },
+    { id: "workbench.view.teams", title: "Equipos IA", category: "Ver", icon: "organization", run: () => useLayout.getState().showView("teams", false) },
+    { id: "agent.newTeam", title: "Nuevo chat de equipo", category: "Agente", icon: "organization", run: () => void newTeamChat() },
     { id: "workbench.view.prs", title: "Pull requests", category: "Ver", icon: "git-pull-request", run: () => useLayout.getState().showView("prs", false) },
     { id: "layout.balanced", title: "Layout equilibrado (código + agente)", category: "Layout", icon: "layout", run: () => useLayout.getState().applyPreset("balanced") },
     { id: "layout.agent", title: "Layout con foco en el agente", category: "Layout", icon: "hubot", run: () => useLayout.getState().applyPreset("agent") },

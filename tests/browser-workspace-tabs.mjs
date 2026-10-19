@@ -1,7 +1,8 @@
-// Isolated headless Edge profile: exercise the actual CDP background-tab path
+// Isolated headless Chromium profile: exercise the actual CDP background-tab path
 // across two browser windows without touching the user's Chrome or profile.
 import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -9,7 +10,11 @@ import { Workspaces } from '../src-tauri/src/desktop/browser_workspace.mjs'
 const bundle = join(process.env.LOCALAPPDATA, 'com.guillecode.desktop/browser-bridge/node_modules/chrome-devtools-mcp/build/src/third_party/index.js')
 const { puppeteer } = await import(pathToFileURL(bundle))
 const dir = await mkdtemp(join(tmpdir(), 'gc-background-tab-'))
-const executablePath = join(process.env['ProgramFiles(x86)'], 'Microsoft/Edge/Application/msedge.exe')
+const executablePath = [
+  join(process.env.ProgramFiles ?? '', 'Google/Chrome/Application/chrome.exe'),
+  join(process.env['ProgramFiles(x86)'] ?? '', 'Microsoft/Edge/Application/msedge.exe'),
+].find(existsSync)
+assert.ok(executablePath, 'Install Chrome or Edge for the isolated CDP test')
 const browser = await puppeteer.launch({ executablePath, headless: true, userDataDir: join(dir, 'profile') })
 try {
   const control = await browser.target().createCDPSession()

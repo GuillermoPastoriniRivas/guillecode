@@ -15,6 +15,7 @@ export type EditorInput =
   | { kind: "chat"; sessionId: string }
   | { kind: "aiReview"; repo: string; scope: "changes" | "pr"; number?: number; title?: string }
   | { kind: "routine"; id: string }
+  | { kind: "team"; id: string }
   | { kind: "remote" }
   | { kind: "desktop" }
   | { kind: "memory" }
@@ -65,6 +66,8 @@ export function tabId(input: EditorInput): string {
       return `chat:${input.sessionId}`
     case "routine":
       return `routine:${input.id}`
+    case "team":
+      return `team:${input.id}`
     case "remote":
       return "remote"
     case "desktop":
@@ -108,6 +111,8 @@ export function inputTitle(input: EditorInput): string {
       return "Chat"
     case "routine":
       return input.id === "new" ? "Nueva rutina" : "Rutina"
+    case "team":
+      return input.id.startsWith("new") ? "Nuevo equipo IA" : "Equipo IA"
     case "remote":
       return "Conectar el celular"
     case "desktop":

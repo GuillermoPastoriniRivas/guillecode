@@ -1,0 +1,145 @@
+[
+  {
+    "id": "aws",
+    "slug": "aws",
+    "name": "AWS",
+    "version": 2,
+    "description": "Planificar e implementar infraestructura y servicios AWS (IAM, ECS, Lambda, S3, SQS, redes, observabilidad) de forma segura, con verificaciones y evidencia.",
+    "verificationGuidelines": [
+      "Plan/validaciones observadas y rollback",
+      "Separar configuración local de despliegue autorizado"
+    ]
+  },
+  {
+    "id": "backend",
+    "slug": "backend",
+    "name": "Backend",
+    "version": 2,
+    "description": "Desarrollar backend Node.js/NestJS, APIs, validaciones, servicios, arquitectura limpia, lógica de negocio y pruebas; activar en tareas de servidor.",
+    "verificationGuidelines": [
+      "Validación y autorización del servidor",
+      "Pruebas de duplicados, transacciones, errores y contratos"
+    ]
+  },
+  {
+    "id": "review",
+    "slug": "code-reviewer",
+    "name": "Code Review",
+    "version": 2,
+    "description": "Revisar cambios de código del equipo de IA: bugs, regresiones, tipos, seguridad y cumplimiento de criterios; emitir veredictos verificables sin editar archivos.",
+    "verificationGuidelines": [
+      "Hallazgos accionables con ruta y evidencia",
+      "Veredicto approved/changes_requested/review_error, sin aprobación por error"
+    ]
+  },
+  {
+    "id": "comportamientos",
+    "slug": "comportamientos",
+    "name": "Comportamientos",
+    "version": 2,
+    "description": "Capturar evidencias de comportamiento antes y después de una implementación: screenshots reales, APIs, pruebas, logs sanitizados y manifiesto final de GuilleCode.",
+    "verificationGuidelines": [
+      "Antes registrado antes de editar y después reproducible",
+      "Artefactos existentes, sanitizados y con QA manual pendiente"
+    ]
+  },
+  {
+    "id": "database",
+    "slug": "database",
+    "name": "Database",
+    "version": 2,
+    "description": "Diseñar y cambiar esquemas SQL/PostgreSQL, migraciones, índices, integridad, transacciones, consultas y compatibilidad de datos.",
+    "verificationGuidelines": [
+      "Migraciones compatibles y constraints",
+      "Integridad, concurrencia y datos previos conservados"
+    ]
+  },
+  {
+    "id": "devops",
+    "slug": "devops",
+    "name": "DevOps",
+    "version": 2,
+    "description": "Construir y mantener CI/CD, GitHub Actions, Azure DevOps, Terraform, automatización de builds, observabilidad, releases y rollback.",
+    "verificationGuidelines": [
+      "Pipelines reproducibles y permisos mínimos",
+      "Estado real de jobs/despliegues y rollback"
+    ]
+  },
+  {
+    "id": "docker",
+    "slug": "docker",
+    "name": "Docker",
+    "version": 2,
+    "description": "Crear y mantener Dockerfiles, Compose, builds multietapa, redes, servicios, health checks y ejecución reproducible de aplicaciones.",
+    "verificationGuidelines": [
+      "Build/health checks reales o bloqueos explícitos",
+      "Secretos y persistencia sin pérdida de datos"
+    ]
+  },
+  {
+    "id": "frontend",
+    "slug": "frontend",
+    "name": "Frontend",
+    "version": 2,
+    "description": "Implementar interfaces web React, TypeScript, formularios, accesibilidad, integración API y pruebas visuales; usar ante tareas frontend o UI en GuilleCode.",
+    "verificationGuidelines": [
+      "Flujo real, estados de carga/error y accesibilidad",
+      "Typecheck/build y pruebas pertinentes; capturas reales o ausencia documentada"
+    ]
+  },
+  {
+    "id": "git-integration",
+    "slug": "git-integration",
+    "name": "Git Integration",
+    "version": 2,
+    "description": "Coordinar archivos compartidos, diffs, branches y merges entre agentes paralelos de GuilleCode sin sobrescribir cambios del usuario.",
+    "verificationGuidelines": [
+      "Cambios previos preservados y locks respetados",
+      "Diff atribuible, conflictos resueltos y checks posteriores"
+    ]
+  },
+  {
+    "id": "graphql",
+    "slug": "graphql",
+    "name": "GraphQL",
+    "version": 2,
+    "description": "Diseñar y evolucionar APIs GraphQL: schema, resolvers, queries, mutations, tipos, autorización, paginación y compatibilidad contractual.",
+    "verificationGuidelines": [
+      "Schema válido y operaciones reales",
+      "Autorización, nullability, compatibilidad y rendimiento relevantes"
+    ]
+  },
+  {
+    "id": "qa",
+    "slug": "qa",
+    "name": "QA",
+    "version": 2,
+    "description": "Verificación técnica interna del equipo: pruebas unitarias, integración, E2E, regresiones, casos borde y resultados reproducibles; NO reemplaza el QA manual del usuario.",
+    "verificationGuidelines": [
+      "Escenarios críticos y negativos ejecutados",
+      "Resultados passed/failed/blocked/not_run sin aprobar QA manual"
+    ]
+  },
+  {
+    "id": "security",
+    "slug": "security",
+    "name": "Security",
+    "version": 2,
+    "description": "Evaluar y corregir riesgos de autenticación, autorización, secretos, entrada maliciosa, dependencias y exposición de datos en cambios de software.",
+    "verificationGuidelines": [
+      "Hallazgos confirmados y correcciones mínimas",
+      "Pruebas positivas/negativas sin exposición de secretos"
+    ]
+  },
+  {
+    "id": "team-lead",
+    "slug": "team-lead",
+    "name": "Team Lead",
+    "version": 2,
+    "description": "Coordinación autónoma de equipos de IA en GuilleCode: planificar tareas, asignar especialistas, controlar concurrencia, revisar resultados y entregar evidencias para QA manual.",
+    "verificationGuidelines": [
+      "DAG válido, empleados existentes y delegación real",
+      "Cierre verificado con evidencias y QA manual pendiente"
+    ]
+  }
+]

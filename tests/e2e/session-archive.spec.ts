@@ -82,7 +82,8 @@ test("archiva con sus subagentes, persiste al recargar y restaura conservando el
   expect(state.sessions[0].time.archived).toBeGreaterThan(0)
   expect(state.sessions[1].time.archived).toBe(0)
 
-  await page.getByTitle("Nueva sesión (Ctrl+Alt+N)").click()
+  await page.getByTitle("Nuevo chat (Ctrl+Alt+N)").click()
+  await page.getByText("Chat normal", { exact: true }).click()
   await expect(page.locator(".agent-recent")).not.toContainText("Conversación vieja")
   await page.locator(".command-center").click()
   await page.locator(".quick-input input").fill("#")

@@ -1,5 +1,6 @@
 import type { Message, Part } from "@opencode-ai/sdk"
 import { INTERNAL_SCREENSHOT_FILENAME, isDesktopContextText } from "./internal-context.ts"
+import { isAccountLimitError, readableProviderError } from "./provider-error.ts"
 
 export type RetryMessage = { info: Message; parts: Part[] }
 export type RetryContext = { model: { providerID: string; modelID: string }; agent: string; variant?: string; directory: string }
@@ -43,11 +44,12 @@ export function isUpstreamBufferError(error: unknown): boolean {
 export function providerErrorMessage(error: { name?: string; data?: { message?: string } }): string | undefined {
   if (isUpstreamBufferError(error))
     return "El servidor de IA superó su búfer al intentar reenviar la solicitud. No es falta de espacio en tu PC. Compactá la conversación para intentar continuar desde el último paso."
-  return interruptedStream(error) ?? error.data?.message ?? error.name
+  return interruptedStream(error) ?? readableProviderError(error)
 }
 
 export function isRetryableProviderError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false
+  if (isAccountLimitError(error)) return false
   const e = error as { name?: string; data?: { isRetryable?: boolean } }
   // Some gateways return 507 with isRetryable=false. Replaying the same request
   // is not useful, but compacting can recover it without losing the conversation.

@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { spawn, execFileSync } from "node:child_process"
 import { createServer } from "node:http"
 import { createServer as createTcpServer } from "node:net"
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, existsSync, readdirSync, rmSync, createReadStream } from "node:fs"
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, existsSync, readdirSync, rmSync, createReadStream, realpathSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { tmpdir } from "node:os"
 import { chromium } from "@playwright/test"
@@ -15,7 +15,7 @@ mkdirSync(join(tmpdir(), "opencode"), { recursive: true })
 // A failed run retains its disposable fixtures. GC_UPGRADE_FIXTURE can retry
 // their runtime checks without rebuilding, provided application code is unchanged.
 const reuse = process.env.GC_UPGRADE_FIXTURE
-const dir = reuse ? resolve(reuse) : mkdtempSync(join(tmpdir(), "opencode", "guillecode-upgrade-"))
+const dir = realpathSync(reuse ? resolve(reuse) : mkdtempSync(join(tmpdir(), "opencode", "guillecode-upgrade-")))
 const fixture = reuse ? JSON.parse(readFileSync(join(dir, "fixture.json"), "utf8")) : null
 const buildOnly = process.argv.includes("--build-only")
 const identifier = fixture?.identifier ?? `com.guillecode.upgrade-test-${Date.now()}`
@@ -58,7 +58,12 @@ function build(version) {
   const overlay = join(dir, "qa.json")
   writeFileSync(overlay, JSON.stringify({
     productName: "guillecode-upgrade-test", mainBinaryName: binaryName, identifier, version,
-    app: { windows: productionConfig.app.windows.map((window) => ({ ...window, devtools: true })) },
+    app: { windows: productionConfig.app.windows.map((window) => ({ ...window, devtools: true,
+      // Keep this in the disposable build as well as the environment: WebView2
+      // launched through an installed application may ignore inherited flags.
+      additionalBrowserArgs: `--remote-debugging-port=${cdpPort}`,
+      dataDirectory: `upgrade-qa-${identifier.split("-").at(-1)}`,
+    })) },
     plugins: { updater: { pubkey: fixturePubkey, endpoints: [`http://127.0.0.1:${server.address().port}/latest.json`], dangerousInsecureTransportProtocol: true } },
   }))
   execFileSync(process.execPath, [join(root, "node_modules/@tauri-apps/cli/tauri.js"), "build", "--ci", "--config", overlay, "--", "--locked"], {
@@ -142,6 +147,7 @@ try {
   console.log(`[upgrade] compilando instalador QA ${baseVersion}…`)
   const initialInstaller = reuse ? join(dir, `${baseVersion}-setup.exe`) : build(baseVersion)
   if (buildOnly) {
+    if (process.env.GC_UPGRADE_FIXTURE_OUTPUT) writeFileSync(process.env.GC_UPGRADE_FIXTURE_OUTPUT, JSON.stringify({ directory: dir }))
     console.log(`[upgrade] fixtures firmados listos para la prueba nativa: ${dir}`)
   } else {
   console.log(`[upgrade] instalando ${baseVersion} en un directorio aislado…`)
@@ -152,7 +158,9 @@ try {
   const executable = join(installed, `${binaryName}.exe`)
   assert.ok(existsSync(executable), "Falta ejecutable instalado")
   console.log(`[upgrade] abriendo ${baseVersion} y esperando el motor…`)
-  appProcess = spawn(executable, ["--hidden"], { env, windowsHide: true, stdio: "ignore" })
+  // Exercise the same visible launch as a user. An initially invisible WebView
+  // can defer its browser process, leaving CDP unavailable indefinitely.
+  appProcess = spawn(executable, [], { env, windowsHide: true, stdio: "ignore" })
   let connected = await connect()
   browser = connected.connection
   let page = connected.page

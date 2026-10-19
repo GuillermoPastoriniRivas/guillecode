@@ -15,7 +15,7 @@ export function UpdateButton() {
 }
 
 export function UpdatesHost() {
-  const { open, version, update, phase, downloaded, total, error, checkedAt } = useUpdates()
+  const { open, version, update, phase, downloaded, total, error, checkedAt, policy } = useUpdates()
   const close = () => useUpdates.setState({ open: false })
   useEffect(() => {
     if (!open || phase === "installing") return
@@ -29,6 +29,8 @@ export function UpdatesHost() {
   return <section className="updates-panel" role="dialog" aria-label="Actualizaciones de GuilleCode">
     <div className="updates-head"><h2>Actualizaciones de GuilleCode</h2><button type="button" className="btn" aria-label="Cerrar actualizaciones" onClick={close}><Icon name="close" /></button></div>
     <p className="updates-version">Versión instalada: {version || update?.currentVersion || "…"}</p>
+    {policy && !policy.requiresSourceIntegration && <p className="updates-version">Edición: {policy.edition}</p>}
+    {policy?.requiresSourceIntegration && <div className="updates-notes" role="note"><strong>Edición local · {policy.edition}</strong><p>Esta app incluye mejoras propias. Para conservarlas, las nuevas versiones se integran en el código y se instala la compilación combinada. El instalador público reemplazaría estas mejoras.</p><p>Se siguen consultando las novedades; la descarga e instalación directas están protegidas.</p></div>}
     {error && <p className="updates-error" role="alert">{error}</p>}
     {update ? <>
       <h3>{phase === "ready" ? "Lista para instalar" : "Nueva versión disponible"}: {update.version}</h3>
@@ -38,8 +40,8 @@ export function UpdatesHost() {
         <p>{percent === null ? `${Math.round(downloaded / 1024 / 1024)} MB descargados` : `${percent}% descargado`} · Podés seguir trabajando.</p>
       </div>}
       <div className="updates-actions">
-        {phase === "available" && <button type="button" className="btn btn-primary" onClick={() => void downloadUpdate()}><Icon name="cloud-download" />{error ? "Reintentar descarga" : "Descargar actualización"}</button>}
-        {phase === "ready" && <button type="button" className="btn btn-primary" onClick={() => void installUpdate()}><Icon name="debug-restart" />Instalar y reiniciar</button>}
+        {phase === "available" && !policy?.requiresSourceIntegration && <button type="button" className="btn btn-primary" onClick={() => void downloadUpdate()}><Icon name="cloud-download" />{error ? "Reintentar descarga" : "Descargar actualización"}</button>}
+        {phase === "ready" && !policy?.requiresSourceIntegration && <button type="button" className="btn btn-primary" onClick={() => void installUpdate()}><Icon name="debug-restart" />Instalar y reiniciar</button>}
         <button type="button" className="btn" onClick={close}>Más tarde</button>
       </div>
     </> : <p>{phase === "checking" ? "Buscando actualizaciones…" : error ? "Tu versión actual sigue disponible. Podés reintentar." : checkedAt ? "Tenés la última versión." : "Buscá si hay una versión nueva."}</p>}

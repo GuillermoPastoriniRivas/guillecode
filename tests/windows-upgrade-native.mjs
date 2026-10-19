@@ -2,14 +2,15 @@ import assert from "node:assert/strict"
 import { spawn, execFileSync } from "node:child_process"
 import { createServer } from "node:net"
 import { randomUUID } from "node:crypto"
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, realpathSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { once } from "node:events"
+import { windowsDesktopCapabilities } from "./windows-desktop-capabilities.mjs"
 
 // Run against signed QA fixtures produced by windows-upgrade.mjs. This checks
 // NSIS replacement/relaunch without CDP; it does NOT exercise the in-app updater.
 if (process.platform !== "win32" || !process.argv[2]) throw new Error("Uso: node tests/windows-upgrade-native.mjs carpeta-de-fixtures-QA")
-const dir = resolve(process.argv[2])
+const dir = realpathSync(resolve(process.argv[2]))
 const fixture = JSON.parse(readFileSync(join(dir, "fixture.json"), "utf8"))
 const { identifier } = fixture
 assert.match(identifier, /^com\.guillecode\.upgrade-test-\d+$/)
@@ -27,6 +28,14 @@ const env = { ...process.env, USERPROFILE: profile, HOME: profile, APPDATA: prof
 for (const key of Object.keys(env)) if (/API_KEY|TOKEN|SECRET|PASSWORD|TAURI_SIGNING/.test(key)) delete env[key]
 mkdirSync(env.OPENCODE_CONFIG_DIR, { recursive: true })
 const delay = (ms) => new Promise((done) => setTimeout(done, ms))
+// Elevated RunAsUser delegates to Explorer. That process does not inherit this
+// harness's isolated profile/env, even when GetShellWindow succeeds. Never
+// launch a QA fixture with the real user's profile. Verify replacement/data
+// and explicitly launch with env there; require /R for non-elevated desktops.
+const desktop = windowsDesktopCapabilities()
+const automaticRelaunch = !desktop.elevated && !process.argv.includes("--without-desktop-relaunch")
+console.log(`[native-upgrade] desktop=${JSON.stringify(desktop)}; automaticRelaunchTested=${automaticRelaunch}`)
+let outcome = "failed"
 async function port() {
   const server = createServer()
   await new Promise((done) => server.listen(0, "127.0.0.1", done))
@@ -84,19 +93,23 @@ try {
   orphan = spawn(join(installed, "opencode.exe"), ["serve", "--port", String(await port())], { env, windowsHide: true, stdio: "ignore" })
   unrelated = spawn(join(other, "opencode.exe"), ["serve", "--port", String(await port())], { env, windowsHide: true, stdio: "ignore" })
   await delay(1000)
-  console.log("[native-upgrade] actualización /S /UPDATE /R con app y motor huérfano abiertos…")
-  await installer(nextVersion, ["/S", "/UPDATE", "/R", "/ARGS", "--hidden"])
-  await healthy()
+  console.log(`[native-upgrade] actualización /S /UPDATE${automaticRelaunch ? " /R" : " (relanzamiento explícito para conservar el perfil QA aislado)"} con app y motor huérfano abiertos…`)
+  await installer(nextVersion, ["/S", "/UPDATE", ...(automaticRelaunch ? ["/R", "/ARGS", "--hidden"] : [])])
   assert.notEqual(app.exitCode, null, "La app anterior no se cerró")
   assert.notEqual(orphan.exitCode, null, "Quedó abierto el motor huérfano")
   assert.equal(unrelated.exitCode, null, "Se cerró un motor de otra instalación")
   const version = execFileSync("powershell.exe", ["-NoProfile", "-Command", "[Diagnostics.FileVersionInfo]::GetVersionInfo($env:GC_QA_EXE).ProductVersion"], { encoding: "utf8", env: { ...process.env, GC_QA_EXE: executable } }).trim()
   assert.equal(version, nextVersion)
+  if (!automaticRelaunch) spawn(executable, ["--hidden"], { env, windowsHide: true, stdio: "ignore" })
+  await healthy()
   assert.equal((await hub(`/oc/session/${session.id}`)).title, "native-upgrade-preserved")
   assert.deepEqual(JSON.parse(readFileSync(join(appData, "remote_prefs.json"), "utf8")), prefsBefore)
-  assert.ok(processes().some((p) => p.path === executable && p.pid !== app.pid), "NSIS no relanzó la nueva app")
-  console.log(`NSIS UPGRADE PASS: ${baseVersion} → ${nextVersion}; modo silencioso, motor huérfano liberado, otro motor conservado, relanzamiento automático y conversación/preferencias preservadas`)
+  assert.ok(processes().some((p) => p.path.toLowerCase() === executable.toLowerCase() && p.pid !== app.pid), "La app nueva no quedó ejecutándose")
+  outcome = "passed"
+  console.log(`NSIS UPGRADE PASS: ${baseVersion} → ${nextVersion}; modo silencioso, motor huérfano liberado, otro motor conservado, conversación/preferencias preservadas; automaticRelaunchTested=${automaticRelaunch}`)
 } finally {
+  mkdirSync("test-results", { recursive: true })
+  writeFileSync("test-results/upgrade-native-report.json", JSON.stringify({ outcome, baseVersion, nextVersion, desktop, automaticRelaunchTested: automaticRelaunch, processesAtEnd: processes().map((p) => ({ pid: p.pid, executable: p.path.split(/[\\/]/).at(-1) })) }, null, 2))
   for (const process of processes()) {
     try { execFileSync("taskkill.exe", ["/PID", String(process.pid), "/T", "/F"], { stdio: "ignore" }) } catch {}
   }

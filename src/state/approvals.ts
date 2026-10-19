@@ -3,6 +3,7 @@ import { call, isTauri, onEvent } from "../lib/tauri"
 import { loadJson, saveJson } from "../lib/persist"
 import { notify } from "./toasts"
 import { DRAFT_TAB, type PermissionRequest } from "./agent"
+import { isTeamSession } from "../team/session-index"
 
 type ApprovalsView = { autoApprove: boolean; sessions: Record<string, boolean> }
 
@@ -21,6 +22,7 @@ export const useApprovals = create<ApprovalsState>(() => ({
 }))
 
 export function approveFor(sessionId: string | null | undefined): boolean {
+  if (sessionId && isTeamSession(sessionId)) return false
   const s = useApprovals.getState()
   const key = sessionId ?? DRAFT_TAB
   return key in s.sessions ? s.sessions[key] : s.autoApprove
@@ -33,6 +35,7 @@ export function permissionNeedsResponse(
   sessions: { id: string; parentID?: string }[],
   approvals = useApprovals.getState(),
 ): boolean {
+  if (isTeamSession(request.sessionID)) return true
   if (approvals.failed.includes(request.id)) return true
   if (!approvals.loaded) return false
   let root = request.sessionID
@@ -78,6 +81,7 @@ export function initApprovals(): void {
 }
 
 export function setApprovalForSession(sessionId: string, enabled: boolean): void {
+  if (enabled && isTeamSession(sessionId)) {notify.info("Permisos del equipo", "Los comandos habituales de verificación ya están autorizados. Las demás acciones conservan su confirmación de OpenCode.");return}
   useApprovals.setState((s) => ({ sessions: { ...s.sessions, [sessionId]: enabled } }))
   saveJson("approvals.sessions", useApprovals.getState().sessions)
   if (isTauri && sessionId && sessionId !== DRAFT_TAB) {

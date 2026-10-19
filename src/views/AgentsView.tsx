@@ -148,6 +148,7 @@ export function AgentsView() {
       <div className="view-header">
         <span className="view-title">Sesiones del agente</span>
         <span className="view-actions">
+          <IconButton icon="organization" title="Historial de chats de equipo" onClick={() => useLayout.getState().showView("teams", false)} />
           <IconButton
             icon="add"
             title="Nueva sesión"

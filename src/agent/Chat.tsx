@@ -1,6 +1,7 @@
 import { Fragment, memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import type { Part, Session } from "@opencode-ai/sdk"
 import { Markdown } from "./Markdown"
+import { TeamResponse } from "./TeamResponse"
 import { ToolCard } from "./ToolCard"
 import { summarize, type ToolState } from "./toolSummary"
 import { Icon, Spinner } from "../components/ui"
@@ -32,7 +33,7 @@ function isContextMessage(m: ChatMessage): boolean {
   if (m.info.role !== "user") return false
   const texts = m.parts.filter((p) => p.type === "text")
   if (texts.length === 0) return false
-  return texts.every((p) => p.synthetic === true || /^#{1,2} Memoria fluws/.test(p.text))
+  return texts.every((p) => p.synthetic === true || p.text.startsWith("[GUILLECODE_TEAM_RUN]") || /^#{1,2} Memoria fluws/.test(p.text))
 }
 
 function visibleUserText(m: ChatMessage): string {
@@ -102,7 +103,7 @@ function Steps({ parts, live }: { parts: StepPart[]; live: boolean }) {
   )
 }
 
-function renderParts(parts: Part[], live: boolean): ReactNode[] {
+function renderParts(parts: Part[], live: boolean, teamSession: boolean): ReactNode[] {
   const nodes: ReactNode[] = []
   let group: StepPart[] = []
   const flush = () => {
@@ -117,7 +118,7 @@ function renderParts(parts: Part[], live: boolean): ReactNode[] {
     if (isStep(p)) group.push(p)
     else {
       flush()
-      nodes.push(<PartView key={p.id} part={p} live={live} />)
+      nodes.push(<PartView key={p.id} part={p} live={live} teamSession={teamSession} />)
     }
   }
   flush()
@@ -151,13 +152,13 @@ function FileChip({ part }: { part: Extract<Part, { type: "file" }> }) {
   )
 }
 
-const PartView = memo(function PartView({ part, live }: { part: Part; live: boolean }) {
+const PartView = memo(function PartView({ part, live, teamSession = false }: { part: Part; live: boolean; teamSession?: boolean }) {
   switch (part.type) {
     case "text":
       if (part.synthetic || !part.text.trim() || isDesktopContextText(part.text)) return null
       return (
         <div className="msg-text">
-          <Markdown text={part.text} />
+          {teamSession ? <TeamResponse text={part.text} live={live} /> : <Markdown text={part.text} />}
           {live && part.time && !part.time.end && <span className="stream-cursor" />}
         </div>
       )
@@ -192,7 +193,7 @@ function AssistantFooter({ message, onRetry, onCompact, working }: { message: Ch
             {isUpstreamBufferError(error) && (
               <details className="msg-error-details">
                 <summary>Detalles técnicos</summary>
-                <pre>{error.data?.message}{error.data?.responseBody && error.data.responseBody !== error.data.message ? `\n${error.data.responseBody}` : ""}</pre>
+                <pre>Insufficient Storage: exceeded request buffer limit while retrying upstream</pre>
               </details>
             )}
           </div>
@@ -244,7 +245,7 @@ function ContextBlock({ message }: { message: ChatMessage }) {
     .map((p) => p.text)
     .join("\n\n")
   if (!text.trim()) return null
-  const title = text.match(/^#{1,2} ([^\n]+)/m)?.[1]?.trim() ?? "Contexto inyectado"
+  const title = text.startsWith("[GUILLECODE_TEAM_RUN]") ? "Instrucciones del equipo" : text.match(/^#{1,2} ([^\n]+)/m)?.[1]?.trim() ?? "Contexto inyectado"
   return (
     <div className="msg-context">
       <button type="button" className="msg-context-chip" onClick={() => setOpen(!open)}>
@@ -290,6 +291,7 @@ function userMenu(session: Session, message: ChatMessage, e: React.MouseEvent) {
 export function Chat({ session, busy }: { session: Session; busy: boolean }) {
   const view = useAgent((s) => s.views[session.id])
   const messages = useMemo(() => view?.messages ?? [], [view])
+  const teamSession = session.title.startsWith("Equipo · ") || messages.some(m => m.info.role === "user" && m.parts.some(p => p.type === "text" && p.text.startsWith("[GUILLECODE_TEAM_RUN]")))
   const failedID = latestFailedAssistant(messages)?.info.id
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
@@ -490,7 +492,7 @@ export function Chat({ session, busy }: { session: Session; busy: boolean }) {
                 ) : (
                   <div className="msg-assistant-body">
                     <div className="msg-parts">
-                      {renderParts(m.parts, live)}
+                      {renderParts(m.parts, live, teamSession)}
                       {live && m.parts.every((p) => p.type === "step-start") && (
                         <div className="thinking">
                           <span />

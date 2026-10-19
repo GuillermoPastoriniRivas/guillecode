@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync, mkdtempSync, rmSyn
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
+import { canonicalBinaryHash } from "./binary-validation.mjs"
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const config = JSON.parse(readFileSync(join(root, "scripts/release-config.json"), "utf8"))
@@ -11,6 +12,12 @@ const json = (path) => JSON.parse(readFileSync(join(root, path), "utf8"))
 const writeJson = (path, data) => writeFileSync(join(root, path), `${JSON.stringify(data, null, 2)}\n`)
 const run = (cmd, args) => execFileSync(cmd, args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] }).trim()
 export const sha256 = (data) => createHash("sha256").update(data).digest("hex")
+export function selectInstaller(names, version, productName) {
+  validVersion(version)
+  const matching = names.filter((name) => name.startsWith(`${productName}_${version}_`) && name.endsWith("-setup.exe"))
+  if (matching.length !== 1) throw new Error("Debe existir exactamente un instalador de esta versión y producto; no se publican builds anteriores ni fixtures QA")
+  return matching[0]
+}
 export function validVersion(version) {
   if (!/^\d+\.\d+\.\d+$/.test(version) || version.split(".").some((v) => String(Number(v)) !== v)) throw new Error("Usá una versión estable X.Y.Z, sin v ni prerelease")
   return version
@@ -116,12 +123,10 @@ function manifest(bundle = "src-tauri/target/release/bundle/nsis", notesFile = p
   const version = check()
   if (!notesFile) throw new Error("Indicá el archivo de novedades como segundo argumento o GC_RELEASE_NOTES_FILE")
   const dir = resolve(root, bundle)
-  const installers = readdirSync(dir).filter((name) => name.endsWith("-setup.exe"))
-  if (installers.length !== 1) throw new Error("El bundle debe contener exactamente un instalador NSIS; limpiá los bundles viejos")
-  const name = installers[0], bytes = readFileSync(join(dir, name))
+  const name = selectInstaller(readdirSync(dir), version, json("src-tauri/tauri.conf.json").productName), bytes = readFileSync(join(dir, name))
   const latest = makeManifest(version, readFileSync(notesFile, "utf8"), name, readFileSync(join(dir, `${name}.sig`), "utf8"))
   writeFileSync(join(dir, "latest.json"), `${JSON.stringify(latest, null, 2)}\n`)
-  writeFileSync(join(dir, "release-info.json"), `${JSON.stringify({ version, commit: run("git", ["rev-parse", "HEAD"]), engineVersion: config.engineVersion, installer: name, sha256: sha256(bytes) }, null, 2)}\n`)
+  writeFileSync(join(dir, "release-info.json"), `${JSON.stringify({ version, commit: run("git", ["rev-parse", "HEAD"]), engineVersion: config.engineVersion, installer: name, sha256: sha256(bytes), applicationCanonicalSha256: canonicalBinaryHash(readFileSync(join(root,"src-tauri/target/release/app.exe"))), edition: "equipos-ia", sourceRepository: config.repository, skillsCatalogVersion: 2 }, null, 2)}\n`)
   console.log(`Generado latest.json para ${version}; SHA256 ${sha256(bytes)}`)
 }
 

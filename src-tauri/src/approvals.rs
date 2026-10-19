@@ -42,6 +42,9 @@ pub fn start(app: &AppHandle) {
 }
 
 pub fn auto_approve(app: &AppHandle, session: &str) -> bool {
+    // Teams grant exact ordinary verification commands in their own permission
+    // rules. A global auto-approve preference must not bypass the remaining asks.
+    if crate::teams::is_team_session(app,session) {return false;}
     let state = app.state::<ApprovalState>();
     let config = state.config.lock().unwrap();
     if session.is_empty() {

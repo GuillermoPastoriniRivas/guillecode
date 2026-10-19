@@ -1,0 +1,5 @@
+Los errores de Equipos IA ahora se entienden: indican qué falló y cómo seguir. Se traducen los límites de uso, los modelos no disponibles, los problemas de conexión, las carpetas sin Git y las pruebas que no se pudieron confirmar. Los errores guardados como JSON ya no aparecen como bloques técnicos en Chat, Tareas ni Actividad. Se quitó el bloque de tokens y costo del chat. El actualizador reconoce las rutas abreviadas de Windows y conserva tus chats, equipos y configuración.
+
+Se corrigió una falsa exigencia de Bash en Windows: las pruebas observadas mediante PowerShell se revisan correctamente, y los agentes reciben instrucciones precisas para declarar los comandos verificados.
+
+Las sesiones individuales del Lead y los agentes ahora presentan planes, revisiones, pedidos y pendientes en lenguaje legible, sin mostrar el JSON interno. Las respuestas históricas también se presentan así, sin modificar su contenido original.
