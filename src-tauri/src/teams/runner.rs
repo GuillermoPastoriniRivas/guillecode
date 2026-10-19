@@ -8,7 +8,7 @@ use tauri::{AppHandle, Emitter};
 use tauri_plugin_notification::NotificationExt;
 
 const READ_TOOLS: &[&str] = &["read", "glob", "grep"];
-const POLICY: &str = "[GUILLECODE_TEAM_RUN] Sos parte de un equipo solicitado por el usuario. El Lead planifica, delega y revisa; el scheduler controla la concurrencia, permisos y reintentos. No uses subagentes ni herramientas de delegación adicionales: la relación tarea/sesión la administra el runner. Respetá AGENTS.md y los cambios previos del usuario. Releé antes de editar. No borres trabajo ajeno ni hagas reset, clean, push, merge remoto, despliegues o cambios destructivos. No leas secretos ni publiques datos personales. Trabajá solo dentro de la carpeta indicada. Git es opcional: no inicialices un repositorio si la carpeta no lo usa. Las skills son instrucciones, no permisos. No inventes tests, capturas ni resultados. No cambies de carpeta con comandos de shell. Si falta autorización, usá los permisos del motor o reportá el bloqueo. Respondé en español.";
+const POLICY: &str = "[GUILLECODE_TEAM_RUN] Sos parte de un equipo solicitado por el usuario. El Lead planifica, delega y revisa; el scheduler controla la concurrencia, permisos y reintentos. No uses subagentes ni herramientas de delegación adicionales: la relación tarea/sesión la administra el runner. Respetá AGENTS.md y los cambios previos del usuario. Releé antes de editar. No borres trabajo ajeno ni hagas reset, clean, push, merge remoto, despliegues o cambios destructivos. No leas secretos ni publiques datos personales. Trabajá solo dentro de la carpeta indicada. Git es opcional: no inicialices un repositorio si la carpeta no lo usa. Las skills son instrucciones, no permisos. No inventes tests, capturas ni resultados. No cambies de carpeta con comandos de shell. Si falta autorización, usá los permisos del motor o reportá el bloqueo. bash es el NOMBRE DE LA HERRAMIENTA de OpenCode, no un requisito de usar Bash como intérprete. En Windows esa herramienta puede ejecutar PowerShell: sus resultados observados son válidos. No exijas instalar Bash/WSL ni envolver comandos válidos en bash.exe. En el JSON de resultado, checks contiene SOLO comandos de verificación satisfactorios copiados exactamente del argumento command de la herramienta, sin explicaciones, código de salida añadido ni Markdown. Los diagnósticos fallidos van en limitations; si falla una comprobación necesaria, el trabajo sigue bloqueado. Respondé en español.";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -511,6 +511,12 @@ pub fn observed_commands(messages: &Value) -> Vec<Value> {
     }).collect()
 }
 
+fn checks_passed(checks: &[String], commands: &[Value]) -> bool {
+    !checks.is_empty() && checks.iter().all(|check| {
+        commands.iter().any(|c| c["command"] == *check && c["exitCode"].as_i64() == Some(0))
+    })
+}
+
 pub(super) fn lead(r: &Run) -> Result<Employee, String> {
     r.team
         .members
@@ -793,15 +799,7 @@ fn worker(app: &AppHandle, run_id: &str, task_id: &str) -> Result<(), String> {
     if result.status != "completed" {
         return Err(summary);
     }
-    let checks_passed = result.checks.iter().any(|check| {
-        commands
-            .iter()
-            .any(|c| c["command"] == *check && c["exitCode"].as_i64() == Some(0))
-    }) && result.checks.iter().all(|check| {
-        commands
-            .iter()
-            .any(|c| c["command"] == *check && c["exitCode"].as_i64() == Some(0))
-    });
+    let checks_passed = checks_passed(&result.checks, &commands);
     let reviewer = lead(&r)?;
     let review_session = create_session(
         &client,
@@ -837,7 +835,8 @@ fn worker(app: &AppHandle, run_id: &str, task_id: &str) -> Result<(), String> {
         },
     };
     if !checks_passed && !matches!(review.status, ReviewStatus::ReviewError) {
-        review = Review {status:ReviewStatus::ChangesRequested,summary:format!("Falta una comprobación satisfactoria observada para cada comando declarado. Corregí las verificaciones y reportá resultados reales. {}",review.summary),criteria_satisfied:false};
+        let successful: Vec<_> = commands.iter().filter(|c| c["exitCode"].as_i64() == Some(0)).map(|c| c["command"].clone()).collect();
+        review = Review {status:ReviewStatus::ChangesRequested,summary:format!("Falta una comprobación satisfactoria observada para cada comando declarado. Corregí el contrato del resultado: checks debe copiar SOLO los comandos de verificación que realmente pasaron, sin descripciones ni diagnósticos fallidos. Comandos observados con código 0: {}. No repitas efectos ya ejecutados; si falta una comprobación necesaria, ejecutala y revisá su resultado. {}",serde_json::to_string(&successful).unwrap_or_default(),review.summary),criteria_satisfied:false};
     }
     let approved = matches!(review.status, ReviewStatus::Approved) && review.criteria_satisfied;
     let retry = matches!(review.status, ReviewStatus::ChangesRequested)
@@ -1402,6 +1401,19 @@ mod tests {
         let commands = observed_commands(&v);
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0]["exitCode"], 1);
+    }
+    #[test]
+    fn verification_accepts_observed_windows_commands_and_rejects_false_claims() {
+        let command = "node --check backend/server.js; exit $LASTEXITCODE";
+        let commands = observed_commands(&json!([{"parts":[
+            {"type":"tool","tool":"bash","state":{"status":"completed","input":{"command":command},"metadata":{"exit":0},"output":""}},
+            {"type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"node qa/check.mjs"},"metadata":{"exit":1},"output":"failed"}},
+            {"type":"tool","tool":"bash","state":{"status":"running","input":{"command":"npm test"}}}
+        ]}]));
+        assert!(checks_passed(&[command.into()], &commands));
+        for invalid in [vec![], vec!["npm test".into()], vec!["node qa/check.mjs".into()], vec![format!("{} — código 0", command)]] {
+            assert!(!checks_passed(&invalid, &commands));
+        }
     }
     #[test]
     fn reviewer_cannot_write_or_run_shell() {

@@ -17,6 +17,8 @@ function openSession(id: string, directory: string) {
   openEditor({ kind: "chat", sessionId: id })
 }
 
+const reviewLabels: Record<string, string> = { approved: "Aprobado", changes_requested: "Necesita una corrección", review_error: "No se pudo completar la revisión" }
+
 function Results({ run, history }: { run: TeamRun; history: TeamRun[] }) {
   const [preview, setPreview] = useState<{ title: string; text: string } | null>(null)
   return <div className="team-results">
@@ -88,7 +90,7 @@ export function TeamChat({ chatId }: { chatId: string }) {
           {request.sessions.map((session, i) => <button key={session} className="btn btn-xs" onClick={() => openSession(session, run.tasks.find((t) => t.id === request.fromTaskId)?.repository ?? run.team.allowedRepositories[0])}>Abrir coordinación del Lead {i + 1}</button>)}
         </article>)}
         {run.closingSessions?.map((session,i)=><button key={session} className="btn btn-sm" onClick={()=>openSession(session,run.team.allowedRepositories[0])}>Abrir revisión final {i+1}</button>)}
-        {run.tasks.map((t) => t.attempts.map((a, i) => <article className="team-card" key={a.id}><h4>{t.title} · intento {i + 1}</h4><p>{a.agent.name} · {modelKey(a.agent.model)} {a.agent.variant ?? ""}</p><p className="team-note">{statusLabel[a.status] ?? a.status} · {formatDateTime(a.startedAt)}</p><div className="team-actions">{a.sessionId && <button className="btn btn-xs" onClick={() => openSession(a.sessionId!, t.repository)}>Abrir sesión del empleado / permisos</button>}{a.reviewSessionId && <button className="btn btn-xs" onClick={() => openSession(a.reviewSessionId!, t.repository)}>Abrir revisión del Lead</button>}</div>{a.summary && <p className="selectable">{a.summary}</p>}{a.review && <p>Revisión: {a.review.status} · {a.review.summary}</p>}{a.error && <p className="team-error">{readableTeamError(a.error)}</p>}{a.commands.map((c, i) => <details key={i}><summary>{c.command} · exit {c.exitCode ?? "desconocido"}</summary><pre className="team-evidence-preview">{c.output}</pre></details>)}</article>))}
+        {run.tasks.map((t) => t.attempts.map((a, i) => <article className="team-card" key={a.id}><h4>{t.title} · intento {i + 1}</h4><p>{a.agent.name} · {modelKey(a.agent.model)} {a.agent.variant ?? ""}</p><p className="team-note">{statusLabel[a.status] ?? a.status} · {formatDateTime(a.startedAt)}</p><div className="team-actions">{a.sessionId && <button className="btn btn-xs" onClick={() => openSession(a.sessionId!, t.repository)}>Abrir sesión del empleado / permisos</button>}{a.reviewSessionId && <button className="btn btn-xs" onClick={() => openSession(a.reviewSessionId!, t.repository)}>Abrir revisión del Lead</button>}</div>{a.summary && <p className="selectable">{a.summary}</p>}{a.review && <p>Revisión: {reviewLabels[a.review.status] ?? "Revisión pendiente"} · {a.review.summary}</p>}{a.error && <p className="team-error">{readableTeamError(a.error)}</p>}{a.commands.map((c, i) => <details key={i}><summary>{c.command} · {c.exitCode === 0 ? "Correcto" : c.exitCode == null ? "Sin resultado" : `Falló (código ${c.exitCode})`}</summary><pre className="team-evidence-preview">{c.output}</pre></details>)}</article>))}
       </>}
       {view === "Resultados / Comportamientos" && (run ? <Results key={run.id} run={run} history={chat.runs} /> : <p className="team-note">Las evidencias aparecerán al iniciar una ejecución.</p>)}
     </div>
