@@ -25,6 +25,7 @@ export function isAccountLimitError(error: unknown): boolean {
 export function readableProviderError(error: unknown): string {
   const parts = errorParts(error)
   const text = parts.join(" ")
+  if (/does not support images?|image input is not supported|unsupported image|invalid image/i.test(text)) return "El modelo no pudo leer la imagen. Comprobá el archivo y usá un modelo que admita imágenes."
   if (isAccountLimitError(error)) return "La cuenta o el proveedor alcanzó su límite de uso. Esperá a que se restablezca o elegí otro modelo o proveedor y reintentá. Tus cambios se conservan."
   if (/invalid_api_key|authentication_error|unauthorized|token.*expired|expired.*token|incorrect api key/i.test(text)) return "La cuenta de IA necesita volver a conectarse. Revisá la conexión del proveedor y reintentá. Tus cambios se conservan."
   if (/model_not_found|model.*not (found|available)|does not have access to model|unsupported_model/i.test(text)) return "El modelo elegido no está disponible para esta cuenta. Elegí otro modelo desde la configuración del equipo y reintentá."

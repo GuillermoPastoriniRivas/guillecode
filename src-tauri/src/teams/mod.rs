@@ -1,4 +1,5 @@
 mod capture;
+mod attachments;
 mod coordination;
 mod conversation;
 pub mod domain;
@@ -215,8 +216,16 @@ pub fn teams_state(app: AppHandle) -> Result<Store, String> {
 }
 
 #[tauri::command]
-pub fn team_chat_send(app: AppHandle, chat_id: String, text: String) -> Result<String, String> {
-    conversation::send(app, chat_id, text)
+pub fn team_chat_send(app: AppHandle, chat_id: String, text: String, images: Option<Vec<ImageInput>>) -> Result<String, String> {
+    conversation::send(app, chat_id, text, images.unwrap_or_default())
+}
+
+#[tauri::command]
+pub fn team_image_read(app: AppHandle, image_id: String) -> Result<String, String> {
+    let store = read(&app)?;
+    let image = store.chats.iter().flat_map(|c| c.messages.iter().flat_map(|m| &m.images).chain(c.runs.iter().flat_map(|r| &r.images)))
+        .find(|i| i.id == image_id).ok_or("Esta imagen no pertenece a un chat de equipos")?;
+    attachments::data_url(&app, image)
 }
 
 #[tauri::command]
@@ -398,6 +407,10 @@ pub fn team_chats_edit(
 
 #[tauri::command]
 pub fn team_runs_start(app: AppHandle, chat_id: String, goal: String) -> Result<String, String> {
+    start_run(app, chat_id, goal, vec![])
+}
+
+fn start_run(app: AppHandle, chat_id: String, goal: String, images: Vec<ChatImage>) -> Result<String, String> {
     if goal.trim().is_empty() || goal.len() > 64_000 {
         return Err("Ingresá un objetivo (máximo 64 KB)".into());
     }
@@ -455,6 +468,7 @@ pub fn team_runs_start(app: AppHandle, chat_id: String, goal: String) -> Result<
             })
             .unwrap_or_default();
         c.runs.push(Run {
+            images: images.clone(),
             guidance: vec![],
             chat_summary: None,
             id: run_id.clone(),

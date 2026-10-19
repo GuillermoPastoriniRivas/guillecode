@@ -14,8 +14,10 @@ export type Coordination = { id: string; fromTaskId: string; message: string; ta
 export type Artifact = { id: string; taskId: string | null; phase: string; kind: string; relativePath: string; capturedAt: number; status: string; source: string; reason: string | null }
 export type RunStatus = "planning" | "running" | "paused" | "blocked" | "delivering" | "awaiting_manual_qa" | "qa_approved" | "cancelling" | "cancelled" | "failed"
 export type ChatSummary = { done: string; tested: string; pending: string }
-export type TeamRun = { guidance?: string[]; chatSummary?: ChatSummary | null; id: string; goal: string; team: Team; skills: Skill[]; status: RunStatus; startedAt: number; finishedAt: number | null; planSessionId: string | null; closingSessions?: string[]; coordination?: Coordination[]; closingReviews?: Review[]; tasks: TeamTask[]; summary: string; error: string | null; evidenceDir: string; artifacts: Artifact[]; notified: boolean; captureTargets?: CaptureTarget[]; observations?: Observation[]; sessionUsage?: Record<string, {costUsd: number; tokens: number}>; evidenceExpiredAt?: number | null }
-export type TeamChatMessage = { id: string; role: string; text: string; createdAt: number; status: string; runId: string | null; sessionId: string | null }
+export type TeamImageInput = { filename: string; mime: string; url: string }
+export type TeamImage = { id: string; filename: string; mime: string; bytes: number; sha256: string }
+export type TeamRun = { images?: TeamImage[]; guidance?: string[]; chatSummary?: ChatSummary | null; id: string; goal: string; team: Team; skills: Skill[]; status: RunStatus; startedAt: number; finishedAt: number | null; planSessionId: string | null; closingSessions?: string[]; coordination?: Coordination[]; closingReviews?: Review[]; tasks: TeamTask[]; summary: string; error: string | null; evidenceDir: string; artifacts: Artifact[]; notified: boolean; captureTargets?: CaptureTarget[]; observations?: Observation[]; sessionUsage?: Record<string, {costUsd: number; tokens: number}>; evidenceExpiredAt?: number | null }
+export type TeamChatMessage = { images?: TeamImage[]; id: string; role: string; text: string; createdAt: number; status: string; runId: string | null; sessionId: string | null }
 export type TeamChatRecord = { messages?: TeamChatMessage[]; id: string; title: string; archived: boolean; team: Team; skills: Skill[]; createdAt: number; runs: TeamRun[] }
 export type TeamStore = { schemaVersion: number; teams: Team[]; skills: Skill[]; chats: TeamChatRecord[] }
 

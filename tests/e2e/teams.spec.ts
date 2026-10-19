@@ -5,6 +5,7 @@ import type { Team, TeamChatRecord, TeamStore } from "../../src/team/types"
 
 async function setup(page: Page) {
   const store: TeamStore = { schemaVersion: 1, teams: [], chats: [], skills: ["Frontend", "Backend", "QA"].map((name) => ({ id: name.toLowerCase(), name, version: 1, description: name, instructions: `Trabajar en ${name}`, verificationGuidelines: ["Comprobar cambios"] })) }
+  const imageUrls = new Map<string, string>()
   const calls: { command: string; args: Record<string, unknown> }[] = []
   await page.addInitScript(() => {
     localStorage.clear()
@@ -49,8 +50,12 @@ async function setup(page: Page) {
       const chat = store.chats.find(c => c.id === args.chatId)!
       chat.messages ??= []
       const text = String(args.text)
+      const images = (args.images as {filename: string; mime: string; url: string}[] ?? []).map((input, i) => {
+        const id = `image-${imageUrls.size}-${i}`; imageUrls.set(id, input.url)
+        return {id, filename: input.filename, mime: input.mime, bytes: 68, sha256: "fixture"}
+      })
       const run = chat.runs.at(-1)
-      chat.messages.push({ id: `u-${chat.messages.length}`, role: "user", text, status: "complete", createdAt: Date.now(), runId: run?.id ?? null, sessionId: null })
+      chat.messages.push({ id: `u-${chat.messages.length}`, role: "user", text, images, status: "complete", createdAt: Date.now(), runId: run?.id ?? null, sessionId: null })
       if (/qué falló|cómo va/i.test(text)) {
         chat.messages.push({ id: `a-${chat.messages.length}`, role: "assistant", text: "Frontend quedó frenado en la página. Falta registrar la prueba HTTP. La tarea Backend terminada se conserva.", status: "complete", createdAt: Date.now(), runId: run?.id ?? null, sessionId: null })
       } else if (/corregilo/i.test(text) && run) {
@@ -58,7 +63,7 @@ async function setup(page: Page) {
         chat.messages.push({ id: `a-${chat.messages.length}`, role: "assistant", text: "Voy a corregir lo pendiente. Las tareas terminadas se conservan.", status: "complete", createdAt: Date.now(), runId: run.id, sessionId: null })
       } else {
         const runId = `run-${chat.runs.length}`
-        chat.runs.push({ id: runId, goal: text, team: structuredClone(chat.team), skills: structuredClone(chat.skills), status: "running", startedAt: Date.now(), finishedAt: null, planSessionId: "plan", tasks: [], summary: "", error: null, evidenceDir: "C:/qa/evidence/" + runId, artifacts: [], notified: false })
+        chat.runs.push({ id: runId, goal: text, images, team: structuredClone(chat.team), skills: structuredClone(chat.skills), status: "running", startedAt: Date.now(), finishedAt: null, planSessionId: "plan", tasks: [], summary: "", error: null, evidenceDir: "C:/qa/evidence/" + runId, artifacts: [], notified: false })
       }
       result = "reply"
     }
@@ -74,8 +79,9 @@ async function setup(page: Page) {
       if (args.action === "approve") run.status = "qa_approved"
       result = true
     }
+    if (command === "team_image_read") result = imageUrls.get(String(args.imageId)) ?? null
     if (command === "team_evidence_read") result = "Evidencia observada por el test de interfaz"
-    if (command === "team_evidence_image") result = { mime: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=", sha256: "fixture" }
+    if (command === "team_evidence_image") result = { mime: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP4z8AARAwQCgAf7gP9i18U1AAAAABJRU5ErkJggg==", sha256: "fixture" }
     if (command === "team_evidence_image" && process.env.GUILLE_TEAM_VISUAL_EVIDENCE_DIR) result = { mime: "image/png", data: (await readFile(join(process.env.GUILLE_TEAM_VISUAL_EVIDENCE_DIR, args.path === "before.png" ? "before.png" : "after.png"))).toString("base64"), sha256: "verified-by-native-integration" }
     if (command === "team_chats_edit") {
       const chat = store.chats.find((c) => c.id === args.id)!
@@ -371,4 +377,68 @@ test("se conversa con el Lead durante bloqueos y trabajo sin duplicar las tareas
   await page.locator(".team-sidebar-card").last().getByRole("button", { name: "Team Backend", exact: true }).click()
   await expect(page.locator(".team-conversation.assistant")).toHaveCount(3)
   await page.screenshot({ path: test.info().outputPath("lead-conversacion-recuperada.png") })
+})
+
+
+test("imágenes: adjuntar, quitar, enviar y recuperar del historial", async ({ page }) => {
+  const { store, calls } = await setup(page)
+  await createTeam(page)
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP4z8AARAwQCgAf7gP9i18U1AAAAABJRU5ErkJggg==", "base64")
+  const input = page.getByLabel("Imágenes para el equipo")
+  await input.setInputFiles([{name:"referencia.png",mimeType:"image/png",buffer:png},{name:"quitar.png",mimeType:"image/png",buffer:png}])
+  await expect(page.locator(".team-image-drafts img")).toHaveCount(2)
+  await page.getByRole("button",{name:"Quitar quitar.png",exact:true}).click()
+  await expect(page.locator(".team-image-drafts img")).toHaveCount(1)
+  await page.getByLabel("Mensaje para el equipo").fill("Creá la pantalla de esta imagen")
+  await page.getByRole("button",{name:"Enviar",exact:true}).click()
+  await expect(page.locator(".team-image-drafts img")).toHaveCount(0)
+  await expect(page.locator(".team-chat-message img[alt='referencia.png']")).toBeVisible()
+  const send = calls.find(c=>c.command==="team_chat_send")!
+  expect((send.args.images as {url:string}[])[0].url).toBe(`data:image/png;base64,${png.toString("base64")}`)
+  expect(store.chats[0].messages?.[0].images).toHaveLength(1)
+  await page.reload()
+  await page.getByTitle("Equipos IA",{exact:true}).click()
+  await page.locator(".team-sidebar-card").last().getByRole("button",{name:"Team Backend",exact:true}).click()
+  const image = page.locator(".team-chat-message img[alt='referencia.png']")
+  await expect(image).toBeVisible()
+  await expect(image).toHaveAttribute("src",`data:image/png;base64,${png.toString("base64")}`)
+  await page.screenshot({path:test.info().outputPath("equipo-imagen-recuperada.png")})
+})
+
+test("imágenes: pegado, envío sin texto y error legible para formatos no admitidos", async ({ page }) => {
+  const { calls } = await setup(page)
+  await createTeam(page)
+  await page.getByLabel("Imágenes para el equipo").setInputFiles({name:"vector.svg",mimeType:"image/svg+xml",buffer:Buffer.from("<svg/>")})
+  await expect(page.getByRole("alert")).toContainText("PNG, JPEG, WebP o GIF")
+  await page.getByLabel("Mensaje para el equipo").evaluate((element) => {
+    const transfer = new DataTransfer()
+    transfer.items.add(new File([new Uint8Array([137,80,78,71,13,10,26,10])],"pegada.png",{type:"image/png"}))
+    element.dispatchEvent(new ClipboardEvent("paste",{bubbles:true,cancelable:true,clipboardData:transfer}))
+  })
+  await expect(page.locator(".team-image-drafts img")).toHaveCount(1)
+  await expect(page.getByRole("button",{name:"Enviar",exact:true})).toBeEnabled()
+  await page.getByRole("button",{name:"Enviar",exact:true}).click()
+  await expect(page.locator(".team-image-drafts img")).toHaveCount(0)
+  expect(calls.find(c=>c.command==="team_chat_send")?.args.text).toBe("")
+  expect((calls.find(c=>c.command==="team_chat_send")?.args.images as unknown[])).toHaveLength(1)
+})
+
+test("configuración muestra asignación actual y modelos históricos de cada intento", async ({ page }) => {
+  const {store} = await setup(page)
+  await createTeam(page)
+  await page.getByRole("button",{name:"Configuración del equipo",exact:true}).click()
+  await expect(page.locator(".team-settings")).toContainText("Lead Model")
+  await expect(page.locator(".team-settings")).toContainText("Worker Model")
+  await expect(page.locator(".team-settings")).toContainText("high")
+  await page.getByLabel("Mensaje para el equipo").fill("Implementá una pantalla")
+  await page.getByRole("button",{name:"Enviar",exact:true}).click()
+  const run = store.chats[0].runs[0], agent = run.team.members[2]
+  run.tasks=[{id:"t",title:"API",objective:"API",assignedAgentId:agent.id,repository:run.team.projectRoot,dependencies:[],expectedFiles:[],acceptanceCriteria:[],status:"running",error:null,attempts:[{id:"a",agent:{...structuredClone(agent),model:{providerID:"openai",modelID:"lead"},variant:"high"},sessionId:"s",reviewSessionId:null,startedAt:Date.now(),finishedAt:null,status:"running",summary:"",error:null,review:null,commands:[]}]}]
+  await page.evaluate(async()=>{const {refreshTeams}=await import(/* @vite-ignore */ "/src/state/teams.ts");await refreshTeams()})
+  await page.getByRole("button",{name:"Configuración del equipo",exact:true}).click()
+  const backend = page.locator(".team-settings > .team-card").filter({has:page.getByRole("heading",{name:"Ana Backend · Backend",exact:true})})
+  await expect(backend).toContainText("Worker Model")
+  await backend.getByText("Modelo del intento en curso · API",{exact:true}).click()
+  await expect(backend).toContainText("Lead Model")
+  await page.screenshot({path:test.info().outputPath("configuracion-modelos-equipo.png")})
 })
