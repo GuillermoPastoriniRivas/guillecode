@@ -10,6 +10,7 @@ import {
   ZEN,
   cancelLogin,
   connectOpencode,
+  connectZen,
   loadAuthEntries,
   loginChatgpt,
   reloadProviders,
@@ -195,6 +196,7 @@ export function AccountsEditor({ onboarding = false, onContinue }: { onboarding?
   const savingZen = useAccounts((s) => s.savingZen)
   const entries = useAccounts((s) => s.authEntries)
   const [key, setKey] = useState("")
+  const [zenKey, setZenKey] = useState("")
   const go = providers.find((p) => p.id === "opencode-go")
   const zenOn = !!entries?.some((e) => e.id === ZEN)
   const canContinue = modelsLoaded && !modelsError && models.length > 0 && waitingFor === 0
@@ -325,7 +327,7 @@ export function AccountsEditor({ onboarding = false, onContinue }: { onboarding?
           <span>Conectá tu propia API key del plan OpenCode Go. No necesitás una cuenta de ChatGPT.</span>
           <form className="accounts-key-form" onSubmit={(event) => {
             event.preventDefault()
-            void connectOpencode(key, zenOn).then((saved) => { if (saved) setKey("") })
+            void connectOpencode(key, false).then((saved) => { if (saved) setKey("") })
           }}>
             <label htmlFor="opencode-key">API key de OpenCode Go</label>
             <div className="remote-command">
@@ -335,13 +337,26 @@ export function AccountsEditor({ onboarding = false, onContinue }: { onboarding?
               </button>
             </div>
           </form>
-          <Toggle checked={zenOn} disabled={!go || savingZen || !!starting || !!flow} onChange={(value) => void setOpencodeZen(value)} label="Incluir OpenCode Zen (pago por token)" />
-          <span>Zen usa la misma clave y suma modelos de pago por token, aparte de tu plan Go. Los modelos gratuitos de Zen no consumen saldo.</span>
+          {go && <Toggle checked={zenOn} disabled={savingZen || !!starting || !!flow} onChange={(value) => void setOpencodeZen(value)} label="Incluir OpenCode Zen (pago por token)" />}
+          <span>Si querés, podés habilitar Zen con la clave de Go. También podés conectar una clave propia de Zen en la sección siguiente.</span>
+          <button type="button" className="btn btn-sm" onClick={() => void openUrl("https://opencode.ai/auth")}><Icon name="link-external" /> Abrir consola de OpenCode</button>
+          <span>La clave de Go se verifica antes de guardarla, sin generar mensajes ni consumir tokens.</span>
+        </div>
+        <div className="remote-steps">
+          <strong><Icon name="plug" /> OpenCode Zen {zenOn && <span className="routine-pill ok">Clave guardada</span>}</strong>
+          <span>Conectá Zen directamente. No necesitás OpenCode Go ni ChatGPT. Los modelos de pago usan el saldo de tu cuenta Zen.</span>
+          <form className="accounts-key-form" onSubmit={(event) => { event.preventDefault(); void connectZen(zenKey).then(saved => { if (saved) setZenKey("") }) }}>
+            <label htmlFor="zen-key">API key de OpenCode Zen</label>
+            <div className="remote-command">
+              <input id="zen-key" className="input" type="password" autoComplete="off" spellCheck={false} value={zenKey} placeholder={zenOn ? "Pegá una nueva clave para reemplazarla" : "Pegá tu API key de Zen"} disabled={savingZen} onChange={event => setZenKey(event.target.value)} />
+              <button type="submit" className="btn btn-sm btn-primary" disabled={!zenKey.trim() || savingZen || !!starting || !!flow}>{savingZen ? "Guardando…" : "Conectar OpenCode Zen"}</button>
+            </div>
+          </form>
+          <button type="button" className="btn btn-sm" onClick={() => void openUrl("https://opencode.ai/auth")}><Icon name="link-external" /> Obtener mi clave de Zen</button>
           {zenOn && (
             <Toggle checked={zenFreeOnly} onChange={(value) => setZenFreeOnly(value)} label={zenFreeOnly ? "Solo modelos gratuitos de Zen" : "Todos los modelos de Zen"} />
           )}
-          <button type="button" className="btn btn-sm" onClick={() => void openUrl("https://opencode.ai/auth")}><Icon name="link-external" /> Abrir consola de OpenCode</button>
-          <span>La clave se verifica antes de guardarla, sin generar mensajes ni consumir tokens.</span>
+          <span>Se guarda en el motor local, sin crear una consulta de pago. El acceso real depende de la clave y del saldo de Zen.</span>
         </div>
         {models.length > 0 && <div className="remote-steps">
           <strong><Icon name="sparkle" /> Modelo del agente</strong>

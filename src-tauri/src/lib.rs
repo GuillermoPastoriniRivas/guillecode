@@ -343,6 +343,7 @@ pub fn run() {
         teams::team_chats_auto,
             teams::team_chats_edit,
             teams::team_runs_start,
+            teams::team_chat_send,
             teams::team_runs_control,
             teams::team_tasks_reassign,
             teams::team_runs_model,

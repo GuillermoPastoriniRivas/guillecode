@@ -3,6 +3,10 @@ import { Markdown } from "./Markdown"
 import { LeadReply } from "./LeadReply"
 
 export function TeamResponse({ text, live }: { text: string; live: boolean }) {
+  try {
+    const reply = JSON.parse(text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, ""))
+    if (["reply", "work"].includes(reply?.action) && typeof reply.reply === "string") return <Markdown text={reply.reply} />
+  } catch { /* The normal team protocol or a partial streaming reply follows. */ }
   const result = decodeTeamResponse(text)
   if (!result) {
     if (!/^\s*(?:```(?:json)?\s*)?\{/.test(text)) return <Markdown text={text} />

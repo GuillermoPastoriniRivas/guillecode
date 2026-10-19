@@ -328,6 +328,8 @@ pub(super) fn execute(
     if run(app, run_id)?.status == "cancelling" {
         return Err("Cancelación solicitada antes de enviar".into());
     }
+    let guidance = run(app, run_id)?.guidance.join("\n");
+    let prompt = format!("{}\nINDICACIONES POSTERIORES DEL USUARIO (aplicar a este paso sin ampliar permisos):\n{}", prompt, guidance);
     let mut body = json!({"agent":"build", "model":employee.model, "system":POLICY, "tools":tools, "parts":[{"type":"text", "text":prompt}]});
     if let Some(v) = employee.variant.as_ref().filter(|v| !v.is_empty()) {
         body["variant"] = json!(v);
@@ -812,6 +814,7 @@ fn worker(app: &AppHandle, run_id: &str, task_id: &str) -> Result<(), String> {
         result.limitations.join("; ")
     ));
     attempt_update(app, run_id, task_id, |t, at| {
+        at.declared_checks = result.checks.clone();
         at.commands = commands.clone();
         at.summary = summary.clone();
         t.status = "verifying".into();
@@ -1426,6 +1429,7 @@ fn schedule(app: &AppHandle, id: &str) -> Result<(), String> {
                     .unwrap_or(false)
                 {
                     t.attempts.push(Attempt {
+                        declared_checks: vec![],
                         id: super::domain::id(),
                         agent: a,
                         session_id: None,

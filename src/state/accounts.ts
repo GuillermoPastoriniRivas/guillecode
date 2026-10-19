@@ -5,6 +5,7 @@ import { chooseAvailableModel, ZEN } from "../lib/providers"
 import { call, errorMessage, isTauri } from "../lib/tauri"
 import { loadAgentMeta, setModel, useAgent } from "./agent"
 import { notify } from "./toasts"
+import { readableProviderError } from "../lib/provider-error"
 
 export const CHATGPT = "openai"
 export { ZEN }
@@ -20,6 +21,20 @@ export type AuthEntry = { id: string; kind: string }
 type AccountsState = { starting: LoginMethod | null; flow: LoginFlow | null; waitingFor: number; authEntries: AuthEntry[] | null; savingKey: boolean; savingZen: boolean }
 
 export const useAccounts = create<AccountsState>(() => ({ starting: null, flow: null, waitingFor: 0, authEntries: null, savingKey: false, savingZen: false }))
+
+export async function connectZen(key: string): Promise<boolean> {
+  const value = key.trim()
+  if (!value || /\s/.test(value)) { notify.error("Revisá la clave", "Pegá tu API key de OpenCode Zen, sin espacios."); return false }
+  useAccounts.setState({ savingZen: true })
+  try {
+    await api("PUT", `/auth/${ZEN}`, { type: "api", key: value })
+    await loadAuthEntries()
+    await reloadProviders()
+    notify.success("Clave de OpenCode Zen guardada", "Zen ya está disponible. El proveedor comprobará el acceso al usar un modelo; no se generó ningún mensaje de prueba.")
+    return true
+  } catch (e) { notify.error("No se pudo guardar OpenCode Zen", readableProviderError(e)); return false }
+  finally { useAccounts.setState({ savingZen: false }) }
+}
 
 export async function connectOpencode(key: string, includeZen: boolean): Promise<boolean> {
   const value = key.trim()

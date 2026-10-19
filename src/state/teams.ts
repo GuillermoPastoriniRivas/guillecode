@@ -10,6 +10,7 @@ import { confirmAction } from "../components/Dialog"
 import { notify } from "./toasts"
 import type { Skill, Team, TeamChatRecord, TeamStore } from "../team/types"
 import { indexTeamSessions } from "../team/session-index"
+import { readableTeamError } from "../lib/provider-error"
 
 type State = TeamStore & { loaded: boolean; error: string | null; activeChatId: string | null; openChatIds: string[] }
 export const useTeams = create<State>(() => ({ schemaVersion: 1, teams: [], skills: [], chats: [], loaded: false, error: null, activeChatId: null, openChatIds: loadJson<string[]>("team.tabs", []) }))
@@ -44,7 +45,7 @@ export function startTeams() {
 
 export async function teamCall<T>(command: string, args?: Record<string, unknown>): Promise<T | null> {
   try { const result = await call<T>(command, args); await refreshTeams(); return result }
-  catch (e) { notify.error("Equipos IA", errorMessage(e)); return null }
+  catch (e) { notify.error("Equipos IA", readableTeamError(e)); return null }
 }
 
 export function openTeam(id = `new:${crypto.randomUUID()}`) { openEditor({ kind: "team", id }) }

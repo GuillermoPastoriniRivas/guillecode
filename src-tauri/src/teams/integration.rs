@@ -432,7 +432,27 @@ fn automatic_team_scenario(handle: &tauri::AppHandle, repo: &str) {
     assert!(read(handle).unwrap().teams.is_empty());
     assert!(chat.team.autonomous);
     assert_eq!(chat.team.members.len(), 1);
-    let id = team_runs_start(handle.clone(), chat.id.clone(), "Crear dos servicios Backend y una pantalla Frontend, repartidos por el Lead".into()).unwrap();
+    let wait_reply = |reply_id: &str| {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let store = read(handle).unwrap();
+            let message = store.chats.iter().find(|c| c.id == chat.id).unwrap().messages.iter().find(|m| m.id == reply_id).unwrap().clone();
+            if message.status != "pending" { assert_eq!(message.status, "complete", "{:?}", message); break message; }
+            assert!(Instant::now() < deadline, "chat response timed out");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    let question = team_chat_send(handle.clone(), chat.id.clone(), "Explicame cómo organizás el equipo".into()).unwrap();
+    let reply = wait_reply(&question);
+    assert!(reply.text.contains("especialistas"));
+    assert!(read(handle).unwrap().chats[0].runs.is_empty(), "an explanation must not launch work");
+    assert!(is_team_session(handle, reply.session_id.as_deref().unwrap()));
+    let request = team_chat_send(handle.clone(), chat.id.clone(), "Crear dos servicios Backend y una pantalla Frontend, repartidos por el Lead".into()).unwrap();
+    wait_reply(&request);
+    let id = read(handle).unwrap().chats[0].runs[0].id.clone();
+    let status_reply = team_chat_send(handle.clone(), chat.id.clone(), "¿Cómo va el estado?".into()).unwrap();
+    let message = wait_reply(&status_reply);
+    assert!(message.session_id.is_none(), "saved status must not call inference");
     let client = runner::test_client(handle, repo).unwrap();
     let deadline = Instant::now() + Duration::from_secs(150);
     let result = loop {
@@ -458,4 +478,12 @@ fn automatic_team_scenario(handle: &tauri::AppHandle, repo: &str) {
     assert_eq!(persisted.chats[0].runs[0].team.members.len(), 4);
     assert_eq!(persisted.chats[0].runs[0].chat_summary.as_ref().unwrap().done, "Creé dos servicios y la pantalla.");
     assert!(persisted.teams.is_empty());
+    assert_eq!(persisted.chats[0].runs.len(), 1, "conversation must not duplicate runs");
+    assert_eq!(persisted.chats[0].messages.len(), 6);
+    let mut interrupted = persisted.clone();
+    interrupted.chats[0].messages[5].status = "pending".into();
+    recover(&mut interrupted);
+    assert_eq!(interrupted.chats[0].messages[5].status, "interrupted");
+    assert!(interrupted.chats[0].messages[5].text.contains("no se repitió"));
+    assert_eq!(interrupted.chats[0].runs.len(), 1);
 }
