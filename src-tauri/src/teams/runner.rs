@@ -517,9 +517,39 @@ pub(super) fn final_text(messages: &Value) -> String {
 }
 
 pub fn observed_commands(messages: &Value) -> Vec<Value> {
-    messages.as_array().into_iter().flatten().flat_map(|m| m["parts"].as_array().into_iter().flatten()).filter(|p| p["type"] == "tool" && p["tool"] == "bash" && p["state"]["status"] == "completed").map(|p| {
-        json!({"command":evidence::sanitize(p["state"]["input"]["command"].as_str().unwrap_or("")), "exitCode":p["state"]["metadata"]["exit"], "output":evidence::sanitize(p["state"]["output"].as_str().unwrap_or("")), "source":"OpenCode completed tool part", "callId":p["callID"]})
-    }).collect()
+    let mut commands: Vec<Value> = Vec::new();
+    let mut pending: HashMap<String, (String, usize)> = HashMap::new();
+    for p in messages.as_array().into_iter().flatten().flat_map(|m| m["parts"].as_array().into_iter().flatten()) {
+        if p["type"] != "tool" || p["state"]["status"] != "completed" { continue; }
+        let output = p["state"]["output"].as_str().unwrap_or("");
+        if p["tool"] == "bash" {
+            commands.push(json!({"command":evidence::sanitize(p["state"]["input"]["command"].as_str().unwrap_or("")), "exitCode":p["state"]["metadata"]["exit"], "output":evidence::sanitize(output), "source":"OpenCode completed tool part", "callId":p["callID"]}));
+            continue;
+        }
+        if p["tool"] != "terminal_terminal_run" && p["tool"] != "terminal_terminal_read" { continue; }
+        let Some(receipt) = output.lines().next().and_then(|line| line.strip_prefix(crate::desktop::terminal::RESULT_PREFIX)).and_then(|line| serde_json::from_str::<Value>(line).ok()) else { continue; };
+        let (Some(id), Some(executed)) = (receipt["terminalId"].as_str(), receipt["executedCommand"].as_str()) else { continue; };
+        let index = if p["tool"] == "terminal_terminal_run" {
+            let Some(command) = p["state"]["input"]["command"].as_str() else { continue; };
+            if command.trim().is_empty() || receipt["command"] != command.trim() || p["state"]["input"]["terminal"].as_str().is_some_and(|supplied| supplied != id) { continue; }
+            let index = commands.len();
+            commands.push(json!({"command":evidence::sanitize(command),"exitCode":null,"output":evidence::sanitize(output),"source":"GuilleCode native terminal receipt","callId":p["callID"],"terminalId":id}));
+            pending.insert(id.into(), (executed.into(), index));
+            index
+        } else {
+            if p["state"]["input"]["id"] != id { continue; }
+            let Some((original, index)) = pending.get(id) else { continue; };
+            if original != executed { continue; }
+            *index
+        };
+        if receipt["finished"] == true {
+            // No numeric exit status means unknown, never success. A readiness
+            // match or timeout while a server runs is not a completed test.
+            commands[index]["exitCode"] = receipt["exitCode"].as_i64().map_or(Value::Null, |n| json!(n));
+            commands[index]["output"] = json!(evidence::sanitize(output));
+        }
+    }
+    commands
 }
 
 fn checks_passed(checks: &[String], commands: &[Value]) -> bool {
@@ -1453,6 +1483,35 @@ mod tests {
         let commands = observed_commands(&v);
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0]["exitCode"], 1);
+    }
+    #[test]
+    fn terminal_checks_require_native_completion_and_same_command() {
+        let part = |tool: &str, input: Value, result: Value, tail: &str| json!({"type":"tool","tool":tool,"callID":"native-run","state":{"status":"completed","input":input,"output":format!("{}{}\n{}",crate::desktop::terminal::RESULT_PREFIX,result,tail)}});
+        let receipt = |command: &str, finished: bool, code: Value| json!({"terminalId":"agent-one","command":command,"executedCommand":"Set-Location -LiteralPath 'D:/repo'; node qa/check.mjs","finished":finished,"exitCode":code});
+        let begin = part("terminal_terminal_run",json!({"command":"node qa/check.mjs"}),receipt("node qa/check.mjs",false,Value::Null),"Sigue corriendo; PASS is only log text");
+        let finish = part("terminal_terminal_read",json!({"id":"agent-one"}),receipt("",true,json!(0)),"Estado: terminó con código 0");
+        let observed = observed_commands(&json!([{"parts":[begin,finish]}]));
+        assert_eq!(observed.len(), 1);
+        assert!(checks_passed(&["node qa/check.mjs".into()], &observed));
+        assert!(!checks_passed(&["Set-Location -LiteralPath 'D:/repo'; node qa/check.mjs".into()], &observed));
+        for (done, code) in [(false,json!(0)),(true,Value::Null),(true,json!(1))] {
+            let invalid = part("terminal_terminal_run",json!({"command":"node qa/check.mjs"}),receipt("node qa/check.mjs",done,code),"PASS / terminó con código 0");
+            assert!(!checks_passed(&["node qa/check.mjs".into()], &observed_commands(&json!([{"parts":[invalid]}]))));
+        }
+        let mut other = finish.clone(); other["state"]["input"]["id"] = json!("another-terminal");
+        let mut wrong_command = receipt("",true,json!(0)); wrong_command["executedCommand"] = json!("unrelated command");
+        let wrong = part("terminal_terminal_read",json!({"id":"agent-one"}),wrong_command,"PASS");
+        for invalid in [other, wrong] {
+            assert!(!checks_passed(&["node qa/check.mjs".into()], &observed_commands(&json!([{"parts":[begin,invalid]}]))));
+        }
+        // An orphan read, an arbitrary MCP server or a pasted receipt in logs
+        // cannot attest that this worker ran a command successfully.
+        assert!(observed_commands(&json!([{"parts":[finish]}])).is_empty());
+        let mut forged = part("other_terminal_run",json!({"command":"node qa/check.mjs"}),receipt("node qa/check.mjs",true,json!(0)),"PASS");
+        assert!(observed_commands(&json!([{"parts":[forged]}])).is_empty());
+        forged["tool"] = json!("terminal_terminal_run");
+        forged["state"]["output"] = json!(format!("Salida arbitraria\n{}{}",crate::desktop::terminal::RESULT_PREFIX,receipt("node qa/check.mjs",true,json!(0))));
+        assert!(observed_commands(&json!([{"parts":[forged]}])).is_empty());
     }
     #[test]
     fn verification_accepts_observed_windows_commands_and_rejects_false_claims() {
