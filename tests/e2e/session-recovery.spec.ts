@@ -129,6 +129,42 @@ async function setup(page: Page, restart = false) {
   return state
 }
 
+test("las sesiones del Lead presentan respuestas humanas al cargar, transmitir y recargar", async ({ page }) => {
+  const state = await setup(page)
+  const summary = "Frontend y Backend están terminados. Las comprobaciones HTTP pasaron. La prueba visual sigue pendiente."
+  const protocol = JSON.stringify({ status: "approved", summary, criteriaSatisfied: true, tasks: [] })
+  state.history = messages()
+  state.history[0].parts[0] = { type: "text", id: "p-user", messageID: userID, sessionID, text: "[GUILLECODE_TEAM_RUN] Instrucciones internas del revisor" }
+  state.history[1].parts = [{ type: "text", id: "p-review", messageID: "m-assistant", sessionID, text: protocol }]
+  state.status = {}
+  await page.evaluate(sessionID => (window as unknown as { __qaPush: (event: unknown) => void }).__qaPush({ type: "session.status", properties: { sessionID, status: { type: "idle" } } }), sessionID)
+  await expect(page.locator(".team-response")).toContainText("Revisión aprobada")
+  await expect(page.locator(".team-response")).toContainText(summary)
+  await expect(page.locator(".msg-assistant")).not.toContainText('"criteriaSatisfied"')
+  await expect(page.getByRole("button", { name: "Instrucciones del equipo" })).toBeVisible()
+  await page.evaluate(({ sessionID, now }) => {
+    const push = (window as unknown as { __qaPush: (event: unknown) => void }).__qaPush
+    push({ type: "session.status", properties: { sessionID, status: { type: "busy" } } })
+    push({ type: "message.part.updated", properties: { part: { type: "text", id: "p-review", messageID: "m-assistant", sessionID, text: '{"status":"approved","summary":', time: { start: now } } } })
+  }, { sessionID, now })
+  await expect(page.locator(".msg-assistant")).toContainText("El equipo está preparando su respuesta")
+  await expect(page.locator(".msg-assistant")).not.toContainText('"status"')
+  await page.reload()
+  await expect(page.locator(".team-response")).toContainText(summary)
+  await expect(page.locator(".msg-assistant")).not.toContainText('"criteriaSatisfied"')
+})
+
+test("las respuestas JSON de un chat normal se conservan", async ({ page }) => {
+  const state = await setup(page)
+  const text = '{"status":"approved","summary":"Ejemplo solicitado","criteriaSatisfied":true}'
+  state.history = messages()
+  state.history[1].parts = [{ type: "text", id: "p-json", messageID: "m-assistant", sessionID, text }]
+  state.status = {}
+  await page.evaluate(sessionID => (window as unknown as { __qaPush: (event: unknown) => void }).__qaPush({ type: "session.status", properties: { sessionID, status: { type: "idle" } } }), sessionID)
+  await expect(page.locator(".msg-assistant")).toContainText(text)
+  await expect(page.locator(".team-response")).toHaveCount(0)
+})
+
 test("un 503 de historial conserva mensajes y ofrece recargar", async ({ page }) => {
   await page.clock.install()
   const state = await setup(page)

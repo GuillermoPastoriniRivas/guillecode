@@ -71,3 +71,8 @@
 .team-image-dialog::backdrop { background: rgba(0,0,0,.75); }
 .team-image-dialog img { display: block; max-width: 90vw; max-height: 82vh; object-fit: contain; margin-top: 10px; }
 @media(max-width: 900px) { .team-editor-body { padding: 12px; } .team-editor-header { padding: 16px; } .team-editor-footer { padding: 10px; flex-wrap: wrap; } }
+
+.team-response > strong { display: block; margin: 12px 0 8px; }
+.team-response > strong:first-child { margin-top: 0; }
+.team-response details { margin: 12px 0; }
+.team-response code { overflow-wrap: anywhere; }

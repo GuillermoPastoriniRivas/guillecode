@@ -28,11 +28,12 @@ const env = { ...process.env, USERPROFILE: profile, HOME: profile, APPDATA: prof
 for (const key of Object.keys(env)) if (/API_KEY|TOKEN|SECRET|PASSWORD|TAURI_SIGNING/.test(key)) delete env[key]
 mkdirSync(env.OPENCODE_CONFIG_DIR, { recursive: true })
 const delay = (ms) => new Promise((done) => setTimeout(done, ms))
-// Tauri's RunAsUser requires Explorer when the installer is elevated. Hosted
-// Windows runners have no desktop shell. Still verify the actual replacement
-// and preserved data there; keep automatic relaunch mandatory on a desktop.
+// Elevated RunAsUser delegates to Explorer. That process does not inherit this
+// harness's isolated profile/env, even when GetShellWindow succeeds. Never
+// launch a QA fixture with the real user's profile. Verify replacement/data
+// and explicitly launch with env there; require /R for non-elevated desktops.
 const desktop = windowsDesktopCapabilities()
-const automaticRelaunch = !(desktop.elevated && !desktop.shellAvailable) && !process.argv.includes("--without-desktop-relaunch")
+const automaticRelaunch = !desktop.elevated && !process.argv.includes("--without-desktop-relaunch")
 console.log(`[native-upgrade] desktop=${JSON.stringify(desktop)}; automaticRelaunchTested=${automaticRelaunch}`)
 let outcome = "failed"
 async function port() {
@@ -92,7 +93,7 @@ try {
   orphan = spawn(join(installed, "opencode.exe"), ["serve", "--port", String(await port())], { env, windowsHide: true, stdio: "ignore" })
   unrelated = spawn(join(other, "opencode.exe"), ["serve", "--port", String(await port())], { env, windowsHide: true, stdio: "ignore" })
   await delay(1000)
-  console.log(`[native-upgrade] actualización /S /UPDATE${automaticRelaunch ? " /R" : " (runner sin shell interactivo)"} con app y motor huérfano abiertos…`)
+  console.log(`[native-upgrade] actualización /S /UPDATE${automaticRelaunch ? " /R" : " (relanzamiento explícito para conservar el perfil QA aislado)"} con app y motor huérfano abiertos…`)
   await installer(nextVersion, ["/S", "/UPDATE", ...(automaticRelaunch ? ["/R", "/ARGS", "--hidden"] : [])])
   assert.notEqual(app.exitCode, null, "La app anterior no se cerró")
   assert.notEqual(orphan.exitCode, null, "Quedó abierto el motor huérfano")
