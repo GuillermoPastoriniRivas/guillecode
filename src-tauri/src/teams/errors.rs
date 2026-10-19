@@ -38,6 +38,7 @@ pub fn message(value: &Value) -> String {
     let mut messages = vec![];
     parts(value, 0, &mut messages);
     let text = messages.join(" ").to_lowercase();
+    if ["does not support image", "does not support images", "image input is not supported", "unsupported image", "invalid image"].iter().any(|s| text.contains(s)) { return "El modelo no pudo leer la imagen. Comprobá el archivo y usá un modelo que admita imágenes".into(); }
     if [
         "usage_limit_reached",
         "subscription_sharing_usage_limit_exceeded",

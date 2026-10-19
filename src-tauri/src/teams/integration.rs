@@ -438,19 +438,23 @@ fn automatic_team_scenario(handle: &tauri::AppHandle, repo: &str) {
             let store = read(handle).unwrap();
             let message = store.chats.iter().find(|c| c.id == chat.id).unwrap().messages.iter().find(|m| m.id == reply_id).unwrap().clone();
             if message.status != "pending" { assert_eq!(message.status, "complete", "{:?}", message); break message; }
-            assert!(Instant::now() < deadline, "chat response timed out");
+            if Instant::now() >= deadline {
+                let c = runner::test_client(handle, repo).unwrap();
+                let history = message.session_id.as_ref().map(|session| c.get(&format!("/session/{}/message",session)));
+                panic!("chat response timed out: {:?}; statuses: {:?}; permissions: {:?}; history: {:?}", message, c.get("/session/status"), c.get("/permission"), history);
+            }
             std::thread::sleep(Duration::from_millis(50));
         }
     };
-    let question = team_chat_send(handle.clone(), chat.id.clone(), "Explicame cómo organizás el equipo".into()).unwrap();
+    let question = team_chat_send(handle.clone(), chat.id.clone(), "Explicame cómo organizás el equipo".into(), Some(vec![ImageInput { filename: "referencia.png".into(), mime: "image/png".into(), url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP4z8AARAwQCgAf7gP9i18U1AAAAABJRU5ErkJggg==".into() }])).unwrap();
     let reply = wait_reply(&question);
     assert!(reply.text.contains("especialistas"));
     assert!(read(handle).unwrap().chats[0].runs.is_empty(), "an explanation must not launch work");
     assert!(is_team_session(handle, reply.session_id.as_deref().unwrap()));
-    let request = team_chat_send(handle.clone(), chat.id.clone(), "Crear dos servicios Backend y una pantalla Frontend, repartidos por el Lead".into()).unwrap();
+    let request = team_chat_send(handle.clone(), chat.id.clone(), "Crear dos servicios Backend y una pantalla Frontend, repartidos por el Lead".into(), None).unwrap();
     wait_reply(&request);
     let id = read(handle).unwrap().chats[0].runs[0].id.clone();
-    let status_reply = team_chat_send(handle.clone(), chat.id.clone(), "¿Cómo va el estado?".into()).unwrap();
+    let status_reply = team_chat_send(handle.clone(), chat.id.clone(), "¿Cómo va el estado?".into(), None).unwrap();
     let message = wait_reply(&status_reply);
     assert!(message.session_id.is_none(), "saved status must not call inference");
     let client = runner::test_client(handle, repo).unwrap();
@@ -478,6 +482,16 @@ fn automatic_team_scenario(handle: &tauri::AppHandle, repo: &str) {
     assert_eq!(persisted.chats[0].runs[0].team.members.len(), 4);
     assert_eq!(persisted.chats[0].runs[0].chat_summary.as_ref().unwrap().done, "Creé dos servicios y la pantalla.");
     assert!(persisted.teams.is_empty());
+    assert_eq!(persisted.chats[0].messages[0].images.len(), 1);
+    assert_eq!(persisted.chats[0].runs[0].images.len(), 1);
+    assert_eq!(persisted.chats[0].messages[0].images[0].id, persisted.chats[0].runs[0].images[0].id);
+    assert!(team_image_read(handle.clone(), persisted.chats[0].runs[0].images[0].id.clone()).unwrap().starts_with("data:image/png;base64,"));
+    assert!(team_image_read(handle.clone(), "../auth.json".into()).is_err());
+    let image_path = crate::app_data_file(handle, "team-images").unwrap().join(&persisted.chats[0].runs[0].images[0].id);
+    let original_image = std::fs::read(&image_path).unwrap();
+    std::fs::write(&image_path, b"changed image").unwrap();
+    assert!(team_image_read(handle.clone(), persisted.chats[0].runs[0].images[0].id.clone()).is_err());
+    std::fs::write(&image_path, original_image).unwrap();
     assert_eq!(persisted.chats[0].runs.len(), 1, "conversation must not duplicate runs");
     assert_eq!(persisted.chats[0].messages.len(), 6);
     let mut interrupted = persisted.clone();

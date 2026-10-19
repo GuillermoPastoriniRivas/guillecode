@@ -8,6 +8,8 @@ import { canonicalBinaryHash } from "./binary-validation.mjs"
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const config = JSON.parse(readFileSync(join(root, "scripts/release-config.json"), "utf8"))
+const OFFICIAL_REPOSITORY = "GuillermoPastoriniRivas/guillecode"
+const OFFICIAL_UPDATER_PUBKEY = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRCNjAxMjRFQTE5N0EzMDIKUldRQ281ZWhUaEpnUzJ0ZnFoSy9od0dtbFdxTzM4QnROaWFFLzJvM29uUE1TTW9RR2pJcE1sdHoK"
 const json = (path) => JSON.parse(readFileSync(join(root, path), "utf8"))
 const writeJson = (path, data) => writeFileSync(join(root, path), `${JSON.stringify(data, null, 2)}\n`)
 const run = (cmd, args) => execFileSync(cmd, args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] }).trim()
@@ -22,6 +24,18 @@ export function validVersion(version) {
   if (!/^\d+\.\d+\.\d+$/.test(version) || version.split(".").some((v) => String(Number(v)) !== v)) throw new Error("Usá una versión estable X.Y.Z, sin v ni prerelease")
   return version
 }
+export function assertOfficialUpdateSource(repository, endpoints, pubkey = OFFICIAL_UPDATER_PUBKEY) {
+  const expected = `https://github.com/${OFFICIAL_REPOSITORY}/releases/latest/download/latest.json`
+  if (repository !== OFFICIAL_REPOSITORY || !Array.isArray(endpoints) || endpoints.length !== 1 || endpoints[0] !== expected || pubkey !== OFFICIAL_UPDATER_PUBKEY) {
+    throw new Error(`Las actualizaciones solo pueden publicarse desde ${OFFICIAL_REPOSITORY} con su clave de firma oficial`)
+  }
+  return expected
+}
+export function assertOfficialReleaseRepository(repository) {
+  if (repository && repository.toLowerCase() !== OFFICIAL_REPOSITORY.toLowerCase()) {
+    throw new Error(`Las releases solo se pueden preparar y publicar desde ${OFFICIAL_REPOSITORY}`)
+  }
+}
 export function compareVersions(a, b) {
   const left = validVersion(a).split(".").map(Number), right = validVersion(b).split(".").map(Number)
   for (let i = 0; i < 3; i++) if (left[i] !== right[i]) return Math.sign(left[i] - right[i])
@@ -29,6 +43,7 @@ export function compareVersions(a, b) {
 }
 export function makeManifest(version, notes, installerName, signature, repository = config.repository) {
   validVersion(version)
+  assertOfficialUpdateSource(repository, [`https://github.com/${repository}/releases/latest/download/latest.json`])
   if (!notes.trim()) throw new Error("Escribí las novedades de esta versión")
   if (!/^[A-Za-z0-9+/=]+$/.test(signature.trim())) throw new Error("Firma de updater inválida")
   return { version, notes: notes.trim(), pub_date: new Date().toISOString(), platforms: {
@@ -55,6 +70,7 @@ function check() {
     readFileSync(join(root, "src-tauri/Cargo.lock"), "utf8").match(/\[\[package\]\]\r?\nname = "app"\r?\nversion = "([^"]+)"/)?.[1]]
   if (versions.some((v) => v !== version)) throw new Error(`Versiones inconsistentes: ${[version, ...versions].join(", ")}`)
   const tauri = json("src-tauri/tauri.conf.json")
+  assertOfficialUpdateSource(config.repository, tauri.plugins.updater.endpoints, tauri.plugins.updater.pubkey)
   if (!tauri.bundle.createUpdaterArtifacts || !tauri.plugins.updater.pubkey || tauri.plugins.updater.endpoints.some((url) => !url.startsWith("https://"))) throw new Error("Updater incompleto o endpoint sin HTTPS")
   if (tauri.plugins.updater.dangerousInsecureTransportProtocol || tauri.plugins.updater.dangerousAcceptInvalidCerts) throw new Error("La release no puede habilitar transporte inseguro")
   if (tauri.plugins.updater.windows?.installMode !== "quiet" || tauri.bundle.windows?.nsis?.installMode !== "currentUser") throw new Error("Las actualizaciones silenciosas requieren NSIS por usuario y updater quiet")
@@ -131,6 +147,7 @@ function manifest(bundle = "src-tauri/target/release/bundle/nsis", notesFile = p
 }
 
 function prepare(version, notesFile) {
+  assertOfficialReleaseRepository(process.env.GITHUB_REPOSITORY)
   validVersion(version)
   if (!notesFile) throw new Error("Uso: npm run release:prepare -- X.Y.Z archivo-de-novedades")
   const notes = readFileSync(resolve(notesFile), "utf8").trim()
@@ -146,6 +163,7 @@ function prepare(version, notesFile) {
 }
 
 function publish(version, confirmed = false) {
+  assertOfficialReleaseRepository(process.env.GITHUB_REPOSITORY)
   validVersion(version)
   if (!confirmed) throw new Error("Confirmá la prueba de actualización con --tested antes de publicar")
   const releases = JSON.parse(run("gh", ["api", `repos/${config.repository}/releases?per_page=100`]))

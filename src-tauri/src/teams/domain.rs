@@ -209,6 +209,8 @@ pub struct Artifact {
 #[serde(rename_all = "camelCase")]
 pub struct Run {
     #[serde(default)]
+    pub images: Vec<ChatImage>,
+    #[serde(default)]
     pub guidance: Vec<String>,
     #[serde(default)]
     pub chat_summary: Option<ChatSummary>,
@@ -334,6 +336,8 @@ pub struct Chat {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatMessage {
+    #[serde(default)]
+    pub images: Vec<ChatImage>,
     pub id: String,
     pub role: String,
     pub text: String,
@@ -341,6 +345,23 @@ pub struct ChatMessage {
     pub status: String,
     pub run_id: Option<String>,
     pub session_id: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatImage {
+    pub id: String,
+    pub filename: String,
+    pub mime: String,
+    pub bytes: usize,
+    pub sha256: String,
+}
+
+#[derive(Clone, Deserialize)]
+pub struct ImageInput {
+    pub filename: String,
+    pub mime: String,
+    pub url: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

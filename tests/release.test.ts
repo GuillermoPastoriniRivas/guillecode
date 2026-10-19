@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 // @ts-expect-error Node runs this .mjs module without a declaration file.
-import { makeManifest, validVersion, compareVersions, selectInstaller } from "../scripts/release.mjs"
+import { makeManifest, validVersion, compareVersions, selectInstaller, assertOfficialUpdateSource, assertOfficialReleaseRepository } from "../scripts/release.mjs"
 
 test("releases estables ordenan versiones numéricamente y rechazan entradas ambiguas", () => {
   assert.equal(compareVersions("0.10.0", "0.9.9"), 1)
@@ -20,4 +20,10 @@ test("manifiesto apunta a la release inmutable y contiene la firma, no su URL", 
   assert.equal(manifest.platforms["windows-x86_64"].url, "https://github.com/GuillermoPastoriniRivas/guillecode/releases/download/v0.3.0/guillecode_0.3.0_x64-setup.exe")
   assert.throws(() => makeManifest("0.3.0", "", "app.exe", "YWJjZA=="))
   assert.throws(() => makeManifest("0.3.0", "Mejoras", "app.exe", "https://example.test/app.sig"))
+  assert.throws(() => makeManifest("0.3.0", "Mejoras", "app.exe", "YWJjZA==", "Kaitach/guillecode"), /solo pueden publicarse/)
+  assert.throws(() => assertOfficialUpdateSource("GuillermoPastoriniRivas/guillecode", ["https://github.com/Kaitach/guillecode/releases/latest/download/latest.json"]), /solo pueden publicarse/)
+  assert.throws(() => assertOfficialUpdateSource("GuillermoPastoriniRivas/guillecode", ["https://github.com/GuillermoPastoriniRivas/guillecode/releases/latest/download/latest.json", "https://github.com/Kaitach/guillecode/releases/latest/download/latest.json"]), /solo pueden publicarse/)
+  assertOfficialReleaseRepository("GuillermoPastoriniRivas/guillecode")
+  assert.throws(() => assertOfficialReleaseRepository("Kaitach/guillecode"), /solo se pueden preparar y publicar/)
+  assert.throws(() => assertOfficialUpdateSource("GuillermoPastoriniRivas/guillecode", ["https://github.com/GuillermoPastoriniRivas/guillecode/releases/latest/download/latest.json"], "fork-signing-key"), /clave de firma oficial/)
 })

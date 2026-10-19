@@ -19,7 +19,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   publish:
-    if: inputs.upgrade_tested
+    if: inputs.upgrade_tested && github.repository == 'GuillermoPastoriniRivas/guillecode'
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}

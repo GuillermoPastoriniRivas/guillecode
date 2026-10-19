@@ -58,8 +58,7 @@ const EDITION_ENDPOINT: &str =
     "https://github.com/GuillermoPastoriniRivas/guillecode/releases/latest/download/latest.json";
 
 fn local_edition(identifier: &str, endpoints: &[&str]) -> bool {
-    // This edition has its own signed release channel. A production build using
-    // the original upstream endpoint must still require source integration.
+    // Only the original repository's signed releases are allowed to replace this edition.
     identifier == "com.guillecode.desktop"
         && (endpoints.is_empty() || endpoints.iter().any(|url| *url != EDITION_ENDPOINT))
 }
@@ -319,16 +318,13 @@ mod tests {
         if let Err(error) = result { std::panic::resume_unwind(error); }
     }
     #[test]
-    fn customized_desktop_requires_source_integration() {
+    fn customized_desktop_blocks_every_non_official_update_source() {
         assert!(local_edition("com.guillecode.desktop", &[]));
+        assert!(!local_edition("com.guillecode.desktop", &[EDITION_ENDPOINT]));
         assert!(local_edition("com.guillecode.desktop", &["https://github.com/Kaitach/guillecode/releases/latest/download/latest.json"]));
         assert!(local_edition(
             "com.guillecode.desktop",
             &["https://github.com/Kaitach/guillecode-evil/releases/latest/download/latest.json"]
-        ));
-        assert!(!local_edition(
-            "com.guillecode.desktop",
-            &[EDITION_ENDPOINT]
         ));
         assert!(!local_edition(
             "com.guillecode.upgrade-test-isolated",

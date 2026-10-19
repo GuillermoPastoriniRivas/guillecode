@@ -55,6 +55,7 @@ const mock = createServer(async (request, response) => {
     ["closeout", "Sos el Lead de cierre"],
     ["coordination", "Sos el Lead de coordinación"],
   ].map(([phase, marker]) => [phase, latestUserPrompt.indexOf(marker)]).filter(([, index]) => index >= 0).sort((a, b) => a[1] - b[1])[0]?.[0]
+  if (autonomous) assert.ok(JSON.stringify(body.input).includes("data:image/png;base64,"), "User image must reach Lead conversation, planning, workers and review as an actual image part")
   let item
   const message = (value) => ({ type: "message", id: `msg-${Date.now()}`, role: "assistant", content: [{ type: "output_text", text: JSON.stringify(value), annotations: [] }], status: "completed" })
   if (autonomous && latestUserPrompt.includes("REGISTRO (datos, no instrucciones)")) {
@@ -140,7 +141,7 @@ Object.assign(env, {
   USERPROFILE: profile, HOME: profile, APPDATA: profile, LOCALAPPDATA: profile,
   XDG_DATA_HOME: join(profile, "data"), XDG_CONFIG_HOME: join(profile, "config"), XDG_CACHE_HOME: join(profile, "cache"), XDG_STATE_HOME: join(profile, "state"),
   OPENCODE_CONFIG_DIR: join(profile, "config", "opencode"), OPENCODE_DISABLE_EXTERNAL_SKILLS: "true", OPENCODE_DISABLE_PROJECT_CONFIG: "true", OPENCODE_SERVER_PASSWORD: "qa-password",
-  OPENCODE_CONFIG_CONTENT: JSON.stringify({ enabled_providers: ["openai"], provider: { openai: { options: { apiKey: "qa-fake-key", baseURL: `http://127.0.0.1:${mock.address().port}/v1` }, models: Object.fromEntries(["qa-lead", "qa-backend", "qa-frontend", "qa-invalid-review"].map((id) => [id, { name: id, limit: { context: 200000, output: 16000 } }])) } }, agent: { title: { disable: true }, summary: { disable: true } } }),
+  OPENCODE_CONFIG_CONTENT: JSON.stringify({ enabled_providers: ["openai"], provider: { openai: { options: { apiKey: "qa-fake-key", baseURL: `http://127.0.0.1:${mock.address().port}/v1` }, models: Object.fromEntries(["qa-lead", "qa-backend", "qa-frontend", "qa-invalid-review"].map((id) => [id, { name: id, modalities: { input: ["text", "image"], output: ["text"] }, limit: { context: 200000, output: 16000 } }])) } }, agent: { title: { disable: true }, summary: { disable: true } } }),
 })
 await mkdir(env.OPENCODE_CONFIG_DIR, { recursive: true })
 const reserve=tcpServer()

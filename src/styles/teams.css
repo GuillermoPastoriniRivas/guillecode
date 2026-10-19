@@ -81,3 +81,16 @@
 .lead-brief dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .lead-details > summary { cursor: pointer; color: var(--fg-dim); }
 .lead-details[open] > summary { margin-bottom: 12px; }
+
+.team-composer-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.team-chat-images { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0; }
+.team-chat-images figure { position: relative; width: 112px; margin: 0; }
+.team-chat-images figure > button:first-child { display: block; width: 100%; padding: 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-input); overflow: hidden; cursor: zoom-in; }
+.team-chat-images img { display: block; width: 100%; height: 88px; object-fit: contain; }
+.team-chat-images figcaption { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 4px; }
+.team-image-drafts figure > button:last-child { position: absolute; right: 2px; top: 2px; }
+.team-settings { display: grid; gap: 12px; }
+.team-model-details { display: grid; gap: 10px; margin: 12px 0; }
+.team-model-details dt { color: var(--fg-dim); font-size: 11px; margin-bottom: 3px; }
+.team-model-details dd { margin: 0; overflow-wrap: anywhere; }
+.team-model-details code { display: block; margin-top: 4px; color: var(--fg-dim); }
