@@ -1,30 +1,36 @@
 # Validación 0.14.4
 
-Esta actualización reemplaza mensajes técnicos crudos por explicaciones breves con la causa conocida y el próximo paso. La misma traducción se aplica al guardar los fallos de agentes, para que Chat, Tareas, Actividad, evidencias y notificaciones muestren el mismo motivo.
+Versión publicada: [GuilleCode 0.14.4](https://github.com/Kaitach/guillecode/releases/tag/v0.14.4). Código del instalador: `817d78ee9b430785d02b0ae0475d382d09629c8c`.
 
-Incluye errores anidados de cuota, modelo, autenticación, conexión, carpeta sin Git, plan inválido y comprobaciones no observadas. Los detalles de encabezados, cookies y tokens siguen fuera de la interfaz.
+La interfaz presenta el protocolo interno de Equipos IA como planes, resultados, pedidos al Lead y revisiones legibles. Los textos largos se dividen en párrafos; las instrucciones internas quedan plegadas. También funciona con respuestas históricas y mientras llega una respuesta por partes. El contenido original se conserva para el runner. El JSON solicitado en chats normales sigue visible. Una aprobación sin criterios confirmados no se presenta como válida.
 
-Validación local:
+Los errores del proveedor, de Git opcional, del plan y de las comprobaciones se explican en español, sin mostrar encabezados ni credenciales. Se retiró del chat el bloque de tokens y costo de la ejecución. Las comprobaciones observadas mediante PowerShell son válidas: bash es el nombre de la herramienta del motor, y no exige instalar Bash o WSL.
 
-- `npm test`: 52 pruebas correctas.
-- `npm run build`: compilación TypeScript y frontend correcta.
-- `npm run lint`: correcto, con advertencias existentes del repositorio.
-- `npx playwright test tests/e2e/session-recovery.spec.ts tests/e2e/teams.spec.ts`: 21 pruebas correctas; cubre chat normal, Chat/Tareas/Actividad y errores de Git y verificaciones.
-- `cargo test --manifest-path src-tauri/Cargo.toml --release --locked --lib`: 110 correctas, 4 ignoradas.
-- `cargo test --manifest-path src-tauri/Cargo.toml --release --locked --lib teams::errors::tests`: 3 correctas con las traducciones finales.
+## Pruebas aprobadas
 
-La prueba de interfaz usa datos locales controlados. La actualización conserva el historial y el perfil mediante el canal firmado existente.
+- Unitarias: 55.
+- Interfaz completa en Actions: 74. Incluye historial, streaming parcial, recarga, errores, conversaciones normales, equipos y comparador de evidencias. La selección local de equipos y recuperación pasó 23 pruebas.
+- Rust: 112 correctas, 0 fallidas, 4 ignoradas.
+- Integración: motor OpenCode real y scheduler Rust con inferencia determinista local; ejecución simultánea, carpetas con y sin Git, recuperación de efectos y coordinación tras reiniciar.
+- Descarga nativa firmada: rechaza fallos HTTP y firmas inválidas; verifica el instalador válido y conserva los bytes descargados entre consultas.
+- NSIS real: reemplaza la instalación, libera su motor huérfano, conserva otro motor y mantiene la conversación y las preferencias.
 
-Se quitó del chat el bloque de tokens y costo de cada ejecución. El seguimiento interno se mantiene para los límites configurados.
+[Preparación completa en verde](https://github.com/Kaitach/guillecode/actions/runs/39188549307). [Publicación en verde](https://github.com/Kaitach/guillecode/actions/runs/39192336303).
 
-El harness de actualización detecta si el proceso está elevado. RunAsUser delega a Explorer en ese caso y no hereda el perfil aislado de QA, aunque el shell exista. En procesos elevados comprueba el reemplazo NSIS y la conservación del perfil, y luego arranca explícitamente la app con su entorno aislado; informa `automaticRelaunchTested: false`. En una sesión de escritorio no elevada exige además el relanzamiento automático. El informe se conserva como artefacto de Actions, sin credenciales ni contenido de conversaciones. Referencia del requisito: [implementación de RunAsUser de Tauri](https://github.com/tauri-apps/nsis-tauri-utils/blob/dev/crates/nsis-process/src/lib.rs).
+## Prueba real en la PC
 
-La primera validación completa en Actions pasó frontend, Rust, integración de equipos y reinicios, pero encontró un fallo al liberar el motor durante la actualización NSIS: las rutas abreviadas de Windows no coincidían con las rutas largas informadas por el sistema. El instalador ahora compara las rutas reales de los archivos. Una prueba de regresión con un alias de carpeta reproduce el fallo anterior y verifica que se cierre solo el motor de esa instalación; otro motor sigue abierto y un bloqueo ajeno impide continuar.
+Desde la interfaz se creó un equipo de Lead, QA, Backend y Frontend en una carpeta vacía sin Git. Los tres trabajos independientes comenzaron con una diferencia de 40 ms. Las cuatro tareas terminaron; QA ejecutó dos veces la integración HTTP con salida 0, comprobando JSON, CORS, HTML, CSS, JavaScript y respuestas 404.
 
-La prueba real desde la interfaz de Windows creó un equipo de Lead, Backend, Frontend y QA en una carpeta sin Git. Los tres trabajos independientes comenzaron simultáneamente. Detectó que el Lead rechazaba comandos válidos de PowerShell por confundir el nombre de herramienta bash con el intérprete requerido. Se aclaró el contrato para trabajadores y revisores, y el feedback enumera las verificaciones reales satisfactorias para corregir el resultado sin repetir efectos. Una regresión comprueba que PowerShell observado con salida 0 es válido y que comandos fallidos, no observados o con descripciones añadidas siguen rechazados. La prueba integrada Hola mundo queda pendiente de repetir con esta corrección; no se considera aprobada todavía.
+En un navegador real se comprobaron los dos saludos, el error legible al detener únicamente el backend propio y la recuperación mediante el botón de reintento al reiniciarlo. Se probaron también los puertos ocupados: ambos servidores y QA rechazaron el conflicto con salida 1 y un motivo claro, conservando los procesos existentes.
 
-El nuevo intento real completó las cuatro tareas. QA ejecutó dos veces node qa/check.mjs con salida 0: puertos disponibles, backend JSON/CORS, página y recursos, rutas 404. La prueba visual permanece pendiente. La sesión de revisión individual aún mostraba el JSON interno: se añadió una presentación específica para sesiones del equipo (planes, revisiones, resultados y pedidos al Lead), también para historial y streaming. Se conserva el protocolo original para el runner y no se transforma el JSON solicitado en chats normales. Las aprobaciones sin criteriaSatisfied=true se muestran sin aprobación confirmada.
+La misma revisión del Lead que antes mostraba JSON se abrió tras actualizar y después de reiniciar el proceso: presentó texto legible. Se compararon los documentos de equipos y los IDs y contenidos de mensajes y herramientas con el backup privado: quedaron idénticos, sin repetir tareas. Hay capturas reales anteriores, posteriores y de la página recuperada; permanecen locales para no publicar contenido del perfil.
 
-Corrección adicional del harness NSIS: en procesos elevados RunAsUser delega a Explorer y no hereda el entorno aislado de QA, aunque GetShellWindow exista. En ese caso el harness verifica reemplazo y conservación y relanza con su entorno explícito; marca automaticRelaunchTested=false. En escritorio no elevado sigue exigiendo /R. No se permite confundir esa cobertura con una prueba de relanzamiento elevado.
+Se descargó el instalador generado por Actions, se verificaron su SHA256 y su firma Minisign con la clave pública configurada y se instaló en la PC. El hash canónico del ejecutable instalado coincide con release-info.json. Se conservó el perfil y se verificó la integridad SQLite. El canal público latest.json responde sin autenticación con la versión y firma correctas. El paquete exportado contiene 13 skills válidas.
 
-Validación de la corrección de presentación: 55 pruebas unitarias correctas; TypeScript/frontend compilados; lint sin errores (advertencias previas). Los nuevos tests de interfaz verifican lectura del historial, JSON parcial durante streaming, recarga y conservación del JSON solicitado en chats normales. El modo aislado de actualización NSIS pasó localmente con conversación y preferencias preservadas y sin cerrar el motor de otra instalación.
+## Alcance de la prueba de actualización
+
+En el runner elevado, RunAsUser delega a Explorer y no hereda el entorno aislado de QA, aunque exista el shell. El harness verifica reemplazo y conservación y arranca explícitamente la app con ese entorno: el informe de Actions declara automaticRelaunchTested=false. En el escritorio local no elevado se exigió y pasó además el relanzamiento automático con /R. El informe se publica como artefacto sin credenciales ni contenido de conversaciones.
+
+La cobertura combina descarga nativa firmada y reemplazo NSIS; no acredita una prueba automatizada del clic del botón Actualizar. La aceptación final del proyecto de ejemplo sigue disponible para el usuario en GuilleCode.
+
+El instalador compara rutas reales de Windows para reconocer también alias y rutas abreviadas. La regresión de limpieza verifica que se cierre únicamente el motor de esa instalación y que un bloqueo ajeno impida continuar. Referencia: [RunAsUser de Tauri](https://github.com/tauri-apps/nsis-tauri-utils/blob/dev/crates/nsis-process/src/lib.rs).
