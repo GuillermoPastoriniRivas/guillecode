@@ -5,6 +5,7 @@ async function setup(page: Page, initial: string[] = []) {
   const accounts = new Set(initial)
   const mutations: string[] = []
   await page.addInitScript(() => {
+    Object.assign(window, { __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: () => undefined } })
     let next = 0
     const callbacks = new Map()
     Object.assign(window, { __TAURI_INTERNALS__: {
@@ -124,4 +125,23 @@ test("Zen: por defecto solo lista los modelos gratuitos, el interruptor muestra 
   await expect(select).not.toContainText("Zen Paid")
   await page.getByRole("switch", { name: "Solo modelos gratuitos de Zen" }).click()
   await expect(select).toContainText("Zen Paid")
+})
+
+
+test("Zen se conecta solo y conectar Go después conserva su clave independiente", async ({ page }) => {
+  const { accounts, mutations } = await setup(page)
+  await page.getByLabel("API key de OpenCode Zen").fill("test-zen-only-key")
+  await page.getByRole("button", { name: "Conectar OpenCode Zen", exact: true }).click()
+  await expect(page.getByRole("button", { name: "Continuar con GuilleCode" })).toBeEnabled()
+  await expect(page.getByLabel("API key de OpenCode Zen")).toHaveValue("")
+  await expect(page.getByLabel("Elegí el modelo que querés usar")).toHaveValue("opencode/zen-free")
+  expect(accounts.has("opencode-go")).toBe(false)
+  expect(mutations).toEqual(["PUT opencode"])
+  await page.getByRole("switch", { name: "Solo modelos gratuitos de Zen" }).click()
+  await page.getByLabel("Elegí el modelo que querés usar").selectOption("opencode/zen-paid")
+  await page.getByLabel("API key de OpenCode Go").fill("test-go-key")
+  await page.getByRole("button", { name: "Conectar OpenCode", exact: true }).click()
+  await expect(page.getByLabel("API key de OpenCode Go")).toHaveValue("")
+  expect(mutations).toEqual(["PUT opencode", "PUT opencode-go"])
+  await expect(page.getByLabel("Elegí el modelo que querés usar")).toHaveValue("opencode/zen-paid")
 })

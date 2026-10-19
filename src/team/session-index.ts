@@ -6,6 +6,7 @@ let sessions = new Set<string>()
 
 export function indexTeamSessions(chats: TeamChatRecord[]) {
   const next = new Set<string>()
+  for (const chat of chats) for (const message of chat.messages ?? []) if (message.sessionId) next.add(message.sessionId)
   for (const chat of chats) for (const run of chat.runs) {
     if (run.planSessionId) next.add(run.planSessionId)
     for (const id of run.closingSessions ?? []) next.add(id)

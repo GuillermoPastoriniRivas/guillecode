@@ -332,7 +332,7 @@ fn instructions(channel: Channel) -> &'static str {
     }
 }
 
-fn tool_list(channel: Channel) -> Vec<Value> {
+pub(crate) fn tool_list(channel: Channel) -> Vec<Value> {
     match channel {
         #[cfg(windows)]
         Channel::Desktop => tools::definitions(),

@@ -45,6 +45,23 @@ async function setup(page: Page) {
       const chat: TeamChatRecord = { id: `chat-${store.chats.length}`, title: "Modo equipo", team, skills: structuredClone(store.skills), archived: false, createdAt: Date.now(), runs: [] }
       store.chats.push(chat); result = chat
     }
+    if (command === "team_chat_send") {
+      const chat = store.chats.find(c => c.id === args.chatId)!
+      chat.messages ??= []
+      const text = String(args.text)
+      const run = chat.runs.at(-1)
+      chat.messages.push({ id: `u-${chat.messages.length}`, role: "user", text, status: "complete", createdAt: Date.now(), runId: run?.id ?? null, sessionId: null })
+      if (/qué falló|cómo va/i.test(text)) {
+        chat.messages.push({ id: `a-${chat.messages.length}`, role: "assistant", text: "Frontend quedó frenado en la página. Falta registrar la prueba HTTP. La tarea Backend terminada se conserva.", status: "complete", createdAt: Date.now(), runId: run?.id ?? null, sessionId: null })
+      } else if (/corregilo/i.test(text) && run) {
+        run.status = "running"; run.guidance = [text]
+        chat.messages.push({ id: `a-${chat.messages.length}`, role: "assistant", text: "Voy a corregir lo pendiente. Las tareas terminadas se conservan.", status: "complete", createdAt: Date.now(), runId: run.id, sessionId: null })
+      } else {
+        const runId = `run-${chat.runs.length}`
+        chat.runs.push({ id: runId, goal: text, team: structuredClone(chat.team), skills: structuredClone(chat.skills), status: "running", startedAt: Date.now(), finishedAt: null, planSessionId: "plan", tasks: [], summary: "", error: null, evidenceDir: "C:/qa/evidence/" + runId, artifacts: [], notified: false })
+      }
+      result = "reply"
+    }
     if (command === "team_runs_start") {
       const chat = store.chats.find((v) => v.id === args.chatId)!
       const runId = `run-${chat.runs.length}`
@@ -198,7 +215,7 @@ test("objetivo, pausa, entrega pendiente y feedback conservan revisiones en el m
   expect(store.chats).toHaveLength(1)
   expect(store.chats[0].runs).toHaveLength(2)
   expect(store.chats[0].runs[0].artifacts[0].relativePath).toBe("pruebas/log.txt")
-  expect(calls.filter((c) => c.command === "team_runs_start")).toHaveLength(2)
+  expect(calls.filter((c) => c.command === "team_chat_send")).toHaveLength(2)
 })
 
 test("el equipo abre como chat, envía con Enter y oculta controles técnicos irrelevantes", async ({ page }) => {
@@ -240,13 +257,14 @@ test("los errores guardados del proveedor son legibles en chat, tareas y activid
   }
   await page.getByRole("button", { name: "Chat", exact: true }).click()
   await expect(page.getByText("Ajustar límites de esta ejecución")).toHaveCount(0)
+  run.tasks = []
   run.error = "fatal: not a git repository (or any of the parent directories): .git"
   await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
   await expect(page.locator(".team-chat > .team-error")).toContainText("Eso no impide trabajar en esa carpeta")
   await expect(page.locator(".team-chat > .team-error")).not.toContainText("fatal:")
   run.error = "Falta una comprobación satisfactoria observada para cada comando declarado."
   await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
-  await expect(page.locator(".team-chat > .team-error")).toContainText("No pudimos confirmar que las comprobaciones informadas se hayan ejecutado y pasado")
+  await expect(page.locator(".team-chat > .team-error")).toContainText("El agente dio pruebas por aprobadas, pero falta el registro")
   await page.screenshot({ path: test.info().outputPath("error-proveedor-legible.png") })
 })
 
@@ -316,4 +334,41 @@ test("comparador muestra ambos estados, desliza y conserva la ausencia de una ca
   await expect(compare.getByAltText("Antes del cambio")).toHaveCount(0)
   await expect(compare.getByText("Expiró según la retención configurada")).toBeVisible()
   await expect(compare.getByRole("button", { name: "Deslizar antes / después" })).toBeDisabled()
+})
+
+
+test("se conversa con el Lead durante bloqueos y trabajo sin duplicar las tareas", async ({ page }) => {
+  const { store, calls } = await setup(page)
+  await createTeam(page)
+  const composer = page.getByLabel("Mensaje para el equipo")
+  await composer.fill("Creá una página")
+  await composer.press("Enter")
+  await expect(page.getByRole("button", { name: "Pausar nuevas tareas" })).toBeVisible()
+  const run = store.chats[0].runs[0]
+  run.status = "blocked"; run.error = "Falta una comprobación satisfactoria observada"
+  const member = run.team.members[1]
+  run.tasks = [{ id: "front", title: "Página de saludo", objective: "Página", assignedAgentId: member.id, repository: run.team.projectRoot, dependencies: [], expectedFiles: [], acceptanceCriteria: [], status: "blocked", error: run.error, attempts: [{ id: "a", agent: member, sessionId: null, reviewSessionId: null, startedAt: Date.now(), finishedAt: null, status: "blocked", summary: "", error: null, review: null, commands: [{ command: "node --check app.js", exitCode: 0, output: "" }], declaredChecks: ["node test-http.js"] }] }]
+  await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
+  await expect(page.locator(".team-chat > .team-error")).toContainText("Página de saludo")
+  await expect(page.locator(".team-chat > .team-error")).toContainText("Falta registrar el resultado")
+  await composer.fill("¿Qué falló?")
+  await expect(page.getByRole("button", { name: "Enviar", exact: true })).toBeEnabled()
+  await composer.press("Enter")
+  await expect(page.locator(".team-conversation.assistant")).toContainText("prueba HTTP")
+  expect(store.chats[0].runs).toHaveLength(1)
+  expect(run.status).toBe("blocked")
+  await composer.fill("Corregilo y reintentá")
+  await composer.press("Enter")
+  await expect(page.getByRole("button", { name: "Pausar nuevas tareas" })).toBeVisible()
+  await composer.fill("¿Cómo va?")
+  await composer.press("Enter")
+  await expect(page.locator(".team-conversation.assistant")).toHaveCount(3)
+  expect(run.guidance).toEqual(["Corregilo y reintentá"])
+  expect(store.chats[0].runs).toHaveLength(1)
+  expect(calls.filter(c => c.command === "team_runs_start" || c.command === "team_runs_control")).toHaveLength(0)
+  await page.reload()
+  await page.getByTitle("Equipos IA", { exact: true }).click()
+  await page.locator(".team-sidebar-card").last().getByRole("button", { name: "Team Backend", exact: true }).click()
+  await expect(page.locator(".team-conversation.assistant")).toHaveCount(3)
+  await page.screenshot({ path: test.info().outputPath("lead-conversacion-recuperada.png") })
 })

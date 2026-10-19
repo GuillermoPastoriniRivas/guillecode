@@ -1,5 +1,6 @@
 mod capture;
 mod coordination;
+mod conversation;
 pub mod domain;
 mod errors;
 mod evidence;
@@ -81,7 +82,7 @@ pub fn is_team_session(app: &AppHandle, session: &str) -> bool {
     app.try_state::<TeamsState>()
         .and_then(|state| {
             state.store.lock().ok().map(|s| {
-                s.chats.iter().flat_map(|c| &c.runs).any(|r| {
+                s.chats.iter().any(|c| c.messages.iter().any(|m| m.session_id.as_deref() == Some(session))) || s.chats.iter().flat_map(|c| &c.runs).any(|r| {
                     r.plan_session_id.as_deref() == Some(session)
                         || r.closing_sessions.iter().any(|id| id == session)
                         || r.coordination
@@ -101,7 +102,7 @@ pub fn busy(app: &AppHandle) -> bool {
     app.try_state::<TeamsState>()
         .and_then(|state| {
             state.store.lock().ok().map(|s| {
-                s.chats
+                s.chats.iter().any(|c| c.messages.iter().any(|m| m.status == "pending")) || s.chats
                     .iter()
                     .flat_map(|c| &c.runs)
                     .any(|r| active(&r.status) || runner::unsettled(r))
@@ -183,6 +184,12 @@ pub fn start(app: &AppHandle) {
 fn recover(store: &mut Store) {
     // Recovery never replays a prompt. Explicit resume reconciles each recorded session first.
     for chat in &mut store.chats {
+        for m in &mut chat.messages {
+            if m.status == "pending" {
+                m.status = "interrupted".into();
+                m.text = "La aplicación se cerró antes de terminar esta respuesta. Podés volver a preguntar; tu mensaje quedó guardado y no se repitió ninguna operación.".into();
+            }
+        }
         for r in &mut chat.runs {
             if active(&r.status) {
                 r.status = "blocked".into();
@@ -205,6 +212,11 @@ fn canonical(path: &str) -> Result<String, String> {
 #[tauri::command]
 pub fn teams_state(app: AppHandle) -> Result<Store, String> {
     read(&app)
+}
+
+#[tauri::command]
+pub fn team_chat_send(app: AppHandle, chat_id: String, text: String) -> Result<String, String> {
+    conversation::send(app, chat_id, text)
 }
 
 #[tauri::command]
@@ -272,6 +284,7 @@ pub fn team_chats_create(app: AppHandle, team_id: String) -> Result<Chat, String
             .ok_or("Equipo inexistente")?
             .clone();
         let chat = Chat {
+            messages: vec![],
             id: id(),
             title: team.name.clone(),
             archived: false,
@@ -347,6 +360,7 @@ pub fn team_chats_auto(
         };
         validate_team(&team, &s.skills)?;
         let chat = Chat {
+            messages: vec![],
             id: id(),
             title: "Modo equipo".into(),
             archived: false,
@@ -441,6 +455,7 @@ pub fn team_runs_start(app: AppHandle, chat_id: String, goal: String) -> Result<
             })
             .unwrap_or_default();
         c.runs.push(Run {
+            guidance: vec![],
             chat_summary: None,
             id: run_id.clone(),
             goal: format!("{}{}", prior, goal),

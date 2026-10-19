@@ -1,0 +1,23 @@
+import type { TeamRun, TeamTask } from "./types"
+import { readableTeamError } from "../lib/provider-error"
+import { firstTeamSentence } from "../lib/team-response"
+
+export function taskProblem(task: TeamTask): string {
+  const last = task.attempts.at(-1)
+  const error = task.error || last?.error
+  if (error && !/falta una comprobación satisfactoria observada|no pudimos confirmar/i.test(error)) return readableTeamError(error)
+  const missing = last?.declaredChecks?.filter(check => !last.commands.some(c => c.command === check && c.exitCode === 0)) ?? []
+  if (missing.length) return `Falta registrar el resultado correcto de ${missing.length === 1 ? "una prueba que el agente dio" : `${missing.length} pruebas que el agente dio`} por aprobada${missing.length === 1 ? "" : "s"}. Hay que ejecutarla${missing.length === 1 ? "" : "s"} y revisar el resultado.`
+  if (last?.review && last.review.status !== "approved") return firstTeamSentence(last.review.summary)
+  if (error) return "El agente informó pruebas aprobadas, pero su ejecución satisfactoria no quedó registrada. Falta repetir esa verificación."
+  return "La tarea todavía no tiene una revisión aprobada."
+}
+
+export function runProblem(run: TeamRun): string {
+  const task = run.tasks.find(t => ["blocked", "failed", "changes_requested", "review_error"].includes(t.status))
+  if (task) {
+    const name = run.team.members.find(m => m.id === task.assignedAgentId)?.name ?? "Un integrante"
+    return `${name} · ${task.title}: ${taskProblem(task)}`
+  }
+  return run.error ? readableTeamError(run.error) : ""
+}

@@ -81,7 +81,7 @@ pub fn message(value: &Value) -> String {
         return "El agente intentó usar Git, pero la carpeta elegida no tiene un repositorio Git. Eso no impide trabajar en esa carpeta: reintentá y, si vuelve a pasar, indicá en el objetivo que no use comandos Git.".into();
     }
     if text.contains("falta una comprobación satisfactoria observada") {
-        return "No pudimos confirmar que las comprobaciones informadas se hayan ejecutado y pasado. Abrí la sesión del agente en Actividad para ver el resultado, corregí la verificación y reintentá.".into();
+        return "El agente dio pruebas por aprobadas, pero falta el registro de su ejecución satisfactoria. Hay que repetir esa verificación; las tareas ya terminadas se conservan.".into();
     }
     if text.contains("plan debe contener entre 1 y 100 tareas") || text.contains("respuesta estructurada inválida") {
         return "El Lead no pudo preparar un plan de trabajo válido para este objetivo. Reintentá y el equipo volverá a organizar las tareas automáticamente.".into();
@@ -201,8 +201,8 @@ mod tests {
         assert!(no_git.contains("no impide trabajar"));
 
         let checks = message(&json!("Falta una comprobación satisfactoria observada para cada comando declarado."));
-        assert!(checks.contains("No pudimos confirmar"));
-        assert!(checks.contains("Abrí la sesión del agente en Actividad"));
+        assert!(checks.contains("dio pruebas por aprobadas"));
+        assert!(checks.contains("repetir esa verificación"));
 
         let unknown = message(&json!("The upstream request failed unexpectedly"));
         assert!(unknown.contains("El agente no pudo completar la tarea"));

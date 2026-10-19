@@ -139,6 +139,8 @@ pub struct Review {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Attempt {
+    #[serde(default)]
+    pub declared_checks: Vec<String>,
     pub id: String,
     pub agent: Employee,
     pub session_id: Option<String>,
@@ -206,6 +208,8 @@ pub struct Artifact {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Run {
+    #[serde(default)]
+    pub guidance: Vec<String>,
     #[serde(default)]
     pub chat_summary: Option<ChatSummary>,
     pub id: String,
@@ -316,6 +320,8 @@ pub fn task_conflict(a: &Task, b: &Task) -> bool {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Chat {
+    #[serde(default)]
+    pub messages: Vec<ChatMessage>,
     pub id: String,
     pub title: String,
     pub archived: bool,
@@ -323,6 +329,18 @@ pub struct Chat {
     pub skills: Vec<Skill>,
     pub created_at: i64,
     pub runs: Vec<Run>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatMessage {
+    pub id: String,
+    pub role: String,
+    pub text: String,
+    pub created_at: i64,
+    pub status: String,
+    pub run_id: Option<String>,
+    pub session_id: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

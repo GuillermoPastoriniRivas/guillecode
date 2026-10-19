@@ -77,6 +77,10 @@ const ZEN_PROVIDER: &str = "opencode";
 pub async fn set_opencode_zen(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
     crate::proc::blocking(move || {
         let auth = read_auth()?;
+        // Keep an independently connected Zen account when Go is connected later.
+        if enabled && auth.get(ZEN_PROVIDER).is_some() {
+            return Ok(());
+        }
         if !enabled && auth.get(ZEN_PROVIDER).is_none() {
             return Ok(());
         }
@@ -115,5 +119,11 @@ mod tests {
         assert_eq!(available_models(&json!({ "providers": [chatgpt.clone()] })), vec![("openai".into(), "gpt".into())]);
         assert_eq!(available_models(&json!({ "providers": [go.clone()] })), vec![("opencode-go".into(), "deepseek".into())]);
         assert_eq!(available_models(&json!({ "providers": [chatgpt, go] })).len(), 2);
+    }
+
+    #[test]
+    fn zen_with_its_own_account_needs_no_go_provider() {
+        let zen = json!({"id":"opencode","source":"api","options":{"apiKey":"test-zen-key"},"models":{"zen":{"id":"zen"}}});
+        assert_eq!(available_models(&json!({"providers":[zen]})), vec![("opencode".into(), "zen".into())]);
     }
 }
