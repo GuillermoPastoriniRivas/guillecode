@@ -1,4 +1,5 @@
 type RecordValue = Record<string, unknown>
+export type ChatSummary = { done: string; tested: string; pending: string }
 export type TeamResponse = {
   title: string
   summary: string
@@ -6,6 +7,7 @@ export type TeamResponse = {
   checks: string[]
   limitations: string[]
   request?: string
+  chatSummary: ChatSummary
 }
 
 const labels: Record<string, string> = {
@@ -14,6 +16,21 @@ const labels: Record<string, string> = {
   waiting_dependency: "El agente necesita una entrega de otro integrante", resume: "El agente puede continuar", wait: "Esperando otra entrega",
 }
 const strings = (value: unknown): string[] => Array.isArray(value) ? value.filter((v): v is string => typeof v === "string" && !!v.trim()) : []
+
+const short = (text: string) => {
+  const line = text.replace(/\s+/g, " ").trim()
+  return line.length <= 200 ? line : `${line.slice(0, 197).replace(/\s+\S*$/, "")}…`
+}
+
+// A missing brief in older runs must never turn into invented test results.
+export function compactTeamReply(value: unknown, fallback: ChatSummary): ChatSummary {
+  const record = value && typeof value === "object" ? value as RecordValue : {}
+  return Object.fromEntries(Object.entries(fallback).map(([key, text]) => [key, short(typeof record[key] === "string" && record[key].trim() ? record[key] as string : text)])) as ChatSummary
+}
+
+export function firstTeamSentence(text: string): string {
+  return short(text.split(/(?<=[.!?])\s+(?=[A-ZÁÉÍÓÚÑ])/u)[0] ?? "")
+}
 
 export function readableTeamSummary(text: string): string {
   if (text.length < 500 || /\n/.test(text)) return text
@@ -40,10 +57,18 @@ export function decodeTeamResponse(text: string): TeamResponse | null {
   if ((!label || typeof value.summary !== "string") && !(Array.isArray(value.tasks) && !status)) return null
   const limitations = strings(value.limitations)
   if (status === "approved" && value.criteriaSatisfied !== true) limitations.unshift("El Lead no confirmó que se cumplan todos los criterios. Esta respuesta no acredita una aprobación.")
+  const chatSummary = compactTeamReply(value.chatSummary, {
+    done: !status ? `Organicé ${tasks.length} tareas para el equipo.` : firstTeamSentence(value.summary as string),
+    tested: "Las comprobaciones informadas están en los detalles; esta respuesta por sí sola no las confirma.",
+    pending: limitations.length ? limitations[0] : value.request ? "El agente necesita una respuesta del Lead." : status === "approved" && value.criteriaSatisfied === true ? "Revisá la entrega y el QA pendiente en el chat del equipo." : "Consultá el estado del equipo antes de dar el trabajo por terminado.",
+  })
+  // Structural warnings take precedence over a model's optimistic short reply.
+  if (limitations.length) chatSummary.pending = short(limitations[0])
+  if (value.request) chatSummary.pending = short(typeof (value.request as RecordValue).message === "string" ? (value.request as RecordValue).message as string : chatSummary.pending)
   return {
     title: status === "approved" && value.criteriaSatisfied !== true ? "Revisión sin aprobación confirmada" : label ?? "Plan de trabajo del equipo",
     summary: readableTeamSummary(typeof value.summary === "string" ? value.summary : "El Lead organizó estas tareas para el equipo."),
-    tasks, checks: strings(value.checks), limitations,
+    tasks, checks: strings(value.checks), limitations, chatSummary,
     request: value.request && typeof value.request === "object" && typeof (value.request as RecordValue).message === "string" ? (value.request as RecordValue).message as string : undefined,
   }
 }

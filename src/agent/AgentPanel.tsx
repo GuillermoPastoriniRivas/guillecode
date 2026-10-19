@@ -213,7 +213,7 @@ export function AgentPanel() {
           ))}
           <IconButton icon="add" title="Nuevo chat (Ctrl+Alt+N)" onClick={(e) => openMenuAt(e.currentTarget, [
             { label: "Chat normal", icon: "comment-discussion", run: () => { useTeams.setState({ activeChatId: null }); newSession() } },
-            { label: "Nuevo chat de equipo", icon: "organization", run: () => void newTeamChat() },
+            { label: "Modo equipo", icon: "organization", run: () => void newTeamChat() },
           ])} />
           <IconButton icon="history" title="Historial de sesiones" onClick={() => useLayout.getState().showView("agents", false)} />
           <IconButton

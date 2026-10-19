@@ -1,0 +1,5 @@
+Modo equipo automático: abrí un chat, escribí tu objetivo y el Lead decide cuántos especialistas necesita. Puede asignar varios agentes del mismo rol y ejecutar hasta ocho tareas independientes en paralelo, con archivos propios y coordinación entre entregas.
+
+Respuestas breves del Lead: qué hice, qué probé y qué falta. El informe completo queda en Detalles técnicos, plegado por defecto; errores y QA manual pendiente siguen visibles.
+
+El equipo elegido y los resúmenes se guardan con cada ejecución. La recuperación tras reiniciar conserva agentes, tareas y sesiones sin repetir cambios ya aplicados. Las plantillas manuales siguen disponibles.

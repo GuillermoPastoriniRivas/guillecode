@@ -37,6 +37,10 @@ fn native_team_end_to_end() {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if std::env::var("GUILLE_TEAM_TEST_AUTO").as_deref() == Ok("1") {
+                automatic_team_scenario(&handle, &repo);
+                return;
+            }
             let mut team = super::domain::tests::team();
             team.project_root = repo.clone();
             team.allowed_repositories = vec![repo.clone()];
@@ -421,4 +425,37 @@ fn native_team_end_to_end() {
     if let Err(error) = result {
         std::panic::resume_unwind(error);
     }
+}
+
+fn automatic_team_scenario(handle: &tauri::AppHandle, repo: &str) {
+    let chat = team_chats_auto(handle.clone(), repo.into(), ModelRef { provider_id: "openai".into(), model_id: "qa-lead".into() }, None).unwrap();
+    assert!(read(handle).unwrap().teams.is_empty());
+    assert!(chat.team.autonomous);
+    assert_eq!(chat.team.members.len(), 1);
+    let id = team_runs_start(handle.clone(), chat.id.clone(), "Crear dos servicios Backend y una pantalla Frontend, repartidos por el Lead".into()).unwrap();
+    let client = runner::test_client(handle, repo).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(150);
+    let result = loop {
+        for permission in client.get("/permission").unwrap().as_array().into_iter().flatten() {
+            client.post(&format!("/permission/{}/reply", permission["id"].as_str().unwrap()), serde_json::json!({"reply":"once"})).unwrap();
+        }
+        let r = run(handle, &id).unwrap();
+        if !active(&r.status) { break r; }
+        assert!(Instant::now() < deadline, "automatic team timed out: {:?}", r);
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    assert_eq!(result.status, "awaiting_manual_qa", "{:?}", result);
+    assert_eq!(result.team.members.len(), 4);
+    assert_eq!(result.team.members.iter().filter(|m| m.role == "Backend").count(), 2);
+    assert_eq!(result.tasks.len(), 3);
+    assert!(result.tasks.iter().all(|t| t.status == "completed" && t.attempts.len() == 1));
+    let attempts: Vec<_> = result.tasks.iter().map(|t| &t.attempts[0]).collect();
+    assert!(attempts.iter().map(|a| a.started_at).max().unwrap() < attempts.iter().map(|a| a.finished_at.unwrap()).min().unwrap());
+    assert!(attempts.iter().all(|a| !a.commands.is_empty()));
+    assert_eq!(result.chat_summary.as_ref().unwrap().tested, "Las tres comprobaciones pasaron.");
+    let persisted = read_db(&db(handle).unwrap()).unwrap();
+    assert_eq!(persisted.chats[0].team.members.len(), 1, "chat seed stays automatic");
+    assert_eq!(persisted.chats[0].runs[0].team.members.len(), 4);
+    assert_eq!(persisted.chats[0].runs[0].chat_summary.as_ref().unwrap().done, "Creé dos servicios y la pantalla.");
+    assert!(persisted.teams.is_empty());
 }

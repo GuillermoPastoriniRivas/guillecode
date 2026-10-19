@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto'
 const delay=(ms)=>new Promise((done)=>setTimeout(done,ms))
 const noGit=process.argv.includes('--no-git')
 const coordination=process.argv.includes('--coordination')
+const autonomous=process.argv.includes('--auto')
 const profile=await mkdtemp(join(tmpdir(),'guille-teams-restart-'))
 await mkdir(join(profile,'repo'))
 const repo=await realpath(join(profile,'repo'));if(!noGit)execFileSync('git',['init',repo],{windowsHide:true,stdio:'ignore'})
@@ -24,24 +25,27 @@ const mock=createServer(async(request,response)=>{
   let raw='';for await(const chunk of request)raw+=chunk
   if(!request.url.endsWith('/responses'))return response.end('{}')
   const body=JSON.parse(raw),text=JSON.stringify(body.input)
+  const latest=[...body.input].reverse().find((i)=>i.role==='user')
+  const latestPrompt=typeof latest?.content==='string'?latest.content:(latest?.content??[]).map((p)=>p.text??'').join('\n')
+  const leadPhase=['Actuás como Team Lead.','Sos el Lead revisor','Sos el Lead de cierre','Sos el Lead de coordinación'].some((marker)=>latestPrompt.includes(marker))
   const engine=text.includes('engine-crash'),outputs=body.input.filter((i)=>i.type==='function_call_output')
   const isReview=text.includes('Sos el Lead revisor')||text.includes('Sos el Lead de cierre')
   let item
   const message=(value)=>({type:'message',id:`msg-${randomUUID()}`,role:'assistant',content:[{type:'output_text',text:JSON.stringify(value),annotations:[]}],status:'completed'})
-  if(coordination&&body.model==='qa-recovery-front'){
+  if(coordination&&(body.model==='qa-recovery-front'||autonomous&&text.includes('Frontend 1 (Frontend)'))){
     const continuing=text.includes('COORDINACIÓN ACTUAL DEL LEAD')
     if(!continuing)item=message({status:'waiting_dependency',summary:'Preparación independiente terminada; necesito el efecto del backend',checks:[],limitations:[],request:{message:'Lead, revisá la entrega effect antes de integrar',taskIds:['effect']}})
     else if(outputs.length)item=message({status:'completed',summary:'Integración comprobada tras respuesta del Lead',checks:[verifyApp],limitations:[]})
     else item={type:'function_call',id:`fc-${randomUUID()}`,call_id:`call-${randomUUID()}`,name:'bash',arguments:JSON.stringify({command:verifyApp,description:'Comprobar contrato de Backend',timeout:10000}),status:'completed'}
   }
-  else if(body.model==='qa-recovery-lead'){
+  else if(body.model==='qa-recovery-lead'&&(!autonomous||leadPhase)){
     const input=[...body.input].reverse().find((i)=>i.role==='user')
     const prompt=typeof input?.content==='string'?input.content:(input?.content??[]).map((p)=>p.text??'').join('\n')
     if(coordination&&prompt.includes('Sos el Lead de coordinación')){
       const states=JSON.parse(prompt.split('ESTADO ACTUAL DEL EQUIPO: ')[1].split('\nHISTORIAL DE COORDINACIÓN:')[0])
       const delivered=states.find((t)=>t.id==='effect').status==='completed'
       item=message({status:delivered?'resume':'wait',summary:delivered?'Entrega effect completada y revisada; integrá ahora':'Backend continúa activo; esperá conservando tu sesión',waitForTaskIds:delivered?[]:['effect'],tasks:[]})
-    }else item=message(isReview?{status:'approved',summary:'Efecto único comprobado',criteriaSatisfied:true,tasks:[]}:{tasks:[{id:'effect',title:'Efecto único',objective:'Aplicar el efecto una sola vez y verificar su existencia',assignedAgentId:'worker',repository:repo,dependencies:[],expectedFiles:[],writePaths:coordination?['app-effects.log','app-process.txt','app-continue.flag']:[],acceptanceCriteria:['El efecto se aplica exactamente una vez']},...(coordination?[{id:'front',title:'Integrar Frontend',objective:'Preparar UI y pedir el contrato al Lead',assignedAgentId:'front',repository:repo,dependencies:[],expectedFiles:[],writePaths:['front.txt'],acceptanceCriteria:['Contrato integrado y comprobado']}]:[])]})
+    }else item=message(isReview?{status:'approved',summary:'Efecto único comprobado',criteriaSatisfied:true,tasks:[],chatSummary:{done:'Recuperé la entrega.',tested:'El efecto ocurrió una sola vez.',pending:'Falta QA manual.'}}:{...(autonomous?{agents:[{id:'worker',role:'Backend'},...(coordination?[{id:'front',role:'Frontend'}]:[])]}:{}),tasks:[{id:'effect',title:'Efecto único',objective:'Aplicar el efecto una sola vez y verificar su existencia',assignedAgentId:'worker',repository:repo,dependencies:[],expectedFiles:[],writePaths:coordination?['app-effects.log','app-process.txt','app-continue.flag']:[],acceptanceCriteria:['El efecto se aplica exactamente una vez']},...(coordination?[{id:'front',title:'Integrar Frontend',objective:'Preparar UI y pedir el contrato al Lead',assignedAgentId:'front',repository:repo,dependencies:[],expectedFiles:[],writePaths:['front.txt'],acceptanceCriteria:['Contrato integrado y comprobado']}]:[])]})
   }
   else {
     workerCalls++;if(engine)engineCalls++
@@ -97,7 +101,7 @@ try{
   async function phase(name,terminate=false){
     const signal=join(profile,`${name}.json`)
     appLog=''
-    app=spawn(executable,['teams::restart_tests::restart_phase','--ignored','--exact','--nocapture','--test-threads=1'],{env:{...process.env,GUILLE_RESTART_REPO:repo,GUILLE_RESTART_COORDINATION:coordination?'1':'0',GUILLE_RESTART_NO_GIT:noGit?'1':'0',GUILLE_RESTART_PHASE:name,GUILLE_RESTART_SIGNAL:signal,GUILLE_RESTART_APP:identifier,GUILLE_RESTART_ENGINE:origin},windowsHide:true,stdio:'pipe'})
+    app=spawn(executable,['teams::restart_tests::restart_phase','--ignored','--exact','--nocapture','--test-threads=1'],{env:{...process.env,GUILLE_RESTART_AUTO:autonomous?'1':'0',GUILLE_RESTART_REPO:repo,GUILLE_RESTART_COORDINATION:coordination?'1':'0',GUILLE_RESTART_NO_GIT:noGit?'1':'0',GUILLE_RESTART_PHASE:name,GUILLE_RESTART_SIGNAL:signal,GUILLE_RESTART_APP:identifier,GUILLE_RESTART_ENGINE:origin},windowsHide:true,stdio:'pipe'})
     const exited=new Promise((done)=>app.once('exit',done))
     for(const stream of [app.stdout,app.stderr])stream.on('data',(b)=>{appLog=(appLog+b).slice(-15000)})
     let report
@@ -140,7 +144,7 @@ try{
     assert.equal(resumed.coordinationId,first.coordinationId,'the same durable request must be resolved after restart')
     assert.equal(await readFile(join(repo,'app-effects.log'),'utf8'),'once\n')
     assert.equal(await readFile(join(repo,'user.txt'),'utf8'),'uncommitted user work\n')
-    const reportDir='test-results/coordination-recovery'+(noGit?'-no-git':'')
+    const reportDir='test-results/coordination-recovery'+(noGit?'-no-git':'')+(autonomous?'-auto':'')
     await mkdir(reportDir,{recursive:true});await writeFile(join(reportDir,'report.json'),JSON.stringify({appProcessKilled:true,noGit,phases,requestPreserved:true,sameWorkerSession:true,sideEffects:1},null,2))
     console.log('Verified: parallel workers, Lead request persisted during actual process termination, same waiting session resumed, no repeated side effect.')
   }else{

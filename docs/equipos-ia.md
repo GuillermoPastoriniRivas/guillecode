@@ -5,12 +5,16 @@ Implementación integrada con ejecución nativa, captura real, comparación visu
 ## Uso
 
 1. Abrir el proyecto en la aplicación de escritorio, con cuentas de IA conectadas.
-2. Entrar a **Equipos IA** desde la barra lateral y pulsar **Crear equipo**.
-3. Configurar el Lead obligatorio y los especialistas. Cada uno tiene nombre, rol, proveedor/modelo, variante, skills versionadas, instrucciones, herramientas y concurrencia. La propuesta asistida por IA es un borrador; no se guarda ni se ejecuta sin pulsar Guardar.
-4. Revisar las carpetas autorizadas. Se proponen las del workspace activo. Git es opcional y nunca se inicializa automáticamente.
-5. Pulsar **Guardar y abrir Team Chat**, o usar **+ → Nuevo chat de equipo** y seleccionar la plantilla. **Chat normal** y el atajo de nueva sesión siguen disponibles.
+2. Entrar a **Equipos IA** desde la barra lateral y pulsar **Modo equipo**, o usar **+ → Modo equipo**. Se abre directamente un chat con el Lead; no hace falta una plantilla ni completar un presupuesto.
+3. El Lead decide el mínimo equipo útil para el objetivo: puede trabajar solo o incorporar hasta ocho especialistas, incluso varios Backend o Frontend. Los nuevos agentes heredan el modelo y la variante elegidos en el chat, las herramientas autorizadas y la carpeta abierta; reciben skills del catálogo según su rol.
+4. El Lead asigna tareas y archivos propios. Hasta ocho tareas independientes avanzan en paralelo; las dependencias reales y las escrituras sobre el mismo archivo se respetan. Puede incorporar otro especialista durante una coordinación o corrección, sin sustituir a quienes ya trabajan. Git es opcional y nunca se inicializa automáticamente.
+5. **Crear equipo** queda como alternativa para guardar una plantilla manual con modelos, skills y carpetas específicos. **Guardar y abrir Team Chat** la usa como antes. **Chat normal** y el atajo de nueva sesión siguen disponibles.
 6. Escribir el objetivo y pulsar **Enviar** o Enter (Shift+Enter agrega una línea). Tareas muestra responsables, propiedad de escritura y estados; Actividad permite abrir sesiones reales, resolver permisos y ver pedidos entre agentes, respuestas del Lead, comandos y revisiones.
 7. Al terminar, Resultados / Comportamientos muestra el resumen, las evidencias, el diff y la carpeta. El comparador ofrece lado a lado, deslizador y ampliación; permite comparar contra el resultado de una entrega anterior del mismo chat. El estado es **Pendiente de QA manual**. El usuario puede aprobar QA o enviar un defecto por el mismo composer: se crea otra ejecución y otra carpeta, conservando las anteriores.
+
+El Lead responde con **Qué hice**, **Qué probé** y **Qué falta**. El informe completo, las rutas y los comandos quedan dentro de **Detalles técnicos**, cerrado por defecto. Un resumen breve no reemplaza las verificaciones del motor ni oculta errores o QA manual pendiente. Los chats anteriores sin resumen breve conservan su informe completo plegado y no reciben pruebas inventadas.
+
+Los integrantes elegidos se guardan con cada ejecución y pueden consultarse en **Equipo elegido por el Lead**. Al reiniciar se conservan agentes, tareas y sesiones; las ejecuciones interrumpidas requieren reconciliar antes de continuar, sin volver a crear el equipo ni repetir a ciegas los efectos aplicados.
 
 En el editor del equipo, **Agregar flujo visual** configura URL local, viewport, selector de espera, elementos privados y pasos de clic/completar/esperar. Se usa Chrome o Edge instalado y Node disponible en PATH, con un perfil temporal sin las cookies del usuario. Iniciá el servidor de desarrollo del proyecto; el capturador no lo arranca. Si no se configuran flujos, el Lead puede proponer URLs locales observadas en el proyecto. **Exigir captura final para entregar** bloquea el cierre si no se obtiene la imagen. Cuando el servidor vuelva a estar disponible, Reconciliar y reintentar captura de nuevo sin repetir las tareas completadas. Una ausencia inicial se conserva como ausencia; nunca se sustituye por una captura posterior.
 

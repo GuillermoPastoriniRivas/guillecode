@@ -76,3 +76,8 @@
 .team-response > strong:first-child { margin-top: 0; }
 .team-response details { margin: 12px 0; }
 .team-response code { overflow-wrap: anywhere; }
+.lead-brief { margin: 12px 0; display: grid; gap: 10px; }
+.lead-brief dt { font-weight: 600; margin-bottom: 3px; }
+.lead-brief dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.lead-details > summary { cursor: pointer; color: var(--fg-dim); }
+.lead-details[open] > summary { margin-bottom: 12px; }

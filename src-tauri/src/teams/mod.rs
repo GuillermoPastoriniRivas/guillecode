@@ -11,6 +11,7 @@ mod restart_tests;
 mod retention;
 mod runner;
 mod skills;
+mod staffing;
 
 use domain::*;
 use rusqlite::{params, Connection};
@@ -285,6 +286,81 @@ pub fn team_chats_create(app: AppHandle, team_id: String) -> Result<Chat, String
 }
 
 #[tauri::command]
+pub fn team_chats_auto(
+    app: AppHandle,
+    project_root: String,
+    model: ModelRef,
+    variant: Option<String>,
+) -> Result<Chat, String> {
+    let root = canonical(&project_root)?;
+    update(&app, |s| {
+        let lead_id = id();
+        let refs = s
+            .skills
+            .iter()
+            .filter(|skill| {
+                ["team-lead", "comportamientos"].contains(&skill.id.as_str())
+                    && !s
+                        .skills
+                        .iter()
+                        .any(|v| v.id == skill.id && v.version > skill.version)
+            })
+            .map(|skill| SkillRef {
+                id: skill.id.clone(),
+                version: skill.version,
+            })
+            .collect();
+        let team = Team {
+            autonomous: true,
+            id: id(),
+            name: "Modo equipo".into(),
+            project_root: root.clone(),
+            allowed_repositories: vec![root.clone()],
+            lead_agent_id: lead_id.clone(),
+            members: vec![Employee {
+                id: lead_id,
+                name: "Lead".into(),
+                role: "Lead".into(),
+                model,
+                variant,
+                skill_refs: refs,
+                instructions: String::new(),
+                tools: [
+                    "read",
+                    "glob",
+                    "grep",
+                    "edit",
+                    "write",
+                    "apply_patch",
+                    "bash",
+                ]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+                max_concurrent_tasks: 1,
+            }],
+            max_parallel_tasks: staffing::MAX_WORKERS,
+            max_retries_per_task: 1,
+            updated_at: now(),
+            evidence_targets: vec![],
+            limits: Limits::default(),
+        };
+        validate_team(&team, &s.skills)?;
+        let chat = Chat {
+            id: id(),
+            title: "Modo equipo".into(),
+            archived: false,
+            team,
+            skills: s.skills.clone(),
+            created_at: now(),
+            runs: vec![],
+        };
+        s.chats.push(chat.clone());
+        Ok(chat)
+    })
+}
+
+#[tauri::command]
 pub fn team_chats_edit(
     app: AppHandle,
     id: String,
@@ -365,6 +441,7 @@ pub fn team_runs_start(app: AppHandle, chat_id: String, goal: String) -> Result<
             })
             .unwrap_or_default();
         c.runs.push(Run {
+            chat_summary: None,
             id: run_id.clone(),
             goal: format!("{}{}", prior, goal),
             team: c.team.clone(),

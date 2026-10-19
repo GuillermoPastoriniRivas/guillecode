@@ -11,6 +11,7 @@ fn restart_phase() {
     let signal = std::env::var("GUILLE_RESTART_SIGNAL").unwrap();
     let identifier = std::env::var("GUILLE_RESTART_APP").unwrap();
     let coordination = std::env::var("GUILLE_RESTART_COORDINATION").as_deref() == Ok("1");
+    let autonomous = std::env::var("GUILLE_RESTART_AUTO").as_deref() == Ok("1");
     assert!(identifier.starts_with("com.guillecode.recovery-"));
     let mut context = tauri::generate_context!();
     context.config_mut().identifier = identifier;
@@ -63,8 +64,12 @@ fn restart_phase() {
                     front.model.model_id = "qa-recovery-front".into();
                     team.members.push(front);
                 }
-                let team = teams_save(handle.clone(), team).unwrap();
-                let chat = team_chats_create(handle.clone(), team.id).unwrap();
+                let chat = if autonomous {
+                    team_chats_auto(handle.clone(), repo.clone(), team.members[0].model.clone(), None).unwrap()
+                } else {
+                    let team = teams_save(handle.clone(), team).unwrap();
+                    team_chats_create(handle.clone(), team.id).unwrap()
+                };
                 run_id = Some(
                     team_runs_start(
                         handle.clone(),
@@ -80,9 +85,16 @@ fn restart_phase() {
                 );
             } else {
                 let r = run(&handle, run_id.as_ref().unwrap()).unwrap();
+                if autonomous {
+                    assert!(r.team.autonomous);
+                    assert_eq!(r.team.members.len(), if coordination { 3 } else { 2 });
+                    assert_eq!(r.team.members.iter().find(|m| m.id == "worker").unwrap().role, "Backend");
+                    assert!(read(&handle).unwrap().teams.is_empty());
+                }
                 if phase == "reopen" {
                     assert_eq!(r.status, "awaiting_manual_qa");
                     assert!(r.notified);
+                    if autonomous { assert_eq!(r.chat_summary.as_ref().unwrap().tested, "El efecto ocurrió una sola vez."); }
                     std::fs::write(&signal,serde_json::json!({"status":"reopened","runId":r.id,"dataDir":handle.path().app_data_dir().unwrap()}).to_string()).unwrap();
                     return;
                 }

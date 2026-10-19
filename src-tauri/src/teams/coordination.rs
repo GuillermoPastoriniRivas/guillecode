@@ -7,6 +7,8 @@ use tauri::AppHandle;
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Decision {
+    #[serde(default)]
+    agents: Vec<AgentProposal>,
     status: String,
     summary: String,
     #[serde(default)]
@@ -118,6 +120,14 @@ pub(super) fn check(app: &AppHandle, run_id: &str, request_id: &str) -> Result<(
         Ok(())
     })?;
     let prompt = format!("Sos el Lead de coordinación, con herramientas SOLO de lectura. Un agente necesita algo de otro. Revisá los archivos actuales y los estados reales de todas las tareas. Los demás siguen trabajando: no los reinicies ni cambies archivos. Respondé resume solo si el solicitante ya puede continuar con un contrato concreto; wait si falta una entrega, indicando IDs reales; blocked si falta información del usuario o hay un fallo. Si falta trabajo no asignado, creá tareas nuevas para el responsable con writePaths propios; no alteres tareas en ejecución. Separá preparación/contrato de integración; evitá esperas circulares.\nPEDIDO: {}\nESTADO ACTUAL DEL EQUIPO: {}\nHISTORIAL DE COORDINACIÓN: {}\nSKILLS DEL LEAD:\n{}\nRespondé SOLO JSON: {{\"status\":\"resume|wait|blocked\",\"summary\":\"estado comprobado, contrato y respuesta concreta al agente\",\"waitForTaskIds\":[],\"tasks\":[]}}. Las tareas nuevas usan el contrato del plan: id,title,objective,assignedAgentId,repository,dependencies,expectedFiles,writePaths,acceptanceCriteria.",serde_json::to_string(request).unwrap_or_default(),serde_json::to_string(&r.tasks).unwrap_or_default(),serde_json::to_string(&r.coordination).unwrap_or_default(),runner::skills_prompt(&r,&employee));
+    let prompt = format!(
+        "{}{}\nINTEGRANTES ACTUALES: {}\nCATÁLOGO DE SKILLS: {}",
+        prompt,
+        super::staffing::prompt(&r.team),
+        serde_json::to_string(&r.team.members).unwrap_or_default(),
+        serde_json::to_string(&r.skills.iter().map(|s| &s.id).collect::<Vec<_>>())
+            .unwrap_or_default()
+    );
     let previous = if reuse {
         Some(client.get(&format!("/session/{}/message", session))?)
     } else {
@@ -152,6 +162,7 @@ fn apply_decision(r: &mut Run, request_id: &str, mut decision: Decision) -> Resu
         return Err("El Lead devolvió una respuesta de coordinación inválida".into());
     }
     decision.summary = evidence::sanitize(&decision.summary);
+    super::staffing::validate_assignments(&decision.agents, &decision.tasks)?;
     let from = r
         .coordination
         .iter()
@@ -165,13 +176,15 @@ fn apply_decision(r: &mut Run, request_id: &str, mut decision: Decision) -> Resu
         t.error = None;
     }
     let mut proposed = r.clone();
+    proposed.team = super::staffing::with_agents(&r.team, &decision.agents, &r.skills)?;
     proposed.tasks.extend(decision.tasks.clone());
     validate_plan(
         &Plan {
+            agents: vec![],
             tasks: proposed.tasks.clone(),
             evidence_targets: vec![],
         },
-        &r.team,
+        &proposed.team,
     )?;
     validate_wait(&proposed, &from, &decision.wait_for_task_ids)?;
     if decision.status == "wait" && decision.wait_for_task_ids.is_empty() {
@@ -190,6 +203,7 @@ fn apply_decision(r: &mut Run, request_id: &str, mut decision: Decision) -> Resu
             .iter()
             .any(|t| &t.id == id && t.status == "completed")
     });
+    r.team = proposed.team;
     r.tasks.extend(decision.tasks);
     let c = r
         .coordination
@@ -304,6 +318,28 @@ mod tests {
         assert_eq!(r.coordination[0].replies.len(), 2);
     }
 
+    #[test]
+    fn lead_can_staff_a_missing_contract_and_invalid_additions_are_atomic() {
+        let mut r = fixture();
+        r.team.autonomous = true;
+        let mut task = r.tasks[0].clone();
+        task.id = "contract".into();
+        task.assigned_agent_id = "back-2".into();
+        task.write_paths = vec!["contract/".into()];
+        let decision = serde_json::from_value(json!({"status":"wait","summary":"Otro Backend preparará el contrato","waitForTaskIds":["contract"],"agents":[{"id":"back-2","role":"Backend"}],"tasks":[task]})).unwrap();
+        apply_decision(&mut r, "req", decision).unwrap();
+        assert_eq!(r.team.members.len(), 2);
+        assert_eq!(r.tasks[0].status, "running");
+        assert_eq!(r.tasks[2].assigned_agent_id, "back-2");
+        let before = serde_json::to_value(&r).unwrap();
+        for bad in [
+            json!({"status":"wait","summary":"Agente sin trabajo","waitForTaskIds":["back"],"agents":[{"id":"idle","role":"Backend"}]}),
+            json!({"status":"wait","summary":"Duplicado","waitForTaskIds":["back"],"agents":[{"id":"back-2","role":"Backend"}],"tasks":[task]}),
+        ] {
+            assert!(apply_decision(&mut r, "req", serde_json::from_value(bad).unwrap()).is_err());
+            assert_eq!(serde_json::to_value(&r).unwrap(), before);
+        }
+    }
     #[test]
     fn lead_cannot_overwrite_an_existing_task_or_install_a_runtime_cycle() {
         let mut r = fixture();

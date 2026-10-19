@@ -340,6 +340,7 @@ pub fn run() {
             teams::teams_delete,
             teams::team_skills_save,
             teams::team_chats_create,
+        teams::team_chats_auto,
             teams::team_chats_edit,
             teams::team_runs_start,
             teams::team_runs_control,

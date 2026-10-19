@@ -40,6 +40,11 @@ async function setup(page: Page) {
       const chat: TeamChatRecord = { id: `chat-${store.chats.length}`, title: team.name, team: structuredClone(team), skills: structuredClone(store.skills), archived: false, createdAt: Date.now(), runs: [] }
       store.chats.push(chat); result = chat
     }
+    if (command === "team_chats_auto") {
+      const team: Team = { autonomous: true, id: "auto", name: "Modo equipo", projectRoot: String(args.projectRoot), allowedRepositories: [String(args.projectRoot)], leadAgentId: "lead", maxParallelTasks: 8, maxRetriesPerTask: 1, updatedAt: Date.now(), members: [{ id: "lead", name: "Lead", role: "Lead", model: args.model as Team["members"][number]["model"], variant: args.variant as string | null, instructions: "", tools: ["read", "write", "bash"], skillRefs: [], maxConcurrentTasks: 1 }] }
+      const chat: TeamChatRecord = { id: `chat-${store.chats.length}`, title: "Modo equipo", team, skills: structuredClone(store.skills), archived: false, createdAt: Date.now(), runs: [] }
+      store.chats.push(chat); result = chat
+    }
     if (command === "team_runs_start") {
       const chat = store.chats.find((v) => v.id === args.chatId)!
       const runId = `run-${chat.runs.length}`
@@ -87,6 +92,45 @@ async function createTeam(page: Page) {
   await page.getByRole("button", { name: "Guardar y abrir Team Chat", exact: true }).click()
   await expect(page.locator(".team-chat-header")).toContainText("Team Backend")
 }
+
+test("modo equipo abre sin plantilla y muestra integrantes elegidos por el Lead y respuestas breves", async ({ page }) => {
+  const { store, calls } = await setup(page)
+  await page.getByRole("button", { name: "Modo equipo", exact: true }).click()
+  await expect(page.locator(".team-chat-welcome")).toContainText("Él decide cuántos especialistas")
+  expect(store.teams).toHaveLength(0)
+  expect(store.chats[0].team.members).toHaveLength(1)
+  expect(calls.filter(c => c.command === "team_chats_auto")).toHaveLength(1)
+  await page.getByLabel("Mensaje para el equipo").fill("Necesito dos servicios backend y una pantalla")
+  await page.getByLabel("Mensaje para el equipo").press("Enter")
+  const run = store.chats[0].runs[0]
+  for (const [id, name, role] of [["back-1", "Backend 1", "Backend"], ["back-2", "Backend 2", "Backend"], ["front-1", "Frontend 1", "Frontend"]]) {
+    run.team.members.push({ ...structuredClone(run.team.members[0]), id, name, role })
+    run.tasks.push({ id, title: name, objective: "Implementar y comprobar", assignedAgentId: id, repository: run.team.projectRoot, dependencies: [], expectedFiles: [], writePaths: [`${id}/`], acceptanceCriteria: ["Pruebas satisfactorias"], status: "running", attempts: [], error: null })
+  }
+  await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
+  await expect(page.locator(".team-chat-header")).toContainText("4 integrantes")
+  await page.getByText("Equipo elegido por el Lead", { exact: true }).click()
+  await expect(page.locator(".team-roster")).toContainText("Backend 2")
+  await page.screenshot({ path: test.info().outputPath("modo-equipo-paralelo.png") })
+  run.status = "awaiting_manual_qa"; run.finishedAt = Date.now()
+  run.chatSummary = { done: "Creé los dos servicios y la pantalla.", tested: "Las pruebas de integración pasaron.", pending: "Nada pendiente." }
+  run.summary = "Detalle técnico completo: comando interno node --check backend/server.js y puertos de la integración. ".repeat(15)
+  await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
+  const brief = page.locator(".team-lead-message .lead-brief")
+  await expect(brief).toContainText("Creé los dos servicios")
+  await expect(brief).toContainText("Falta tu revisión manual")
+  await expect(page.locator(".lead-details")).not.toHaveAttribute("open", "")
+  await expect(page.getByText(/Detalle técnico completo:/).first()).not.toBeVisible()
+  await page.screenshot({ path: test.info().outputPath("lead-respuesta-breve.png") })
+  await page.getByText("Detalles técnicos", { exact: true }).click()
+  await expect(page.getByText(/Detalle técnico completo:/).first()).toBeVisible()
+  await page.reload()
+  await page.getByTitle("Equipos IA", { exact: true }).click()
+  await page.locator(".team-sidebar-card").getByRole("button", { name: "Modo equipo", exact: true }).click()
+  await expect(page.locator(".team-chat-header")).toContainText("4 integrantes")
+  await expect(brief).toContainText("Las pruebas de integración pasaron")
+  await expect(page.locator(".lead-details")).not.toHaveAttribute("open", "")
+})
 
 test("equipo con modelos distintos y skills combinables persiste; chat normal sigue accesible", async ({ page }) => {
   const { store } = await setup(page)

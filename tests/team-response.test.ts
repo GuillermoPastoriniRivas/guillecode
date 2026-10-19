@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { decodeTeamResponse, readableTeamSummary } from "../src/lib/team-response.ts"
+import { compactTeamReply, decodeTeamResponse, readableTeamSummary } from "../src/lib/team-response.ts"
 
 test("convierte el cierre del Lead sin perder reservas ni aprobar criterios falsos", () => {
   const result = decodeTeamResponse(JSON.stringify({ status: "approved", summary: "La integración HTTP pasó. La prueba visual sigue pendiente.", criteriaSatisfied: true, tasks: [] }))!
@@ -29,4 +29,16 @@ test("divide párrafos largos conservando exactamente las palabras de la revisi�
   const formatted = readableTeamSummary(summary)
   assert.ok(formatted.includes("\n\n"))
   assert.equal(formatted.replace(/\s+/g, " "), summary)
+})
+
+test("el resumen breve conserva pendientes y no inventa pruebas en el historial anterior", () => {
+  const brief = { done: "Creé el saludo y su API.", tested: "La integración pasó.", pending: "Nada pendiente." }
+  const result = decodeTeamResponse(JSON.stringify({ status: "approved", criteriaSatisfied: false, summary: "Informe largo", chatSummary: brief }))!
+  assert.equal(result.chatSummary.done, brief.done)
+  assert.match(result.chatSummary.pending, /no confirmó/)
+  const old = decodeTeamResponse('{"status":"completed","summary":"Terminé."}')!
+  assert.match(old.chatSummary.tested, /por sí sola no las confirma/)
+  const capped = compactTeamReply({ done: "dato ".repeat(300), tested: null }, brief)
+  assert.ok(capped.done.length <= 200)
+  assert.equal(capped.tested, brief.tested)
 })

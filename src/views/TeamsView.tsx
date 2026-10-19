@@ -20,8 +20,8 @@ export function TeamsView() {
     <div className="view-header"><span className="view-title">Equipos IA</span><IconButton icon="add" title="Crear equipo" onClick={() => openTeam()} /></div>
     {error && <p className="team-error">{error}</p>}
     {!root ? <p className="team-note">Abrí un proyecto para crear sus equipos.</p> : <div className="team-sidebar-list">
-      <button className="btn btn-primary" onClick={() => void newTeamChat()}><Icon name="organization" /> Nuevo chat de equipo</button>
-      {loaded && !mine.length && <p className="team-note">Creá un Lead y combiná especialistas, skills y modelos de tus cuentas.</p>}
+      <button className="btn btn-primary" onClick={() => void newTeamChat()}><Icon name="organization" /> Modo equipo</button>
+      {loaded && !mine.length && <p className="team-note">Escribí el objetivo. El Lead elige cuántos agentes necesita y los pone a trabajar en paralelo. También podés crear una plantilla manual.</p>}
       {mine.map((t) => <article key={t.id} className="team-sidebar-card" onContextMenu={(e) => openContextMenu(e, [
         { label: "Editar / renombrar", icon: "edit", run: () => openTeam(t.id) },
         { label: "Duplicar", icon: "copy", run: () => void duplicateTeam(t) },

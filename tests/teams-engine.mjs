@@ -9,6 +9,7 @@ import { tmpdir } from "node:os"
 // A real bundled OpenCode and the real Rust scheduler edit a disposable folder.
 // Only inference is deterministic/loopback; no account, paid tokens or user repo.
 const noGit = process.argv.includes("--no-git")
+const autonomous = process.argv.includes("--auto")
 const profile = await mkdtemp(join(tmpdir(), "guillecode-teams-"))
 await mkdir(join(profile, "repo"))
 // Windows CI can expose TEMP through an 8.3 alias; match teams_save's canonical root.
@@ -56,7 +57,31 @@ const mock = createServer(async (request, response) => {
   ].map(([phase, marker]) => [phase, latestUserPrompt.indexOf(marker)]).filter(([, index]) => index >= 0).sort((a, b) => a[1] - b[1])[0]?.[0]
   let item
   const message = (value) => ({ type: "message", id: `msg-${Date.now()}`, role: "assistant", content: [{ type: "output_text", text: JSON.stringify(value), annotations: [] }], status: "completed" })
-  if (["qa-lead", "qa-invalid-review"].includes(body.model)) {
+  if (autonomous) {
+    if (leadPhase === "plan") item = message({ agents: [{ id: "back-1", role: "Backend" }, { id: "back-2", role: "Backend" }, { id: "front-1", role: "Frontend" }], tasks: ["back-1", "back-2", "front-1"].map(id => ({ id, title: id, objective: `Crear ${id}.txt y comprobarlo`, assignedAgentId: id, repository: repo, dependencies: [], expectedFiles: [`${id}.txt`], writePaths: [`${id}.txt`], acceptanceCriteria: ["Archivo creado y comprobado"] })) })
+    else if (leadPhase) { reviews++; item = message({ status: "approved", summary: "Los tres archivos y sus comprobaciones observadas están correctos.", criteriaSatisfied: true, tasks: [], chatSummary: { done: "Creé dos servicios y la pantalla.", tested: "Las tres comprobaciones pasaron.", pending: "Falta QA manual." } }) }
+    else {
+      const input = [...body.input].reverse().find(i => i.role === "user")
+      const prompt = typeof input?.content === "string" ? input.content : (input?.content ?? []).map(p => p.text ?? "").join("\n")
+      const objective = prompt.split("\nTAREA: ")[1].split("\nCRITERIOS:")[0]
+      const id = objective.match(/Crear (back-\d|front-\d)\.txt/)[1]
+      const outputs = body.input.filter(i => i.type === "function_call_output")
+      if (!outputs.length) {
+        parallelWorkers.add(id)
+        const deadline = Date.now() + 15000
+        while (parallelWorkers.size < 3 && Date.now() < deadline) await delay(100)
+        assert.equal(parallelWorkers.size, 3, "All three automatically chosen specialists must start before any completes")
+      }
+      const check = `${nodeCommand} -e "process.exit(require('fs').readFileSync('${id}.txt','utf8')==='hola mundo\\n'?0:1)"`
+      if (outputs.length >= 3) item = message({ status: "completed", summary: `${id} implementado y comprobado`, checks: [check], limitations: [] })
+      else {
+        const name = outputs.length === 0 ? "read" : outputs.length === 1 ? "write" : "bash"
+        const args = name === "read" ? { filePath: join(repo, "user.txt") } : name === "write" ? { filePath: join(repo, `${id}.txt`), content: "hola mundo\n" } : { command: check, description: "Comprobar saludo", timeout: 10000 }
+        assert.ok(body.tools.some(t => t.name === name))
+        item = { type: "function_call", id: `fc-${Date.now()}-${id}`, call_id: `call-${Date.now()}-${id}`, name, arguments: JSON.stringify(args), status: "completed" }
+      }
+    }
+  } else if (["qa-lead", "qa-invalid-review"].includes(body.model)) {
     if (leadPhase === "coordination") {
       coordinationChecks++
       const input = [...body.input].reverse().find((item) => item.role === "user")
@@ -125,9 +150,18 @@ for (const stream of [engine.stdout, engine.stderr]) stream.on("data", (b) => { 
 try {
   for (let n = 0; !origin && n < 100; n++) await delay(200)
   assert.ok(origin, log)
-  const cargo = spawn("cargo", ["test", "--manifest-path", "src-tauri/Cargo.toml", "--release", "--lib", "--features", "desktop-e2e", "teams::integration::native_team_end_to_end", "--", "--ignored", "--nocapture", "--test-threads=1"], { env: { ...process.env, GUILLE_TEAM_TEST_ENGINE: origin, GUILLE_TEAM_TEST_REPO: repo,GUILLE_TEAM_TEST_NO_GIT:noGit?'1':'0',GUILLE_TEAM_TEST_CAPTURE_URL:`http://127.0.0.1:${mock.address().port}/app`,GUILLE_TEAM_TEST_ARTIFACTS:resolve(noGit?'test-results/native-team-evidence-no-git':'test-results/native-team-evidence') }, windowsHide: true, stdio: "inherit" })
+  const cargo = spawn("cargo", ["test", "--manifest-path", "src-tauri/Cargo.toml", "--release", "--lib", "--features", "desktop-e2e", "teams::integration::native_team_end_to_end", "--", "--ignored", "--nocapture", "--test-threads=1"], { env: { ...process.env, GUILLE_TEAM_TEST_AUTO: autonomous?'1':'0', GUILLE_TEAM_TEST_ENGINE: origin, GUILLE_TEAM_TEST_REPO: repo,GUILLE_TEAM_TEST_NO_GIT:noGit?'1':'0',GUILLE_TEAM_TEST_CAPTURE_URL:`http://127.0.0.1:${mock.address().port}/app`,GUILLE_TEAM_TEST_ARTIFACTS:resolve(noGit?'test-results/native-team-evidence-no-git':'test-results/native-team-evidence') }, windowsHide: true, stdio: "inherit" })
   const code = await new Promise((done) => cargo.once("exit", done))
   assert.equal(code, 0, `Native runner failed\n${log}`)
+  if (autonomous) {
+    assert.equal(parallelWorkers.size, 3)
+    for (const id of parallelWorkers) assert.equal(await readFile(join(repo, `${id}.txt`), "utf8"), "hola mundo\n")
+    assert.deepEqual([...models], ["qa-lead"])
+    assert.equal(reviews, 4)
+    assert.equal(await readFile(join(repo, "user.txt"), "utf8"), "user work\n")
+    if (noGit) await assert.rejects(() => stat(join(repo, ".git")), { code: "ENOENT" })
+    console.log("Verified: no template → Lead chooses two Backend + one Frontend → three real parallel sessions → writes and observed checks → persisted roster + brief.")
+  } else {
   assert.equal(parallelWorkers.size, 2)
   assert.ok(coordinationChecks >= 2, 'Lead must inspect the running dependency and recheck after its delivery')
   assert.equal(await readFile(join(repo, "backend.txt"), "utf8"), "version 2\n")
@@ -137,6 +171,7 @@ try {
   assert.deepEqual([...models].sort(), ["qa-backend", "qa-frontend", "qa-invalid-review", "qa-lead"])
   assert.equal(reviews, 9, 'parallel reviewers must verify both dispatched tasks, including both invalid verdicts')
   console.log(`Verified: native planning → distinct worker models → real file writes + commands → Lead correction → immutable evidence → awaiting manual QA; ${noGit ? "folder remained Git-free" : "pre-existing Git index intact"}.`)
+  }
 } finally {
   engine.kill()
   await new Promise((done) => engine.exitCode !== null ? done() : engine.once("exit", done))

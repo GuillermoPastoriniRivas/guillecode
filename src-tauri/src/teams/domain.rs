@@ -45,6 +45,8 @@ pub struct Employee {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Team {
+    #[serde(default)]
+    pub autonomous: bool,
     pub id: String,
     pub name: String,
     pub project_root: String,
@@ -180,6 +182,8 @@ fn pending() -> String {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Plan {
+    #[serde(default)]
+    pub agents: Vec<AgentProposal>,
     pub tasks: Vec<Task>,
     #[serde(default)]
     pub evidence_targets: Vec<CaptureTarget>,
@@ -202,6 +206,8 @@ pub struct Artifact {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Run {
+    #[serde(default)]
+    pub chat_summary: Option<ChatSummary>,
     pub id: String,
     pub goal: String,
     pub team: Team,
@@ -235,6 +241,24 @@ pub struct Run {
     pub session_usage: std::collections::BTreeMap<String, serde_json::Value>,
     #[serde(default)]
     pub evidence_expired_at: Option<i64>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentProposal {
+    pub id: String,
+    pub role: String,
+    #[serde(default)]
+    pub instructions: String,
+    #[serde(default)]
+    pub skill_ids: Vec<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct ChatSummary {
+    pub done: String,
+    pub tested: String,
+    pub pending: String,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -515,6 +539,7 @@ pub(super) mod tests {
     use super::*;
     pub fn team() -> Team {
         Team {
+            autonomous: false,
             id: id(),
             name: "Team 1".into(),
             project_root: "D:/repo".into(),
@@ -561,6 +586,7 @@ pub(super) mod tests {
     fn validates_dag_and_assignments() {
         assert!(validate_plan(
             &Plan {
+                agents: vec![],
                 evidence_targets: vec![],
                 tasks: vec![task("a", &[]), task("b", &["a"])]
             },
@@ -574,6 +600,7 @@ pub(super) mod tests {
         ] {
             assert!(validate_plan(
                 &Plan {
+                    agents: vec![],
                     tasks,
                     evidence_targets: vec![]
                 },
@@ -585,6 +612,7 @@ pub(super) mod tests {
         t.repository = "D:/other".into();
         assert!(validate_plan(
             &Plan {
+                agents: vec![],
                 tasks: vec![t],
                 evidence_targets: vec![]
             },

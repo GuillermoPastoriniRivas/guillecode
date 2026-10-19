@@ -1,12 +1,11 @@
 import { create } from "zustand"
 import { call, errorMessage, isTauri, onEvent } from "../lib/tauri"
 import { loadJson, saveJson } from "../lib/persist"
-import { samePath } from "../lib/paths"
 import { openEditor } from "./editors"
 import { useProject } from "./project"
 import { useLayout } from "./layout"
-import { useAgent } from "./agent"
-import { pickOne, promptInput } from "./quickinput"
+import { selectedVariant, useAgent } from "./agent"
+import { promptInput } from "./quickinput"
 import { confirmAction } from "../components/Dialog"
 import { notify } from "./toasts"
 import type { Skill, Team, TeamChatRecord, TeamStore } from "../team/types"
@@ -61,11 +60,13 @@ export function closeTeamChat(id: string) {
 export async function newTeamChat(teamId?: string) {
   if (!teamId) {
     const root = useProject.getState().root
-    const teams = useTeams.getState().teams.filter((t) => root && samePath(t.projectRoot, root))
-    const choice = await pickOne([{ id: "new", label: "Crear un equipo…", icon: "add" }, ...teams.map((t) => ({ id: t.id, label: t.name, description: `${t.members.length} integrantes`, icon: "organization" }))], { title: "Nuevo chat de equipo" })
-    if (!choice) return
-    if (choice.id === "new") { openTeam(); return }
-    teamId = choice.id
+    if (!root) { notify.info("Abrí una carpeta para usar el modo equipo"); return }
+    const state = useAgent.getState()
+    const { model } = state
+    const variant = selectedVariant(state) ?? null
+    const chat = await teamCall<TeamChatRecord>("team_chats_auto", { projectRoot: root, model: { ...model }, variant })
+    if (chat) selectTeamChat(chat.id)
+    return
   }
   const chat = await teamCall<TeamChatRecord>("team_chats_create", { teamId })
   if (chat) selectTeamChat(chat.id)

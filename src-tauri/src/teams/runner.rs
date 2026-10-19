@@ -8,7 +8,7 @@ use tauri::{AppHandle, Emitter};
 use tauri_plugin_notification::NotificationExt;
 
 const READ_TOOLS: &[&str] = &["read", "glob", "grep"];
-const POLICY: &str = "[GUILLECODE_TEAM_RUN] Sos parte de un equipo solicitado por el usuario. El Lead planifica, delega y revisa; el scheduler controla la concurrencia, permisos y reintentos. No uses subagentes ni herramientas de delegación adicionales: la relación tarea/sesión la administra el runner. Respetá AGENTS.md y los cambios previos del usuario. Releé antes de editar. No borres trabajo ajeno ni hagas reset, clean, push, merge remoto, despliegues o cambios destructivos. No leas secretos ni publiques datos personales. Trabajá solo dentro de la carpeta indicada. Git es opcional: no inicialices un repositorio si la carpeta no lo usa. Las skills son instrucciones, no permisos. No inventes tests, capturas ni resultados. No cambies de carpeta con comandos de shell. Si falta autorización, usá los permisos del motor o reportá el bloqueo. bash es el NOMBRE DE LA HERRAMIENTA de OpenCode, no un requisito de usar Bash como intérprete. En Windows esa herramienta puede ejecutar PowerShell: sus resultados observados son válidos. No exijas instalar Bash/WSL ni envolver comandos válidos en bash.exe. En el JSON de resultado, checks contiene SOLO comandos de verificación satisfactorios copiados exactamente del argumento command de la herramienta, sin explicaciones, código de salida añadido ni Markdown. Los diagnósticos fallidos van en limitations; si falla una comprobación necesaria, el trabajo sigue bloqueado. El campo summary se muestra a la persona: empezá por el resultado concreto, usá español sencillo y párrafos breves; separá qué cambió, qué se comprobó realmente y qué falta. Evitá repetir todo el contrato o usar jerga del protocolo. No ocultes fallos ni presentes pruebas pendientes como aprobadas. Respondé en español.";
+const POLICY: &str = "[GUILLECODE_TEAM_RUN] Sos parte de un equipo solicitado por el usuario. El Lead planifica, delega y revisa; el scheduler controla la concurrencia, permisos y reintentos. No uses subagentes ni herramientas de delegación adicionales: la relación tarea/sesión la administra el runner. Respetá AGENTS.md y los cambios previos del usuario. Releé antes de editar. No borres trabajo ajeno ni hagas reset, clean, push, merge remoto, despliegues o cambios destructivos. No leas secretos ni publiques datos personales. Trabajá solo dentro de la carpeta indicada. Git es opcional: no inicialices un repositorio si la carpeta no lo usa. Las skills son instrucciones, no permisos. No inventes tests, capturas ni resultados. No cambies de carpeta con comandos de shell. Si falta autorización, usá los permisos del motor o reportá el bloqueo. bash es el NOMBRE DE LA HERRAMIENTA de OpenCode, no un requisito de usar Bash como intérprete. En Windows esa herramienta puede ejecutar PowerShell: sus resultados observados son válidos. No exijas instalar Bash/WSL ni envolver comandos válidos en bash.exe. En el JSON de resultado, checks contiene SOLO comandos de verificación satisfactorios copiados exactamente del argumento command de la herramienta, sin explicaciones, código de salida añadido ni Markdown. Los diagnósticos fallidos van en limitations; si falla una comprobación necesaria, el trabajo sigue bloqueado. En cada respuesta JSON agregá chatSummary con done, tested y pending: tres frases breves en español, una por campo, de hasta 180 caracteres cada una. done dice qué hiciste; tested solo qué probaste realmente y su resultado; pending explica qué falta o dice Nada pendiente solo si está comprobado. Si solo planificaste, decí que todavía no implementaste ni probaste. Escribí como en un chat normal, sin puertos, rutas, nombres internos ni repetir el contrato. Los comandos y el razonamiento técnico van en summary/checks para verlos plegados. No ocultes fallos ni presentes pruebas pendientes como aprobadas. Respondé en español.";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -30,11 +30,22 @@ struct DependencyRequest {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct Closeout {
+    #[serde(default, deserialize_with = "optional_chat_summary")]
+    chat_summary: Option<ChatSummary>,
+    #[serde(default)]
+    agents: Vec<AgentProposal>,
     #[serde(flatten)]
     review: Review,
     #[serde(default)]
     tasks: Vec<Task>,
+}
+
+fn optional_chat_summary<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<ChatSummary>, D::Error> {
+    // A presentation-only brief must not invalidate a valid technical verdict.
+    let value = Value::deserialize(deserializer)?;
+    Ok(serde_json::from_value(value).ok())
 }
 
 pub fn unsettled(r: &Run) -> bool {
@@ -512,9 +523,12 @@ pub fn observed_commands(messages: &Value) -> Vec<Value> {
 }
 
 fn checks_passed(checks: &[String], commands: &[Value]) -> bool {
-    !checks.is_empty() && checks.iter().all(|check| {
-        commands.iter().any(|c| c["command"] == *check && c["exitCode"].as_i64() == Some(0))
-    })
+    !checks.is_empty()
+        && checks.iter().all(|check| {
+            commands
+                .iter()
+                .any(|c| c["command"] == *check && c["exitCode"].as_i64() == Some(0))
+        })
 }
 
 pub(super) fn lead(r: &Run) -> Result<Employee, String> {
@@ -563,6 +577,7 @@ fn fallback_plan(r: &Run, reason: &str) -> (Plan, String) {
     };
     (
         Plan {
+            agents: vec![],
             tasks: vec![task],
             evidence_targets: vec![],
         },
@@ -572,7 +587,9 @@ fn fallback_plan(r: &Run, reason: &str) -> (Plan, String) {
 
 fn usable_plan(text: &str, r: &Run) -> (Plan, Option<String>) {
     match parse_json::<Plan>(text).and_then(|plan| {
-        validate_plan(&plan, &r.team)?;
+        super::staffing::validate_assignments(&plan.agents, &plan.tasks)?;
+        let team = super::staffing::with_agents(&r.team, &plan.agents, &r.skills)?;
+        validate_plan(&plan, &team)?;
         Ok(plan)
     }) {
         Ok(plan) => (plan, None),
@@ -611,20 +628,34 @@ fn plan(app: &AppHandle, id: &str) -> Result<(), String> {
         r.plan_session_id = Some(session.clone());
         Ok(())
     })?;
-    let prompt = format!("{}\n\nActuás como Team Lead. Descubrí convenciones y archivos. Proponé tareas completas asignadas a IDs existentes según skills y carga. No modifiques archivos. Cada tarea trabaja en UNA carpeta autorizada; Git puede existir o no y nunca debe inicializarse por este requisito. Frontend, Backend y QA deben avanzar simultáneamente en archivos propios incluso dentro de la misma carpeta. Definí writePaths con archivos relativos o directorios terminados en /; son los únicos lugares que ese agente puede escribir. Repartí archivos compartidos a un único responsable. No agregues dependencias entre Frontend y Backend solo por consumir una API: acordá el contrato en los objetivos y dejá la integración final como tarea dependiente. Usá dependencies solo cuando no existe ningún trabajo útil antes de la entrega. Una tarea sin writePaths reserva toda la carpeta y se ejecuta sola. QA puede preparar pruebas en paralelo y ejecutar la integración al terminar ambos. Si falta QA, asigná comprobaciones a otro miembro o a vos. Cada trabajador debe ejecutar comprobaciones con bash y presentar resultados observados. No pidas aprobación de microtareas.\nOBJETIVO: {}\nEQUIPO: {}\nSKILLS DEL LEAD:\n{}\nBASELINE: {}\nRespondé SOLO JSON válido: {{\"tasks\":[{{\"id\":\"T1\",\"title\":\"…\",\"objective\":\"…\",\"assignedAgentId\":\"ID existente\",\"repository\":\"ruta autorizada exacta\",\"dependencies\":[],\"expectedFiles\":[\"ruta relativa\"],\"writePaths\":[\"ruta relativa o directorio/\"],\"acceptanceCriteria\":[\"comportamiento comprobable y pruebas pertinentes\"]}}]}}", POLICY, r.goal, serde_json::to_string(&r.team).map_err(|e| e.to_string())?, skills_prompt(&r, &a), evidence::sanitize(&serde_json::to_string(&r.baseline).map_err(|e| e.to_string())?));
+    let prompt = format!("{}\n\nActuás como Team Lead. Descubrí convenciones y archivos. Proponé tareas completas asignadas a IDs del equipo según skills y carga; en modo automático podés proponer nuevos especialistas con agents. No modifiques archivos. Cada tarea trabaja en UNA carpeta autorizada; Git puede existir o no y nunca debe inicializarse por este requisito. Frontend, Backend y QA deben avanzar simultáneamente en archivos propios incluso dentro de la misma carpeta. Definí writePaths con archivos relativos o directorios terminados en /; son los únicos lugares que ese agente puede escribir. Repartí archivos compartidos a un único responsable. No agregues dependencias entre Frontend y Backend solo por consumir una API: acordá el contrato en los objetivos y dejá la integración final como tarea dependiente. Usá dependencies solo cuando no existe ningún trabajo útil antes de la entrega. Una tarea sin writePaths reserva toda la carpeta y se ejecuta sola. QA puede preparar pruebas en paralelo y ejecutar la integración al terminar ambos. Si falta QA, asigná comprobaciones a otro miembro o a vos. Cada trabajador debe ejecutar comprobaciones con bash y presentar resultados observados. No pidas aprobación de microtareas.\nOBJETIVO: {}\nEQUIPO: {}\nSKILLS DEL LEAD:\n{}\nBASELINE: {}\nRespondé SOLO JSON válido: {{\"tasks\":[{{\"id\":\"T1\",\"title\":\"…\",\"objective\":\"…\",\"assignedAgentId\":\"ID existente\",\"repository\":\"ruta autorizada exacta\",\"dependencies\":[],\"expectedFiles\":[\"ruta relativa\"],\"writePaths\":[\"ruta relativa o directorio/\"],\"acceptanceCriteria\":[\"comportamiento comprobable y pruebas pertinentes\"]}}]}}", POLICY, r.goal, serde_json::to_string(&r.team).map_err(|e| e.to_string())?, skills_prompt(&r, &a), evidence::sanitize(&serde_json::to_string(&r.baseline).map_err(|e| e.to_string())?));
     let prompt=format!("{}\nSi el proyecto tiene UI web y no hay flujos configurados en el equipo, agregá evidenceTargets al JSON del plan: [{{\"id\":\"flujo-estable\",\"name\":\"Flujo\",\"url\":\"http://localhost:PUERTO/ruta-local-descubierta\",\"width\":1280,\"height\":800,\"maskSelectors\":[],\"actions\":[],\"required\":false}}]. Solo URLs locales observadas en la configuración del repo; no inventes una URL ni levantes servicios desde esta sesión de lectura. Los pasos admiten {{kind:click|fill|wait,selector:selectorCSS,value:opcional}}; no incluyas secretos. El runner captura antes de cualquier escritura y después del trabajo. Si no hay UI, evidenceTargets vacío.",prompt);
+    let prompt = format!(
+        "{}{}\nCATÁLOGO DE SKILLS: {}",
+        prompt,
+        super::staffing::prompt(&r.team),
+        serde_json::to_string(
+            &r.skills
+                .iter()
+                .map(|s| json!({"id":s.id,"name":s.name}))
+                .collect::<Vec<_>>()
+        )
+        .unwrap_or_default()
+    );
     let messages = if let Some(text) = &r.recovered_plan {
         json!([{"info":{"role":"assistant"},"parts":[{"type":"text","text":text}]}])
     } else {
         execute(app, id, &client, &session, &a, &prompt, true)?
     };
     let (mut plan, automatic_recovery) = usable_plan(&final_text(&messages), &r);
+    let planned_team = super::staffing::with_agents(&r.team, &plan.agents, &r.skills)?;
     for t in &mut plan.tasks {
         t.status = "pending".into();
         t.attempts.clear();
         t.error = None;
     }
     update_run(app, id, |r| {
+        r.team = planned_team;
         r.tasks = plan.tasks;
         if let Some(reason) = automatic_recovery {
             r.configuration_changes.push(json!({
@@ -835,7 +866,11 @@ fn worker(app: &AppHandle, run_id: &str, task_id: &str) -> Result<(), String> {
         },
     };
     if !checks_passed && !matches!(review.status, ReviewStatus::ReviewError) {
-        let successful: Vec<_> = commands.iter().filter(|c| c["exitCode"].as_i64() == Some(0)).map(|c| c["command"].clone()).collect();
+        let successful: Vec<_> = commands
+            .iter()
+            .filter(|c| c["exitCode"].as_i64() == Some(0))
+            .map(|c| c["command"].clone())
+            .collect();
         review = Review {status:ReviewStatus::ChangesRequested,summary:format!("Falta una comprobación satisfactoria observada para cada comando declarado. Corregí el contrato del resultado: checks debe copiar SOLO los comandos de verificación que realmente pasaron, sin descripciones ni diagnósticos fallidos. Comandos observados con código 0: {}. No repitas efectos ya ejecutados; si falta una comprobación necesaria, ejecutala y revisá su resultado. {}",serde_json::to_string(&successful).unwrap_or_default(),review.summary),criteria_satisfied:false};
     }
     let approved = matches!(review.status, ReviewStatus::Approved) && review.criteria_satisfied;
@@ -947,7 +982,10 @@ pub fn reconcile(app: &AppHandle, r: &Run, abort: bool) -> Result<(), String> {
                 .get(&format!("/session/{}/message", session))?;
             let text = final_text(&messages);
             if let Ok(plan) = parse_json::<Plan>(&text) {
-                if validate_plan(&plan, &r.team).is_ok() {
+                if super::staffing::with_agents(&r.team, &plan.agents, &r.skills)
+                    .and_then(|team| validate_plan(&plan, &team))
+                    .is_ok()
+                {
                     update_run(app, &r.id, |r| {
                         r.recovered_plan = Some(text);
                         Ok(())
@@ -1037,6 +1075,7 @@ fn closeout(app: &AppHandle, id: &str) -> Result<bool, String> {
         prompt,
         skills_prompt(&r, &a)
     );
+    let prompt = format!("{}{}", prompt, super::staffing::prompt(&r.team));
     let response = execute(app, id, &client, &session, &a, &prompt, true)?;
     let mut verdict: Closeout = parse_json(&final_text(&response))?;
     verdict.review.summary = evidence::sanitize(&verdict.review.summary);
@@ -1049,6 +1088,14 @@ fn closeout(app: &AppHandle, id: &str) -> Result<bool, String> {
     let corrections = matches!(verdict.review.status, ReviewStatus::ChangesRequested)
         && !verdict.tasks.is_empty()
         && r.closing_reviews.len() < r.team.max_retries_per_task;
+    super::staffing::validate_assignments(&verdict.agents, &verdict.tasks)?;
+    if !corrections && !verdict.agents.is_empty() {
+        return Err(
+            "El Lead solo puede incorporar especialistas junto con tareas de corrección válidas"
+                .into(),
+        );
+    }
+    let closing_team = super::staffing::with_agents(&r.team, &verdict.agents, &r.skills)?;
     if corrections {
         for t in &mut verdict.tasks {
             t.status = "pending".into();
@@ -1059,10 +1106,11 @@ fn closeout(app: &AppHandle, id: &str) -> Result<bool, String> {
         all.extend(verdict.tasks.clone());
         validate_plan(
             &Plan {
+                agents: vec![],
                 tasks: all,
                 evidence_targets: vec![],
             },
-            &r.team,
+            &closing_team,
         )?;
     }
     let mut evidence_run = run(app, id)?;
@@ -1079,7 +1127,11 @@ fn closeout(app: &AppHandle, id: &str) -> Result<bool, String> {
         &record,
     )?;
     update_run(app, id, |r| {
+        r.team = closing_team;
         r.closing_reviews.push(verdict.review.clone());
+        if approved {
+            r.chat_summary = verdict.chat_summary.clone();
+        }
         r.artifacts = evidence_run.artifacts;
         if approved {
             r.summary = verdict.review.summary.clone();
@@ -1411,7 +1463,12 @@ mod tests {
             {"type":"tool","tool":"bash","state":{"status":"running","input":{"command":"npm test"}}}
         ]}]));
         assert!(checks_passed(&[command.into()], &commands));
-        for invalid in [vec![], vec!["npm test".into()], vec!["node qa/check.mjs".into()], vec![format!("{} — código 0", command)]] {
+        for invalid in [
+            vec![],
+            vec!["npm test".into()],
+            vec!["node qa/check.mjs".into()],
+            vec![format!("{} — código 0", command)],
+        ] {
             assert!(!checks_passed(&invalid, &commands));
         }
     }
@@ -1449,6 +1506,47 @@ mod tests {
             assert_eq!(plan.tasks[0].repository, "D:/repo");
             assert!(validate_plan(&plan, &r.team).is_ok());
         }
+    }
+    #[test]
+    fn automatic_plan_staffs_three_parallel_owners_and_survives_recovery() {
+        let mut team = super::super::domain::tests::team();
+        team.autonomous = true;
+        team.max_parallel_tasks = 8;
+        let mut r: Run = serde_json::from_value(json!({"id":"run","goal":"Dos servicios y una UI","team":team,"skills":[],"status":"planning","startedAt":0,"finishedAt":null,"planSessionId":null,"tasks":[],"summary":"","error":null,"evidenceDir":"unused","artifacts":[],"baseline":[],"notified":false})).unwrap();
+        let agents = json!([{"id":"back-1","role":"Backend"},{"id":"back-2","role":"Backend"},{"id":"front-1","role":"Frontend"}]);
+        let tasks: Vec<_> = ["back-1", "back-2", "front-1"].iter().map(|id| json!({"id":id,"title":id,"objective":"Implementar y comprobar","assignedAgentId":id,"repository":"D:/repo","dependencies":[],"expectedFiles":[],"writePaths":[format!("{}/",id)],"acceptanceCriteria":["check"]})).collect();
+        let text = json!({"agents":agents,"tasks":tasks}).to_string();
+        let (plan, recovery) = usable_plan(&text, &r);
+        assert!(recovery.is_none());
+        r.team = super::super::staffing::with_agents(&r.team, &plan.agents, &r.skills).unwrap();
+        r.tasks = plan.tasks;
+        assert_eq!(
+            ready_tasks(&r, &HashSet::new()).unwrap(),
+            vec!["back-1", "back-2", "front-1"]
+        );
+        let restored: Run = serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
+        assert_eq!(restored.team.members.len(), 4);
+        assert_eq!(ready_tasks(&restored, &HashSet::new()).unwrap().len(), 3);
+        // A duplicate roster cannot be installed when a saved plan is seen twice.
+        assert!(super::super::staffing::with_agents(&restored.team, &plan.agents, &[]).is_err());
+        let mut invalid = tasks.clone();
+        invalid[0]["repository"] = json!("D:/other");
+        let mut seed = r.clone();
+        seed.team = team;
+        seed.tasks.clear();
+        let (fallback, reason) =
+            usable_plan(&json!({"agents":agents,"tasks":invalid}).to_string(), &seed);
+        assert!(reason.is_some());
+        assert!(fallback.agents.is_empty());
+    }
+    #[test]
+    fn closeout_accepts_brief_without_losing_the_verdict() {
+        let close: Closeout = parse_json(r#"{"status":"approved","criteriaSatisfied":true,"summary":"Informe completo","chatSummary":{"done":"Creé el saludo.","tested":"La integración pasó.","pending":"Falta QA manual."},"tasks":[]}"#).unwrap();
+        assert_eq!(close.chat_summary.unwrap().tested, "La integración pasó.");
+        assert!(matches!(close.review.status, ReviewStatus::Approved));
+        let malformed: Closeout = parse_json(r#"{"status":"approved","criteriaSatisfied":true,"summary":"Informe completo","chatSummary":{"done":123},"tasks":[]}"#).unwrap();
+        assert!(malformed.chat_summary.is_none());
+        assert!(matches!(malformed.review.status, ReviewStatus::Approved));
     }
     #[test]
     fn scheduler_respects_dependencies_repository_locks_and_member_capacity() {
