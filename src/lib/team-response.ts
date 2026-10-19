@@ -36,11 +36,12 @@ export function decodeTeamResponse(text: string): TeamResponse | null {
   } catch { return null }
   const tasks = Array.isArray(value.tasks) ? value.tasks.filter((v): v is RecordValue => !!v && typeof v === "object" && typeof v.title === "string" && typeof v.objective === "string").map(v => ({ title: v.title as string, objective: v.objective as string })) : []
   const status = typeof value.status === "string" ? value.status : ""
-  if ((!labels[status] || typeof value.summary !== "string") && !(Array.isArray(value.tasks) && !status)) return null
+  const label = Object.hasOwn(labels, status) ? labels[status] : undefined
+  if ((!label || typeof value.summary !== "string") && !(Array.isArray(value.tasks) && !status)) return null
   const limitations = strings(value.limitations)
   if (status === "approved" && value.criteriaSatisfied !== true) limitations.unshift("El Lead no confirmó que se cumplan todos los criterios. Esta respuesta no acredita una aprobación.")
   return {
-    title: status === "approved" && value.criteriaSatisfied !== true ? "Revisión sin aprobación confirmada" : labels[status] ?? "Plan de trabajo del equipo",
+    title: status === "approved" && value.criteriaSatisfied !== true ? "Revisión sin aprobación confirmada" : label ?? "Plan de trabajo del equipo",
     summary: readableTeamSummary(typeof value.summary === "string" ? value.summary : "El Lead organizó estas tareas para el equipo."),
     tasks, checks: strings(value.checks), limitations,
     request: value.request && typeof value.request === "object" && typeof (value.request as RecordValue).message === "string" ? (value.request as RecordValue).message as string : undefined,

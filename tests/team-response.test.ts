@@ -21,7 +21,7 @@ test("separa plan, comprobaciones informadas y pedidos al Lead", () => {
   assert.equal(worker.request, "Necesito el endpoint del backend")
   assert.deepEqual(worker.checks, ["node --check app.js"])
   assert.deepEqual(worker.limitations, ["Falta probar la API."])
-  for (const invalid of ['{"status":"approved",', '{"message":"JSON normal"}', '{"status":"unknown","summary":"x"}', '[]', 'null']) assert.equal(decodeTeamResponse(invalid), null)
+  for (const invalid of ['{"status":"approved",', '{"message":"JSON normal"}', '{"status":"unknown","summary":"x"}', '{"status":"__proto__","summary":"x"}', '{"status":"constructor","summary":"x"}', '[]', 'null']) assert.equal(decodeTeamResponse(invalid), null)
 })
 
 test("divide párrafos largos conservando exactamente las palabras de la revisión", () => {
