@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { teamCall, useTeams } from "../state/teams"
-import { useAgent } from "../state/agent"
+import { pendingRequests, useAgent } from "../state/agent"
+import { useApprovals } from "../state/approvals"
 import { modelKey, rememberSessionDirectory } from "../lib/opencode"
 import { openEditor } from "../state/editors"
 import { confirmAction } from "../components/Dialog"
@@ -17,10 +18,12 @@ import { recoveryHint, runProblem, taskProblem } from "../team/problem"
 import { ChatImages } from "../team/ChatImages"
 import { TeamComposer } from "../team/TeamComposer"
 import { TeamSettings } from "../team/TeamSettings"
+import { attentionLabel, teamAttention } from "../team/attention"
 
 function RunReply({ run }: { run: TeamRun }) {
-  const pending = run.error ? runProblem(run) : run.status === "awaiting_manual_qa" ? "Falta tu revisión manual de la entrega." : run.status === "qa_approved" ? "Entrega aprobada. Podés enviar el siguiente pedido." : "El equipo todavía está trabajando."
-  const brief = run.chatSummary ? { ...run.chatSummary, pending: run.error || ["awaiting_manual_qa", "qa_approved"].includes(run.status) ? pending : run.chatSummary.pending } : undefined
+  const blockedTask = run.tasks.find(t => ["blocked", "failed", "review_error", "interrupted"].includes(t.status))
+  const pending = run.error || blockedTask ? runProblem(run) : run.status === "awaiting_manual_qa" ? "Falta tu revisión manual de la entrega." : run.status === "qa_approved" ? "Entrega aprobada. Podés enviar el siguiente pedido." : "El equipo todavía está trabajando."
+  const brief = run.chatSummary ? { ...run.chatSummary, pending: run.error || blockedTask || ["awaiting_manual_qa", "qa_approved"].includes(run.status) ? pending : run.chatSummary.pending } : undefined
   return <LeadReply brief={brief} fallback={{
     done: run.summary ? firstTeamSentence(run.summary) : run.tasks.length ? `Organicé ${run.tasks.length} tareas; ${run.tasks.filter(t => t.status === "completed").length} están terminadas.` : "Estoy revisando tu pedido y organizando el trabajo.",
     tested: run.closingReviews?.at(-1)?.status === "approved" ? "Revisé las entregas y sus comprobaciones. Podés ver el informe en los detalles." : "Las comprobaciones se registran en Actividad; todavía no hay una revisión final aprobada.",
@@ -55,6 +58,10 @@ function Results({ run, history }: { run: TeamRun; history: TeamRun[] }) {
 export function TeamChat({ chatId }: { chatId: string }) {
   const chat = useTeams((s) => s.chats.find((c) => c.id === chatId))
   const models = useAgent((s) => s.models)
+  const permissions = useAgent(s => s.permissions)
+  const questions = useAgent(s => s.questions)
+  const allSessions = useAgent(s => s.allSessions)
+  const approvals = useApprovals()
   const [view, setView] = useState("Chat")
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const bottom = useRef<HTMLDivElement>(null)
@@ -71,9 +78,26 @@ export function TeamChat({ chatId }: { chatId: string }) {
   const budgetBlocked = /presupuesto|límite de tokens|duración máxima/i.test(runError)
   const modelBlocked = /modelo|proveedor|variante/i.test(runError) || isAccountLimitError(runError)
   const pendingReply = messages.some(m => m.status === "pending")
+  const requests = pendingRequests({ permissions, questions, allSessions }, approvals)
+  const attention = teamAttention(chat, run, [
+    ...requests.permissions.map(r => ({ sessionID: r.sessionID, kind: "permission" as const })),
+    ...requests.questions.map(r => ({ sessionID: r.sessionID, kind: "question" as const })),
+  ])
+  const attentionText = attentionLabel(attention)
+  const headerStatus = run ? statusLabel[run.status] : attention.length ? "Necesita tu ayuda" : pendingReply ? "El Lead está trabajando" : "Listo para recibir tu objetivo"
+  const otherWork = run?.status === "running" && run.tasks.some(t => ["running", "verifying"].includes(t.status) && !attention.some(i => i.id === t.id || (i.sessionId && [t.attempts.at(-1)?.sessionId, t.attempts.at(-1)?.reviewSessionId].includes(i.sessionId))))
   const act = (action: string) => run && teamCall("team_runs_control", { runId: run.id, action })
   return <section className="team-chat">
-    <header className="team-chat-header"><div className="team-section-title"><strong><Icon name="organization" /> {chat.title}</strong><button className="btn btn-xs" type="button" aria-label="Configuración del equipo" aria-pressed={view === "Configuración"} onClick={() => setView(view === "Configuración" ? "Chat" : "Configuración")}><Icon name="settings-gear" /> Configuración</button></div><p>{roster.members.length} integrantes · {run ? statusLabel[run.status] : "Listo para recibir tu objetivo"}</p>{roster.autonomous && <details className="team-roster"><summary>Equipo elegido por el Lead</summary>{roster.members.map(m => <p key={m.id}>{m.name} · {m.role}</p>)}</details>}</header>
+    <header className="team-chat-header"><div className="team-section-title"><strong><Icon name="organization" /> {chat.title}</strong><button className="btn btn-xs" type="button" aria-label="Configuración del equipo" aria-pressed={view === "Configuración"} onClick={() => setView(view === "Configuración" ? "Chat" : "Configuración")}><Icon name="settings-gear" /> Configuración</button></div><p>{roster.members.length} integrantes · {headerStatus}{attentionText && <span className="team-attention-badge" aria-live="polite"> · {attentionText}</span>}</p>
+      {attention.length > 0 && <section className="team-attention" aria-label="Bloqueos del equipo">
+        <div className="team-attention-list">{attention.map(item => <article key={item.id}>
+          <div className="team-attention-agent"><strong><Icon name="warning" /> {item.kind === "waiting" ? "En espera" : "Bloqueado"} · {item.name}</strong>
+          <button className="btn btn-xs" onClick={() => item.sessionId ? openSession(item.sessionId, item.directory) : setView("Actividad")}>{item.kind === "permission" ? "Ver permiso" : item.kind === "question" ? "Responder al agente" : "Ver actividad"}</button>
+          </div><p><span className="team-attention-task">{item.task}: </span>{item.reason}</p>
+        </article>)}</div>
+        <p>Podés ayudarlo desde este chat.{otherWork && attention.some(i => i.kind !== "waiting") ? " Las tareas independientes siguen trabajando." : ""}</p>
+      </section>}
+      {roster.autonomous && <details className="team-roster"><summary>Equipo elegido por el Lead</summary>{roster.members.map(m => <p key={m.id}>{m.name} · {m.role}</p>)}</details>}</header>
     <nav className="team-chat-nav" aria-label="Vistas del equipo">{["Chat", "Tareas", "Actividad", "Resultados / Comportamientos"].map((v) => <button key={v} className={view === v ? "active" : ""} onClick={() => setView(v)}>{v}</button>)}</nav>
     {chat.runs.length > 1 && <label className="team-run-select">Entrega / ejecución<select value={run?.id} onChange={(e) => setSelectedRunId(e.target.value)}>{chat.runs.map((r, i) => <option value={r.id} key={r.id}>#{i + 1} · {formatDateTime(r.startedAt)} · {statusLabel[r.status]}</option>)}</select></label>}
     {run && <div className="team-run-controls">

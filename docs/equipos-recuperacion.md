@@ -20,3 +20,11 @@ En Configuración se puede cambiar el modelo para los siguientes mensajes del ch
 - La prueba de reinicio conserva la obligación de reconciliar las sesiones registradas antes de continuar operaciones con efectos.
 
 Las pruebas de inferencia usan un servidor local determinista; no acreditan disponibilidad ni acceso de cuentas de proveedores externos.
+
+## Avisos de bloqueo en el encabezado
+
+El chat de equipo muestra arriba los integrantes bloqueados, la tarea, la causa legible y un acceso a su actividad. Esto funciona aunque el estado general siga en ejecución y otros agentes estén trabajando. Los permisos pendientes ofrecen «Ver permiso» y las preguntas «Responder al agente»; ambos abren la sesión correspondiente. Las solicitudes de otros chats se excluyen.
+
+Las esperas explícitas de coordinación se muestran como «En espera», con el responsable de la entrega y el pedido al Lead. Las tareas pendientes normales no se presentan como fallos. Los avisos se recalculan con el estado guardado y las solicitudes del motor, y desaparecen al resolverse. Las cancelaciones y las tareas terminadas no conservan avisos antiguos. Si el Lead falla antes de planificar, el encabezado también muestra que necesita ayuda. La sección «Qué falta» del Lead refleja los bloqueos aunque no exista un error general de ejecución.
+
+Validación: cinco pruebas unitarias de selección de avisos, aislamiento entre chats y resolución; pruebas de interfaz de bloqueo con trabajo paralelo, espera de otra entrega, permiso y apertura de su sesión, y fallo del Lead antes del plan. Las capturas de interfaz de Playwright usan estados de prueba; no representan ejecuciones de proveedores externos.
