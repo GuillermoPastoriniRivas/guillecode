@@ -158,6 +158,18 @@ test("modo equipo abre sin plantilla y muestra integrantes elegidos por el Lead 
   await expect(page.locator(".team-roster")).toContainText("Backend 2")
   await expect(roster.locator(".team-member-status.working")).toHaveCount(4)
   await page.screenshot({ path: test.info().outputPath("modo-equipo-paralelo.png") })
+  run.tasks[0].status = "waiting_dependency"; run.tasks[2].status = "waiting_dependency"
+  run.coordination = [
+    { id: "cycle-front", fromTaskId: "front-1", taskIds: ["back-1"], cycleTaskIds: ["front-1", "back-1"], status: "checking", message: "Necesito el contrato de Backend", summary: "Detecté una espera circular. Estoy separando el contrato de la integración.", createdAt: Date.now(), sessions: [] },
+    { id: "cycle-back", fromTaskId: "back-1", taskIds: ["front-1"], status: "waiting", message: "Necesito la integración de Frontend", summary: "", createdAt: Date.now(), sessions: [] },
+  ]
+  await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
+  const lead = roster.locator(".team-member").filter({ has: page.locator("strong", { hasText: /^Lead$/ }) })
+  await expect(lead).toContainText("Destrabando equipo")
+  await expect(lead).toContainText("Sin pedidos de ayuda")
+  await expect(lead).toContainText("separando el contrato de la integración")
+  await page.screenshot({ path: test.info().outputPath("lead-separa-espera-circular.png") })
+  run.tasks[0].status = "running"; run.coordination = []
   run.tasks[2].status = "blocked"
   run.tasks[2].error = "Falta configurar la API local."
   await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })

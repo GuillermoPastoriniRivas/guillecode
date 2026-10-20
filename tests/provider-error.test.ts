@@ -52,6 +52,8 @@ test("el HTTP 402 de OpenCode explica saldo o facturación sin revelar cabeceras
 })
 
 test("mensajes de equipos explican la causa y el siguiente paso sin mostrar errores crudos", () => {
+  assert.match(readableTeamError("El pedido crea una espera circular entre agentes"), /Lead debe separar el contrato.*preguntarle/)
+  assert.doesNotMatch(readableTeamError("El pedido crea una espera circular entre agentes"), /Reintentá/)
   assert.match(readableTeamError("fatal: not a git repository (or any of the parent directories): .git"), /Git.*no tiene un repositorio Git.*no impide trabajar/i)
   assert.match(readableTeamError("Falta una comprobación satisfactoria observada para cada comando declarado."), /dio pruebas por aprobadas.*falta el registro.*repetir esa verificación/i)
   assert.match(readableTeamError("El plan debe contener entre 1 y 100 tareas"), /Lead.*plan de trabajo válido.*reintentá/i)

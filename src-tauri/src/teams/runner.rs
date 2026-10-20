@@ -928,6 +928,7 @@ fn worker(app: &AppHandle, run_id: &str, task_id: &str) -> Result<(), String> {
             // Suggested dependencies are a question for the Lead, not a new
             // execution edge. Only its validated decision may establish a wait.
             r.coordination.push(Coordination {
+                cycle_task_ids: vec![],
                 id: id(),
                 from_task_id: task_id.into(),
                 message: evidence::sanitize(&request.message),

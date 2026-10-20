@@ -21,7 +21,9 @@ export function memberState(member: Employee, chat: TeamChatRecord, run: TeamRun
     if (run.status === "delivering") return state("Preparando entrega", "Está guardando los resultados y sus evidencias.", "working")
     if (run.status === "awaiting_manual_qa") return state("Espera tu revisión", "La entrega está lista. Falta tu revisión manual.", "waiting", true)
     if (run.status === "qa_approved") return state("Completado", "La entrega fue aprobada.", "done")
-    if (run.coordination?.some(c => c.status === "checking")) return state("Coordinando", "Está revisando un pedido de otro integrante.", "working")
+    const coordination = run.coordination?.find(c => c.status === "checking")
+    if (coordination?.cycleTaskIds?.length) return state("Destrabando equipo", coordination.summary || "Está separando una espera circular para que los integrantes puedan avanzar.", "working")
+    if (coordination) return state("Coordinando", "Está revisando un pedido de otro integrante.", "working")
     if (run.tasks.some(t => t.status === "verifying")) return state("Revisando", "Está comprobando las entregas de los especialistas.", "working")
   }
   const tasks = run.tasks.filter(t => t.assignedAgentId === member.id)

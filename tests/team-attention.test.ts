@@ -23,6 +23,15 @@ test("la lista distingue al Lead listo, respondiendo y planificando", () => {
   assert.equal(memberState(lead, chat, run, []).label, "Planificando")
 })
 
+test("el Lead informa que está separando un ciclo sin pedir ayuda prematuramente", () => {
+  const { chat, run } = fixture()
+  run.coordination = [{ id: "cycle", fromTaskId: "frontend", message: "Falta contrato", taskIds: ["backend"], cycleTaskIds: ["frontend", "backend"], status: "checking", summary: "Detecté una espera circular. Estoy separando el contrato de la integración.", createdAt: 2, sessions: ["coordination"] }]
+  const lead = memberState(run.team.members[0], chat, run, teamAttention(chat, run))
+  assert.equal(lead.label, "Destrabando equipo")
+  assert.match(lead.detail, /espera circular/)
+  assert.equal(lead.needsHelp, false)
+})
+
 test("cada integrante conserva su estado cuando otro necesita ayuda, incluso con nombres iguales", () => {
   const { chat, run } = fixture()
   const [lead, front, back] = run.team.members

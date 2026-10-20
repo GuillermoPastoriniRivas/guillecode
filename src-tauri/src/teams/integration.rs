@@ -37,6 +37,10 @@ fn native_team_end_to_end() {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if std::env::var("GUILLE_TEAM_TEST_CYCLE").as_deref() == Ok("1") {
+                circular_team_scenario(&handle, &repo);
+                return;
+            }
             if std::env::var("GUILLE_TEAM_TEST_AUTO").as_deref() == Ok("1") {
                 automatic_team_scenario(&handle, &repo);
                 return;
@@ -425,6 +429,59 @@ fn native_team_end_to_end() {
     if let Err(error) = result {
         std::panic::resume_unwind(error);
     }
+}
+
+fn circular_team_scenario(handle: &tauri::AppHandle, repo: &str) {
+    let mut team = super::domain::tests::team();
+    team.project_root = repo.into();
+    team.allowed_repositories = vec![repo.into()];
+    team.max_parallel_tasks = 2;
+    team.members[0].model.model_id = "qa-lead".into();
+    for role in ["backend", "frontend"] {
+        let mut worker = team.members[0].clone();
+        worker.id = role.into(); worker.name = role.into(); worker.role = role.into();
+        worker.model.model_id = format!("qa-{}", role);
+        worker.tools = ["read", "write", "edit", "bash"].iter().map(|s| s.to_string()).collect();
+        team.members.push(worker);
+    }
+    let team = teams_save(handle.clone(), team).unwrap();
+    let chat = team_chats_create(handle.clone(), team.id).unwrap();
+    let id = team_runs_start(handle.clone(), chat.id.clone(), "Separar dependencias circulares sin perder sesiones ni criterios".into()).unwrap();
+    let client = runner::test_client(handle, repo).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(150);
+    let result = loop {
+        for permission in client.get("/permission").unwrap().as_array().into_iter().flatten() {
+            client.post(&format!("/permission/{}/reply", permission["id"].as_str().unwrap()), serde_json::json!({"reply":"once"})).unwrap();
+        }
+        let r = run(handle, &id).unwrap();
+        if !active(&r.status) { break r; }
+        assert!(Instant::now() < deadline, "circular team timed out: {:?}", r);
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    assert_eq!(result.status, "awaiting_manual_qa", "{:?}", result);
+    assert!(result.tasks.iter().all(|t| t.status == "completed" && t.attempts.len() == 1 && t.attempts[0].commands.len() == 1));
+    assert_eq!(result.coordination.len(), 2);
+    assert!(result.coordination.iter().all(|c| c.status == "resolved"));
+    assert!(result.coordination.iter().flat_map(|c| &c.replies).any(|reply| reply["status"] == "repair_requested"));
+    assert!(result.configuration_changes.iter().any(|c| c["resumedTaskIds"].as_array().is_some_and(|ids| !ids.is_empty())));
+    assert!(super::coordination::circular_tasks(&result).is_empty());
+    for role in ["backend", "frontend"] {
+        assert_eq!(std::fs::read_to_string(std::path::Path::new(repo).join(format!("{}.txt", role))).unwrap(), "version 2\n");
+    }
+    assert_eq!(std::fs::read_to_string(std::path::Path::new(repo).join("user.txt")).unwrap(), "user work\n");
+    if std::env::var("GUILLE_TEAM_TEST_NO_GIT").as_deref() == Ok("1") {
+        assert!(!std::path::Path::new(repo).join(".git").exists());
+    }
+    for task in &result.tasks {
+        let session = task.attempts[0].session_id.as_ref().unwrap();
+        let history = client.get(&format!("/session/{}/message", session)).unwrap();
+        let writes = history.as_array().unwrap().iter().flat_map(|m| m["parts"].as_array().into_iter().flatten()).filter(|p| p["tool"] == "write" && p["state"]["status"] == "completed").count();
+        assert_eq!(writes, 1, "Continuing the same session must not repeat its file write");
+        assert_eq!(task.acceptance_criteria.len(), 2);
+    }
+    let persisted = read_db(&db(handle).unwrap()).unwrap();
+    assert_eq!(persisted.chats[0].runs[0].coordination.len(), 2);
+    assert!(persisted.chats[0].runs[0].coordination.iter().all(|c| c.status == "resolved"));
 }
 
 fn automatic_team_scenario(handle: &tauri::AppHandle, repo: &str) {
