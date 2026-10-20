@@ -6,6 +6,7 @@ import type { Team, TeamChatRecord, TeamStore } from "../../src/team/types"
 async function setup(page: Page) {
   const store: TeamStore = { schemaVersion: 1, teams: [], chats: [], skills: ["Frontend", "Backend", "QA"].map((name) => ({ id: name.toLowerCase(), name, version: 1, description: name, instructions: `Trabajar en ${name}`, verificationGuidelines: ["Comprobar cambios"] })) }
   const imageUrls = new Map<string, string>()
+  let browserAssigned = false
   const calls: { command: string; args: Record<string, unknown> }[] = []
   await page.addInitScript(() => {
     localStorage.clear()
@@ -29,6 +30,10 @@ async function setup(page: Page) {
     let result: unknown = null
     if (["recent_projects", "routines_list", "auth_entries", "live_busy_sessions", "fs_read_dir", "fs_list_files", "term_shells", "windows_list", "git_subrepos"].includes(command)) result = []
     if (command === "teams_state") result = store
+    if (command === "browser_workspace") {
+      if (args.pageId != null) browserAssigned = true
+      result = { assigned: browserAssigned, missing: false, windowId: browserAssigned ? 7 : null, pages: [{ id: 12, windowId: 7, url: "http://127.0.0.1:4317/prueba-equipo" }] }
+    }
     if (command === "teams_save") {
       const team = structuredClone(args.team as Team)
       if (!team.id) team.id = `team-${store.teams.length}`
@@ -66,6 +71,12 @@ async function setup(page: Page) {
         chat.runs.push({ id: runId, goal: text, images, team: structuredClone(chat.team), skills: structuredClone(chat.skills), status: "running", startedAt: Date.now(), finishedAt: null, planSessionId: "plan", tasks: [], summary: "", error: null, evidenceDir: "C:/qa/evidence/" + runId, artifacts: [], notified: false })
       }
       result = "reply"
+    }
+    if (command === "team_chat_cancel") {
+      const chat = store.chats.find(c => c.id === args.chatId)!
+      const message = chat.messages?.find(m => m.status === "pending")
+      if (message) { message.status = "cancelled"; message.text = "Detuve este pedido del Lead. Su actividad se conserva." }
+      result = null
     }
     if (command === "team_runs_start") {
       const chat = store.chats.find((v) => v.id === args.chatId)!
@@ -443,4 +454,54 @@ test("configuración muestra asignación actual y modelos históricos de cada in
   await backend.getByText("Modelo del intento en curso · API",{exact:true}).click()
   await expect(backend).toContainText("Lead Model")
   await page.screenshot({path:test.info().outputPath("configuracion-modelos-equipo.png")})
+})
+
+test("el navegador se asigna al chat de equipo y conserva el mismo destino al reabrir", async ({ page }) => {
+  const { calls } = await setup(page)
+  await createTeam(page)
+  await page.getByRole("button", { name: "Elegir navegador", exact: true }).click()
+  await expect(page.getByText("Ventana del navegador para este equipo", { exact: true })).toBeVisible()
+  await page.getByRole("button", { name: "http://127.0.0.1:4317/prueba-equipo", exact: true }).click()
+  await expect(page.getByRole("button", { name: "Navegador · 1 pestañas", exact: true })).toBeVisible()
+  const assignment = calls.find(c => c.command === "browser_workspace" && c.args.pageId === 12)!
+  expect(assignment.args.session).toBe("team:chat-0")
+  await page.reload()
+  await page.getByTitle("Equipos IA", { exact: true }).click()
+  await page.locator(".team-sidebar-card").last().getByRole("button", { name: "Team Backend", exact: true }).click()
+  await page.getByRole("button", { name: /Elegir navegador|Navegador asignado/ }).click()
+  await expect(page.getByRole("button", { name: "Navegador · 1 pestañas", exact: true })).toBeVisible()
+  expect(calls.filter(c => c.command === "browser_workspace").every(c => c.args.session === "team:chat-0")).toBe(true)
+})
+
+test("abrir la conversación normal que ya estaba seleccionada cierra la vista de equipo", async ({ page }) => {
+  await setup(page)
+  await createTeam(page)
+  await page.evaluate(async () => {
+    const { useAgent } = await import(/* @vite-ignore */ "/src/state/agent.ts")
+    const { useTeams, selectTeamChat } = await import(/* @vite-ignore */ "/src/state/teams.ts")
+    const normal = { id: "normal", title: "Conversación anterior", directory: "C:/qa/teams", projectID: "qa", version: "1", time: { created: Date.now(), updated: Date.now() } }
+    useAgent.setState({ activeSessionId: normal.id, sessions: [normal], allSessions: [normal], openSessionIds: [normal.id], sessionsLoaded: true })
+    selectTeamChat(useTeams.getState().chats[0].id)
+  })
+  await expect(page.locator(".team-chat")).toBeVisible()
+  await page.getByTitle("Historial de sesiones", { exact: true }).click()
+  await page.locator(".session-row", { hasText: "Conversación anterior" }).click()
+  await expect(page.locator(".team-chat")).toHaveCount(0)
+  await expect(page.locator(".agent-tab.active")).toContainText("Conversación anterior")
+})
+
+test("se puede inspeccionar y detener al Lead durante una acción sin perder su historial", async ({ page }) => {
+  const { store, calls } = await setup(page)
+  await createTeam(page)
+  store.chats[0].messages = [{ id: "pending", role: "assistant", text: "", createdAt: Date.now(), status: "pending", runId: null, sessionId: "lead-interactive" }]
+  await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
+  await expect(page.getByRole("button", { name: "Ver actividad y permisos del Lead", exact: true })).toBeVisible()
+  await page.getByRole("button", { name: "Actividad", exact: true }).click()
+  await expect(page.getByRole("heading", { name: "Actividad del chat con el Lead", exact: true })).toBeVisible()
+  await page.getByRole("button", { name: "Detener pedido del Lead", exact: true }).click()
+  expect(calls.some(c => c.command === "team_chat_cancel" && c.args.chatId === "chat-0")).toBe(true)
+  expect(store.chats[0].messages[0].sessionId).toBe("lead-interactive")
+  await page.getByRole("button", { name: "Chat", exact: true }).click()
+  await expect(page.locator(".team-conversation.assistant")).toContainText("Detuve este pedido")
+  await expect(page.getByRole("button", { name: "Detener pedido del Lead", exact: true })).toHaveCount(0)
 })

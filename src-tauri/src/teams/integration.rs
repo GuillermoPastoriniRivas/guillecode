@@ -449,8 +449,15 @@ fn automatic_team_scenario(handle: &tauri::AppHandle, repo: &str) {
     let question = team_chat_send(handle.clone(), chat.id.clone(), "Explicame cómo organizás el equipo".into(), Some(vec![ImageInput { filename: "referencia.png".into(), mime: "image/png".into(), url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP4z8AARAwQCgAf7gP9i18U1AAAAABJRU5ErkJggg==".into() }])).unwrap();
     let reply = wait_reply(&question);
     assert!(reply.text.contains("especialistas"));
+    assert!(start_run(handle.clone(), chat.id.clone(), "Pedido ya finalizado".into(), vec![], Some(&question)).is_err(), "a completed/cancelled conversation turn cannot launch late work");
     assert!(read(handle).unwrap().chats[0].runs.is_empty(), "an explanation must not launch work");
     assert!(is_team_session(handle, reply.session_id.as_deref().unwrap()));
+    let observation = team_chat_send(handle.clone(), chat.id.clone(), "Consultá las herramientas de la PC del equipo".into(), None).unwrap();
+    let observed = wait_reply(&observation);
+    assert!(observed.text.contains("observado"));
+    assert!(read(handle).unwrap().chats[0].runs.is_empty(), "PC observation must not start file-editing work");
+    let history = runner::test_client(handle, repo).unwrap().get(&format!("/session/{}/message", observed.session_id.unwrap())).unwrap();
+    assert!(history.as_array().unwrap().iter().flat_map(|m| m["parts"].as_array().into_iter().flatten()).any(|p| p["tool"] == "desktop_status" && p["state"]["status"] == "completed"));
     let request = team_chat_send(handle.clone(), chat.id.clone(), "Crear dos servicios Backend y una pantalla Frontend, repartidos por el Lead".into(), None).unwrap();
     wait_reply(&request);
     let id = read(handle).unwrap().chats[0].runs[0].id.clone();
@@ -493,11 +500,11 @@ fn automatic_team_scenario(handle: &tauri::AppHandle, repo: &str) {
     assert!(team_image_read(handle.clone(), persisted.chats[0].runs[0].images[0].id.clone()).is_err());
     std::fs::write(&image_path, original_image).unwrap();
     assert_eq!(persisted.chats[0].runs.len(), 1, "conversation must not duplicate runs");
-    assert_eq!(persisted.chats[0].messages.len(), 6);
+    assert_eq!(persisted.chats[0].messages.len(), 8);
     let mut interrupted = persisted.clone();
-    interrupted.chats[0].messages[5].status = "pending".into();
+    interrupted.chats[0].messages[7].status = "pending".into();
     recover(&mut interrupted);
-    assert_eq!(interrupted.chats[0].messages[5].status, "interrupted");
-    assert!(interrupted.chats[0].messages[5].text.contains("no se repitió"));
+    assert_eq!(interrupted.chats[0].messages[7].status, "interrupted");
+    assert!(interrupted.chats[0].messages[7].text.contains("no se repitió"));
     assert_eq!(interrupted.chats[0].runs.len(), 1);
 }

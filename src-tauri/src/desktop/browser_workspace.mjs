@@ -5,7 +5,13 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { readFile, writeFile, rename } from 'node:fs/promises'
 
 export class Workspaces {
-  constructor(file) { this.file = file; this.sessions = {}; this.loaded = false; this.writes = Promise.resolve() }
+  constructor(file) { this.file = file; this.sessions = {}; this.loaded = false; this.writes = Promise.resolve(); this.creations = new Map() }
+  async createTab(session, action) {
+    const previous = this.creations.get(session) ?? Promise.resolve()
+    const pending = previous.catch(() => {}).then(action)
+    this.creations.set(session, pending)
+    try { return await pending } finally { if (this.creations.get(session) === pending) this.creations.delete(session) }
+  }
   async load() {
     if (this.loaded) return
     try {
@@ -51,13 +57,23 @@ export class Workspaces {
       await this.save()
     }
     const workspace = this.sessions[meta.session]
+    // Team members share a window, not a mutable "selected tab" cursor. The
+    // actor comes from the authenticated native session registry.
+    const selectedTarget = () => meta.actor ? workspace?.actors?.[meta.actor] ?? workspace?.selected : workspace?.selected
+    const select = target => {
+      if (!meta.actor) { workspace.selected = target; return }
+      workspace.actors ??= {}
+      delete workspace.actors[meta.actor]
+      workspace.actors[meta.actor] = target
+      while (Object.keys(workspace.actors).length > 128) delete workspace.actors[Object.keys(workspace.actors)[0]]
+    }
     // A recycled windowId is not identity on its own: a target must survive.
     const survives = () => !!workspace && Array.isArray(workspace.targets) && pages.some(p => workspace.targets.includes(p.target) && p.windowId === workspace.windowId)
     const valid = survives()
     const owned = () => valid ? pages.filter(p => p.windowId === workspace.windowId) : []
     if (valid) {
       workspace.targets = owned().map(p => p.target)
-      if (!workspace.targets.includes(workspace.selected)) workspace.selected = workspace.targets[0]
+      if (!workspace.targets.includes(selectedTarget())) select(workspace.targets[0])
       await this.save()
     }
     meta.state = { assigned: valid, missing: !!workspace && !valid, windowId: valid ? workspace.windowId : null,
@@ -68,12 +84,12 @@ export class Workspaces {
       if (!owned().some(p => p.page === page)) throw new Error('La pestaña no pertenece a la ventana de Chrome de esta conversación.')
       return page
     }
-    const selected = () => check(owned().find(p => p.target === workspace.selected)?.page)
+    const selected = () => check(owned().find(p => p.target === selectedTarget())?.page)
     const refresh = async () => {
       pages = await this.inventory(context)
       if (!survives()) throw new Error('Se cerró la ventana de Chrome asignada. Elegí otra desde el chat.')
       workspace.targets = owned().map(p => p.target)
-      if (!workspace.targets.includes(workspace.selected)) workspace.selected = workspace.targets[0]
+      if (!workspace.targets.includes(selectedTarget())) select(workspace.targets[0])
       await this.save()
     }
     return new Proxy(context, { get: (target, key) => {
@@ -83,7 +99,7 @@ export class Workspaces {
       if (key === 'getSelectedMcpPageUrl') return page => (page ?? selected()).pptrPage.url()
       if (key === 'isPageSelected') return page => page === selected()
       if (key === 'getSelectedPageFallback') return () => undefined
-      if (key === 'selectPage') return page => { check(page); workspace.selected = owned().find(p => p.page === page).target; target.selectPage(page) }
+      if (key === 'selectPage') return page => { check(page); select(owned().find(p => p.page === page).target); target.selectPage(page) }
       if (key === 'createPagesSnapshot') return refresh
       if (key === 'closePage') return async id => {
         const page = check(owned().find(p => p.id === id)?.page)
@@ -91,18 +107,18 @@ export class Workspaces {
         await page.pptrPage.close()
         await refresh()
       }
-      if (key === 'newPage') return async (_background, isolatedContext) => {
+      if (key === 'newPage') return async (_background, isolatedContext) => this.createTab(meta.session, async () => {
         if (isolatedContext !== undefined) throw new Error('Esta conversación usa la ventana asignada y su perfil compartido; no un contexto aislado.')
         const page = selected()
         const createdTarget = await openBackgroundTab(page.pptrPage)
         await refresh()
         const created = owned().find(p => p.page.pptrPage.target() === createdTarget)
         if (!created) throw new Error('No pude confirmar la nueva pestaña en la ventana asignada. No reintentes a ciegas.')
-        workspace.selected = created.target
+        select(created.target)
         await this.save()
         target.selectPage(created.page)
         return created.page
-      }
+      })
       const value = Reflect.get(target, key, target)
       return typeof value === 'function' ? value.bind(target) : value
     } })

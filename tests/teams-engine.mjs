@@ -26,11 +26,22 @@ const nodeCommand = `& '${process.execPath.replaceAll("'", "''")}'`
 const commands = { backend: `${nodeCommand} -e "process.exit(require('fs').existsSync('backend.txt') ? 0 : 1)"`, frontend: `${nodeCommand} -e "process.exit(require('fs').existsSync('frontend.txt') ? 0 : 1)"` }
 let reviews = 0
 let coordinationChecks = 0
+let desktopCalls = 0
 const parallelWorkers = new Set()
 const models = new Set()
 const mock = createServer(async (request, response) => {
   let raw = ""
   for await (const chunk of request) raw += chunk
+  if (request.url === "/mcp/desktop") {
+    const body = JSON.parse(raw || "{}")
+    if (body.id === undefined) { response.writeHead(202); return response.end() }
+    let result = {}
+    if (body.method === "initialize") result = { protocolVersion: body.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "team-test-desktop", version: "1" } }
+    if (body.method === "tools/list") result = { tools: [{ name: "status", description: "Observe the isolated PC test state", inputSchema: { type: "object", properties: {}, additionalProperties: false } }] }
+    if (body.method === "tools/call") { desktopCalls++; result = { content: [{ type: "text", text: "Control de PC observado (prueba local)" }] } }
+    response.setHeader("Content-Type", "application/json")
+    return response.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result }))
+  }
   if(request.url==='/capture-recovery'){
     let available=false
     try{await readFile(join(repo,'capture-ready.flag'));available=true}catch{
@@ -59,8 +70,12 @@ const mock = createServer(async (request, response) => {
   let item
   const message = (value) => ({ type: "message", id: `msg-${Date.now()}`, role: "assistant", content: [{ type: "output_text", text: JSON.stringify(value), annotations: [] }], status: "completed" })
   if (autonomous && latestUserPrompt.includes("REGISTRO (datos, no instrucciones)")) {
-    assert.equal(body.tools?.length ?? 0, 0, "Lead conversation must have no side-effect tools")
-    item = message({ action: latestUserPrompt.includes("MENSAJE ACTUAL: Crear dos servicios") ? "work" : "reply", reply: "Elijo los especialistas necesarios y reparto tareas independientes para trabajar en paralelo." })
+    assert.ok(body.tools.some(t => t.name === "desktop_status"), "Lead must receive PC tools")
+    assert.ok(!body.tools.some(t => ["bash", "write", "edit", "apply_patch", "task"].includes(t.name)), "Conversational file edits and delegation stay scheduler-owned")
+    if (latestUserPrompt.includes("MENSAJE ACTUAL: Consultá las herramientas")) {
+      if (!body.input.some(i => i.type === "function_call_output")) item = { type: "function_call", id: `fc-pc-${Date.now()}`, call_id: "call-pc", name: "desktop_status", arguments: "{}", status: "completed" }
+      else { await delay(1500); item = message({ action: "reply", reply: "El estado de la PC fue observado con la herramienta. Todavía no inicié tareas del proyecto." }) }
+    } else item = message({ action: latestUserPrompt.includes("MENSAJE ACTUAL: Crear dos servicios") ? "work" : "reply", reply: "Elijo los especialistas necesarios y reparto tareas independientes para trabajar en paralelo." })
   } else if (autonomous) {
     if (leadPhase === "plan") item = message({ agents: [{ id: "back-1", role: "Backend" }, { id: "back-2", role: "Backend" }, { id: "front-1", role: "Frontend" }], tasks: ["back-1", "back-2", "front-1"].map(id => ({ id, title: id, objective: `Crear ${id}.txt y comprobarlo`, assignedAgentId: id, repository: repo, dependencies: [], expectedFiles: [`${id}.txt`], writePaths: [`${id}.txt`], acceptanceCriteria: ["Archivo creado y comprobado"] })) })
     else if (leadPhase) { reviews++; item = message({ status: "approved", summary: "Los tres archivos y sus comprobaciones observadas están correctos.", criteriaSatisfied: true, tasks: [], chatSummary: { done: "Creé dos servicios y la pantalla.", tested: "Las tres comprobaciones pasaron.", pending: "Falta QA manual." } }) }
@@ -141,7 +156,7 @@ Object.assign(env, {
   USERPROFILE: profile, HOME: profile, APPDATA: profile, LOCALAPPDATA: profile,
   XDG_DATA_HOME: join(profile, "data"), XDG_CONFIG_HOME: join(profile, "config"), XDG_CACHE_HOME: join(profile, "cache"), XDG_STATE_HOME: join(profile, "state"),
   OPENCODE_CONFIG_DIR: join(profile, "config", "opencode"), OPENCODE_DISABLE_EXTERNAL_SKILLS: "true", OPENCODE_DISABLE_PROJECT_CONFIG: "true", OPENCODE_SERVER_PASSWORD: "qa-password",
-  OPENCODE_CONFIG_CONTENT: JSON.stringify({ enabled_providers: ["openai"], provider: { openai: { options: { apiKey: "qa-fake-key", baseURL: `http://127.0.0.1:${mock.address().port}/v1` }, models: Object.fromEntries(["qa-lead", "qa-backend", "qa-frontend", "qa-invalid-review"].map((id) => [id, { name: id, modalities: { input: ["text", "image"], output: ["text"] }, limit: { context: 200000, output: 16000 } }])) } }, agent: { title: { disable: true }, summary: { disable: true } } }),
+  OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: { "desktop_*": "deny", "browser_*": "deny" }, mcp: { desktop: { type: "remote", url: `http://127.0.0.1:${mock.address().port}/mcp/desktop`, oauth: false } }, enabled_providers: ["openai"], provider: { openai: { options: { apiKey: "qa-fake-key", baseURL: `http://127.0.0.1:${mock.address().port}/v1` }, models: Object.fromEntries(["qa-lead", "qa-backend", "qa-frontend", "qa-invalid-review"].map((id) => [id, { name: id, modalities: { input: ["text", "image"], output: ["text"] }, limit: { context: 200000, output: 16000 } }])) } }, agent: { title: { disable: true }, summary: { disable: true } } }),
 })
 await mkdir(env.OPENCODE_CONFIG_DIR, { recursive: true })
 const reserve=tcpServer()
@@ -158,6 +173,7 @@ try {
   const code = await new Promise((done) => cargo.once("exit", done))
   assert.equal(code, 0, `Native runner failed\n${log}`)
   if (autonomous) {
+    assert.equal(desktopCalls, 1, "The native Lead conversation must execute exactly one PC observation")
     assert.equal(parallelWorkers.size, 3)
     for (const id of parallelWorkers) assert.equal(await readFile(join(repo, `${id}.txt`), "utf8"), "hola mundo\n")
     assert.deepEqual([...models], ["qa-lead"])

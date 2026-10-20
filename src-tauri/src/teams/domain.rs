@@ -140,6 +140,8 @@ pub struct Review {
 #[serde(rename_all = "camelCase")]
 pub struct Attempt {
     #[serde(default)]
+    pub observations: Vec<serde_json::Value>,
+    #[serde(default)]
     pub declared_checks: Vec<String>,
     pub id: String,
     pub agent: Employee,

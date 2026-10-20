@@ -18,6 +18,7 @@ export function TeamSettings({ team, run }: { team: Team; run?: TeamRun }) {
   const roster = run?.team ?? team
   return <section className="team-settings">
     <h3>Configuración del equipo</h3>
+    <p className="team-note">El Lead y los especialistas pueden consultar la web, usar el navegador elegido en este chat y manejar apps con el control de la PC activado. Las acciones y sus resultados se pueden abrir desde Actividad.</p>
     <p className="team-note">{run ? "Modelos asignados en esta ejecución. Los intentos conservan el modelo con el que comenzaron." : "Modelos del equipo antes de empezar."}</p>
     {roster.autonomous && <p className="team-note">El Lead elige los especialistas al organizar tu pedido. Los nuevos integrantes heredan su modelo y razonamiento.</p>}
     {roster.members.map(agent => <article className="team-card" key={agent.id}>

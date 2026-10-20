@@ -43,3 +43,30 @@ test("the Chrome adapter fails closed when given the application class instead o
   class Handler { unknownArgumentNames() { return [] } }
   await assert.rejects(install({ McpServer: WrongServer, ToolHandler: Handler }, new URL("file:///unused")), /contrato de registro/)
 })
+
+test("team agents retain independent selected tabs after reconnect and serialize only tab creation", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "gc-team-workspace-"))
+  try {
+    const file = pathToFileURL(join(dir, "workspaces.json"))
+    const first = page(1, 100), second = page(2, 100)
+    const context = { createPagesSnapshot: async () => {}, getPages: () => [first, second], selectPage: () => {} }
+    const ws = new Workspaces(file)
+    await ws.scope(context, { session: "team:one", action: "assign", pageId: 1 })
+    const backend = await ws.scope(context, { session: "team:one", actor: "backend-session" })
+    const frontend = await ws.scope(context, { session: "team:one", actor: "frontend-session" })
+    backend.selectPage(first); frontend.selectPage(second)
+    assert.equal(backend.getSelectedMcpPage(), first)
+    assert.equal(frontend.getSelectedMcpPage(), second)
+    await ws.save()
+    const reopened = new Workspaces(file)
+    assert.equal((await reopened.scope(context, { session: "team:one", actor: "backend-session" })).getSelectedMcpPage(), first)
+    assert.equal((await reopened.scope(context, { session: "team:one", actor: "frontend-session" })).getSelectedMcpPage(), second)
+    const events: string[] = []
+    await Promise.all([1, 2].map(id => ws.createTab("team:one", async () => {
+      events.push(`start-${id}`)
+      await new Promise(resolve => setTimeout(resolve, 10))
+      events.push(`end-${id}`)
+    })))
+    assert.deepEqual(events, ["start-1", "end-1", "start-2", "end-2"])
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})

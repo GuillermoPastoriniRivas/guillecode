@@ -456,11 +456,11 @@ pub fn connect() -> Result<BridgeStatus, String> {
     Ok(status())
 }
 
-pub fn call_session(session: &str, name: &str, mut args: Value) -> Result<Value, String> {
+pub fn call_session(session: &str, workspace: &str, name: &str, mut args: Value) -> Result<Value, String> {
     if session.is_empty() { return Err("Falta la conversación del navegador".into()); }
     if !SCOPED_TOOLS.contains(&original_name(name).as_str()) { return Err("Esta herramienta no está limitada a la ventana Chrome asignada".into()); }
     if !args.is_object() { return Err("Los argumentos del navegador deben ser un objeto".into()); }
-    args["_guillecode"] = json!({ "session": session });
+    args["_guillecode"] = json!({ "session": workspace, "actor": session });
     call(name, args)
 }
 
