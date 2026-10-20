@@ -1,0 +1,5 @@
+Equipos IA: el Lead ahora puede consultar la web y usar las herramientas de navegador y escritorio del chat normal, y los especialistas también las reciben al ejecutar sus tareas. Elegí una ventana de Chrome para el equipo y cada agente trabaja en su propia pestaña; la asignación persiste al reabrir y se aplica a las sesiones recuperadas.
+
+Las consultas directas al Lead pueden usar herramientas y responder sin crear un plan. Podés ver su actividad y permisos aunque todavía no exista una ejecución, y detener su pedido conservando la actividad para revisar lo ya aplicado. Los intentos guardan las observaciones de web, navegador y escritorio, y las tareas de interfaz o investigación pueden verificarse con esas observaciones sin inventar comandos.
+
+El historial indica qué carpeta está mostrando y suma Todas las carpetas, incluidas conversaciones de proyectos que ya no están en Recientes, sin mover ni duplicar mensajes. Si un proveedor rechaza por falta de saldo (HTTP 402) o el Lead no puede responder antes de planificar, el mensaje explica la causa y el siguiente paso.
