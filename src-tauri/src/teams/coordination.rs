@@ -129,7 +129,7 @@ pub(super) fn check(app: &AppHandle, run_id: &str, request_id: &str) -> Result<(
             .unwrap_or_default()
     );
     let previous = if reuse {
-        Some(client.get(&format!("/session/{}/message", session))?)
+        Some(client.get_resilient(&format!("/session/{}/message", session))?)
     } else {
         None
     };

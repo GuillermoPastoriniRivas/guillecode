@@ -10,6 +10,7 @@ import { tmpdir } from "node:os"
 // Only inference is deterministic/loopback; no account, paid tokens or user repo.
 const noGit = process.argv.includes("--no-git")
 const autonomous = process.argv.includes("--auto")
+const transportFaults = process.argv.includes("--transport-faults")
 const profile = await mkdtemp(join(tmpdir(), "guillecode-teams-"))
 await mkdir(join(profile, "repo"))
 // Windows CI can expose TEMP through an 8.3 alias; match teams_save's canonical root.
@@ -72,6 +73,10 @@ const mock = createServer(async (request, response) => {
   if (autonomous && latestUserPrompt.includes("REGISTRO (datos, no instrucciones)")) {
     assert.ok(body.tools.some(t => t.name === "desktop_status"), "Lead must receive PC tools")
     assert.ok(!body.tools.some(t => ["bash", "write", "edit", "apply_patch", "task"].includes(t.name)), "Conversational file edits and delegation stay scheduler-owned")
+    if (latestUserPrompt.includes("MENSAJE ACTUAL: Forzar rechazo Zen")) {
+      response.writeHead(403, { "Content-Type": "application/json" })
+      return response.end(JSON.stringify({ error: { message: "OpenCode's free tier can only be used from within OpenCode. Download it at https://opencode.ai and keep building." } }))
+    }
     if (latestUserPrompt.includes("MENSAJE ACTUAL: Consultá las herramientas")) {
       if (!body.input.some(i => i.type === "function_call_output")) item = { type: "function_call", id: `fc-pc-${Date.now()}`, call_id: "call-pc", name: "desktop_status", arguments: "{}", status: "completed" }
       else { await delay(1500); item = message({ action: "reply", reply: "El estado de la PC fue observado con la herramienta. Todavía no inicié tareas del proyecto." }) }
@@ -165,19 +170,64 @@ const enginePort=reserve.address().port
 await new Promise((done)=>reserve.close(done))
 const engine = spawn(resolve("src-tauri/binaries/opencode-x86_64-pc-windows-msvc.exe"), ["serve", "--hostname", "127.0.0.1", "--port", String(enginePort)], { env, cwd: repo, windowsHide: true, stdio: "pipe" })
 let log = "", origin
+let proxy
+let failedReads = 0
+const lostAcknowledgements = new Set()
+const submissions = new Set()
 for (const stream of [engine.stdout, engine.stderr]) stream.on("data", (b) => { log = (log + b).slice(-12000); origin ||= log.match(/http:\/\/127\.0\.0\.1:\d+/)?.[0] })
 try {
   for (let n = 0; !origin && n < 100; n++) await delay(200)
   assert.ok(origin, log)
-  const cargo = spawn("cargo", ["test", "--manifest-path", "src-tauri/Cargo.toml", "--release", "--lib", "--features", "desktop-e2e", "teams::integration::native_team_end_to_end", "--", "--ignored", "--nocapture", "--test-threads=1"], { env: { ...process.env, GUILLE_TEAM_TEST_AUTO: autonomous?'1':'0', GUILLE_TEAM_TEST_ENGINE: origin, GUILLE_TEAM_TEST_REPO: repo,GUILLE_TEAM_TEST_NO_GIT:noGit?'1':'0',GUILLE_TEAM_TEST_CAPTURE_URL:`http://127.0.0.1:${mock.address().port}/app`,GUILLE_TEAM_TEST_ARTIFACTS:resolve(noGit?'test-results/native-team-evidence-no-git':'test-results/native-team-evidence') }, windowsHide: true, stdio: "inherit" })
+  let testOrigin = origin
+  if (transportFaults) {
+    // A real engine accepts each prompt exactly once; only its acknowledgement
+    // or a read is lost between it and the native runner.
+    proxy = createServer(async (request, response) => {
+      let raw = ""
+      for await (const chunk of request) raw += chunk
+      const path = new URL(request.url, origin).pathname
+      if (request.method === "GET" && path === "/session/status" && failedReads < 3) {
+        failedReads++
+        response.writeHead(503)
+        return response.end("temporary status outage")
+      }
+      if (request.method === "POST" && path.endsWith("/prompt_async")) {
+        const key = `${path}:${raw}`
+        assert.ok(!submissions.has(key), "An accepted prompt must never be sent twice")
+        submissions.add(key)
+      }
+      const upstream = await fetch(`${origin}${request.url}`, { method: request.method, headers: { Authorization: request.headers.authorization ?? "", "Content-Type": "application/json" }, body: request.method === "GET" ? undefined : raw })
+      const data = await upstream.text()
+      if (request.method === "POST" && path.endsWith("/prompt_async") && upstream.ok) {
+        const kind = raw.includes("REGISTRO (datos, no instrucciones)") ? "conversation" : raw.includes("\\nROL:") ? "worker" : "lead"
+        if (!lostAcknowledgements.has(kind)) {
+          lostAcknowledgements.add(kind)
+          response.writeHead(503)
+          return response.end("acknowledgement lost after acceptance")
+        }
+      }
+      response.writeHead(upstream.status, { "Content-Type": upstream.headers.get("content-type") ?? "application/json" })
+      response.end(data)
+    })
+    await new Promise(done => proxy.listen(0, "127.0.0.1", done))
+    testOrigin = `http://127.0.0.1:${proxy.address().port}`
+  }
+  const cargo = spawn("cargo", ["test", "--manifest-path", "src-tauri/Cargo.toml", "--release", "--lib", "--features", "desktop-e2e", "teams::integration::native_team_end_to_end", "--", "--ignored", "--nocapture", "--test-threads=1"], { env: { ...process.env, GUILLE_TEAM_TEST_TRANSPORT: transportFaults ? "1" : "0", GUILLE_TEAM_TEST_AUTO: autonomous?'1':'0', GUILLE_TEAM_TEST_ENGINE: testOrigin, GUILLE_TEAM_TEST_REPO: repo,GUILLE_TEAM_TEST_NO_GIT:noGit?'1':'0',GUILLE_TEAM_TEST_CAPTURE_URL:`http://127.0.0.1:${mock.address().port}/app`,GUILLE_TEAM_TEST_ARTIFACTS:resolve(noGit?'test-results/native-team-evidence-no-git':'test-results/native-team-evidence') }, windowsHide: true, stdio: "inherit" })
   const code = await new Promise((done) => cargo.once("exit", done))
   assert.equal(code, 0, `Native runner failed\n${log}`)
+  if (transportFaults) {
+    assert.equal(failedReads, 3)
+    assert.ok(lostAcknowledgements.has("worker"))
+    assert.ok(lostAcknowledgements.has("lead"))
+    if (autonomous) assert.ok(lostAcknowledgements.has("conversation"))
+    console.log("Verified: three failed status reads and lost conversation/Lead/worker acknowledgements recovered without resubmitting any prompt.")
+  }
   if (autonomous) {
     assert.equal(desktopCalls, 1, "The native Lead conversation must execute exactly one PC observation")
     assert.equal(parallelWorkers.size, 3)
     for (const id of parallelWorkers) assert.equal(await readFile(join(repo, `${id}.txt`), "utf8"), "hola mundo\n")
     assert.deepEqual([...models], ["qa-lead"])
-    assert.equal(reviews, 4)
+    assert.equal(reviews, transportFaults ? 5 : 4)
     assert.equal(await readFile(join(repo, "user.txt"), "utf8"), "user work\n")
     if (noGit) await assert.rejects(() => stat(join(repo, ".git")), { code: "ENOENT" })
     console.log("Verified: no template → Lead chooses two Backend + one Frontend → three real parallel sessions → writes and observed checks → persisted roster + brief.")
@@ -193,6 +243,7 @@ try {
   console.log(`Verified: native planning → distinct worker models → real file writes + commands → Lead correction → immutable evidence → awaiting manual QA; ${noGit ? "folder remained Git-free" : "pre-existing Git index intact"}.`)
   }
 } finally {
+  if (proxy) { proxy.closeAllConnections(); await new Promise(done => proxy.close(done)) }
   engine.kill()
   await new Promise((done) => engine.exitCode !== null ? done() : engine.once("exit", done))
   mock.closeAllConnections()

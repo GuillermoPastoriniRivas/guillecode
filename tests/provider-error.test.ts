@@ -3,6 +3,17 @@ import assert from "node:assert/strict"
 import { readableProviderError, readableTeamError, isAccountLimitError } from "../src/lib/provider-error.ts"
 import { providerErrorMessage, isRetryableProviderError } from "../src/lib/autoretry.ts"
 
+test("el rechazo de modelos Zen exclusivos de OpenCode indica cambiar modelo", () => {
+  const error = { name: "APIError", data: { isRetryable: false, statusCode: 403, message: "OpenCode's free tier can only be used from within OpenCode. Download it at https://opencode.ai and keep building.", responseHeaders: { "set-cookie": "private" } } }
+  for (const value of [error, JSON.stringify(error)]) {
+    for (const human of [readableProviderError(value), readableTeamError(value)]) {
+      assert.match(human, /restringido a la aplicación OpenCode.*Elegí otro modelo/)
+      assert.doesNotMatch(human, /https:|private|responseHeaders/)
+    }
+  }
+  assert.equal(isRetryableProviderError(error), false)
+})
+
 test("un error de cuota anidado no expone cuerpo, cabeceras ni tokens", () => {
   const error = { name: "APIError", data: { message: "HTTP 429", isRetryable: true, responseBody: JSON.stringify({ error: { type: "usage_limit_reached", message: "The usage limit has been reached" } }), responseHeaders: { "set-cookie": "private-session", "x-codex-turn-state": "private-state" } } }
   for (const value of [error, JSON.stringify(error), new Error(JSON.stringify(error))]) {

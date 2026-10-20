@@ -21,3 +21,14 @@ export function runProblem(run: TeamRun): string {
   }
   return run.error ? readableTeamError(run.error) : ""
 }
+
+export function recoveryHint(run: TeamRun): string {
+  const errors = [run.error, ...run.tasks.map(t => t.error)].filter(Boolean).join(" ")
+  if (/usage_limit|quota|límite de uso|límite de la cuenta|falta de saldo|facturación|payment|402/i.test(errors)) {
+    return "Reintentar no restablece el saldo ni el límite de la cuenta. Esperá a que se renueve o cambiá el modelo y después continuá. Las tareas terminadas se conservan."
+  }
+  if (/authentication|unauthorized|volver a conectarse|reconect|no está disponible|variante no disponible|free tier can only|restringido a la aplicación OpenCode/i.test(errors)) {
+    return "Revisá la cuenta o cambiá el modelo antes de continuar. Las tareas terminadas se conservan."
+  }
+  return "Podés preguntarle al Lead qué falló o pedirle que continúe. Al continuar se revisa el estado guardado y se retoma lo pendiente; las tareas terminadas se conservan."
+}

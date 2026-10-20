@@ -423,6 +423,26 @@ pub fn team_chats_edit(
 }
 
 #[tauri::command]
+pub fn team_chats_model(app: AppHandle, chat_id: String, agent_id: String, model: ModelRef, variant: Option<String>) -> Result<(), String> {
+    update(&app, |store| {
+        let chat = store.chats.iter_mut().find(|c| c.id == chat_id).ok_or("Chat inexistente")?;
+        change_chat_model(chat, &agent_id, model, variant)
+    })
+}
+
+fn change_chat_model(chat: &mut Chat, agent_id: &str, model: ModelRef, variant: Option<String>) -> Result<(), String> {
+    if model.provider_id.trim().is_empty() || model.model_id.trim().is_empty() { return Err("Seleccioná un modelo disponible".into()); }
+    if chat.archived { return Err("Restaurá el chat antes de cambiar su modelo".into()); }
+    if chat.messages.iter().any(|m| m.status == "pending") { return Err("Esperá o detené la respuesta del Lead antes de cambiar el modelo".into()); }
+    let agent = chat.team.members.iter_mut().find(|a| a.id == agent_id).ok_or("Integrante inexistente")?;
+    agent.model = model;
+    agent.variant = variant.filter(|v| !v.trim().is_empty());
+    chat.team.updated_at = now();
+    // Runs and past attempts are immutable snapshots of the models they used.
+    Ok(())
+}
+
+#[tauri::command]
 pub fn team_runs_start(app: AppHandle, chat_id: String, goal: String) -> Result<String, String> {
     start_run(app, chat_id, goal, vec![], None)
 }
@@ -789,6 +809,19 @@ pub fn team_evidence_open(app: AppHandle, run_id: String) -> Result<(), String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn changing_future_chat_model_preserves_run_snapshots_and_pending_turns() {
+        let team = domain::tests::team();
+        let mut chat: Chat = serde_json::from_value(serde_json::json!({"id":"chat","title":"chat","team":team,"skills":[],"archived":false,"createdAt":1,"runs":[{"id":"r","goal":"g","team":team,"skills":[],"status":"blocked","startedAt":1,"tasks":[],"summary":"","evidenceDir":"unused","artifacts":[],"baseline":[],"notified":false}]})).unwrap();
+        let historical = serde_json::to_value(&chat.runs).unwrap();
+        let replacement = ModelRef { provider_id: "another".into(), model_id: "available".into() };
+        change_chat_model(&mut chat, "lead", replacement.clone(), None).unwrap();
+        assert_eq!(chat.team.members[0].model.provider_id, "another");
+        assert_eq!(serde_json::to_value(&chat.runs).unwrap(), historical);
+        chat.messages.push(serde_json::from_value(serde_json::json!({"id":"pending","role":"assistant","text":"","createdAt":2,"status":"pending"})).unwrap());
+        assert!(change_chat_model(&mut chat, "lead", ModelRef { provider_id:"third".into(), model_id:"model".into() }, None).is_err());
+        assert_eq!(chat.team.members[0].model.model_id, replacement.model_id);
+    }
     #[test]
     fn chrome_workspace_belongs_to_chat_across_lead_workers_and_restart() {
         let team = domain::tests::team();

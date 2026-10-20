@@ -26,6 +26,25 @@ pub struct Opencode {
     directory: String,
 }
 
+// Only observational requests may be replayed. In particular, a failed POST
+// acknowledgement says nothing about whether a command already took effect.
+pub(crate) fn transient_read_error(error: &str) -> bool {
+    let error = error.to_lowercase();
+    error.starts_with("no se pudo hablar con opencode:")
+        || [408, 500, 502, 503, 504].iter().any(|code| error.starts_with(&format!("opencode respondió {code}:")))
+}
+
+fn retry_read<T>(mut read: impl FnMut() -> Result<T, String>, mut wait: impl FnMut(Duration)) -> Result<T, String> {
+    let delays = [300, 900, 1800];
+    for attempt in 0..=delays.len() {
+        match read() {
+            Err(error) if attempt < delays.len() && transient_read_error(&error) => wait(Duration::from_millis(delays[attempt])),
+            result => return result,
+        }
+    }
+    unreachable!()
+}
+
 fn describe(e: ureq::Error) -> String {
     match e {
         ureq::Error::Status(code, resp) => {
@@ -59,6 +78,10 @@ impl Opencode {
         Ok(parse(resp.into_string().map_err(|e| e.to_string())?))
     }
 
+    pub fn get_resilient(&self, path: &str) -> Result<Value, String> {
+        retry_read(|| self.get(path), std::thread::sleep)
+    }
+
     pub fn post(&self, path: &str, body: Value) -> Result<Value, String> {
         let resp = ureq::post(&format!("{}{}", self.base, path))
             .query("directory", &self.directory)
@@ -85,5 +108,35 @@ impl Opencode {
             .call()
             .map_err(describe)?;
         Ok(parse(resp.into_string().map_err(|e| e.to_string())?))
+    }
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+
+    #[test]
+    fn temporary_observation_failures_recover_with_bounded_backoff() {
+        let mut calls = 0;
+        let mut delays = vec![];
+        let value = retry_read(|| {
+            calls += 1;
+            if calls < 4 { Err("opencode respondió 503: unavailable".into()) } else { Ok(42) }
+        }, |delay| delays.push(delay.as_millis())).unwrap();
+        assert_eq!(value, 42);
+        assert_eq!(calls, 4);
+        assert_eq!(delays, vec![300, 900, 1800]);
+        calls = 0;
+        assert!(retry_read::<()>(|| { calls += 1; Err("no se pudo hablar con opencode: connection reset".into()) }, |_| {}).is_err());
+        assert_eq!(calls, 4);
+    }
+
+    #[test]
+    fn account_and_request_errors_do_not_retry() {
+        for code in [400, 401, 402, 403, 404, 429] {
+            let mut calls = 0;
+            assert!(retry_read::<()>(|| { calls += 1; Err(format!("opencode respondió {code}: rejected")) }, |_| panic!("permanent error retried")).is_err());
+            assert_eq!(calls, 1);
+        }
     }
 }

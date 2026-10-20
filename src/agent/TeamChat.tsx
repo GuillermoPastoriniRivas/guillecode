@@ -13,7 +13,7 @@ import { RunBudget } from "../team/RunBudget"
 import { isAccountLimitError, readableTeamError } from "../lib/provider-error"
 import { LeadReply } from "./LeadReply"
 import { firstTeamSentence } from "../lib/team-response"
-import { runProblem, taskProblem } from "../team/problem"
+import { recoveryHint, runProblem, taskProblem } from "../team/problem"
 import { ChatImages } from "../team/ChatImages"
 import { TeamComposer } from "../team/TeamComposer"
 import { TeamSettings } from "../team/TeamSettings"
@@ -79,11 +79,12 @@ export function TeamChat({ chatId }: { chatId: string }) {
     {run && <div className="team-run-controls">
       {["planning", "running"].includes(run.status) && <button className="btn btn-xs" onClick={() => void act("pause")}>Pausar nuevas tareas</button>}
       {run.status === "paused" && <button className="btn btn-xs" onClick={() => void act("resume")}>Reanudar</button>}
-      {["blocked", "failed"].includes(run.status) && <button className="btn btn-xs" onClick={() => void act("retry")}>{automaticPlanRecovery ? "Reintentar automáticamente" : "Reconciliar y reintentar"}</button>}
+      {["blocked", "failed"].includes(run.status) && <button className="btn btn-xs" onClick={() => void act("retry")}>Continuar lo pendiente</button>}
       {(runActive(run.status) || run.status === "blocked") && run.status !== "cancelling" && <button className="btn btn-xs" onClick={() => void confirmAction("Cancelar ejecución", "Se abortan las sesiones y se conservan los cambios ya aplicados. Revisá Git antes de continuar.", "Cancelar ejecución", true).then((yes) => { if (yes) void act("cancel") })}>Cancelar ejecución</button>}
       {run.status === "awaiting_manual_qa" && <button className="btn btn-xs" onClick={() => void act("approve")}>Aprobar QA manual</button>}
     </div>}
-    {run?.error && <div className="team-error" role="status">{automaticPlanRecovery ? "El Lead devolvió un plan incompleto. GuilleCode lo reparará automáticamente al reintentar." : runProblem(run)}</div>}
+    {run?.error && <div className="team-error" role="status">{automaticPlanRecovery ? "El Lead devolvió un plan incompleto. GuilleCode lo reparará al continuar." : runProblem(run)}</div>}
+    {run && ["blocked", "failed"].includes(run.status) && <p className="team-note">{recoveryHint(run)}</p>}
     <div className="team-chat-body" ref={body}>
       {run?.status === "blocked" && budgetBlocked && <RunBudget key={run.id} run={run} />}
       {run?.status === "blocked" && modelBlocked && <details className="team-card"><summary>Cambiar el modelo que falló</summary><p className="team-note">La configuración original del chat y los intentos anteriores se conservan.</p>{run.team.members.map((a) => <label key={a.id}>{a.name} · {a.role}<select aria-label={`Modelo de ${a.name}`} value={modelKey(a.model)} onChange={(e) => {const m=models.find((v)=>modelKey(v)===e.target.value);if(m)void teamCall("team_runs_model",{runId:run.id,agentId:a.id,model:{providerID:m.providerID,modelID:m.modelID},variant:null})}}><option value={modelKey(a.model)}>{modelKey(a.model)}</option>{models.filter((m)=>modelKey(m)!==modelKey(a.model)).map((m)=><option key={modelKey(m)} value={modelKey(m)}>{m.providerName} · {m.name}</option>)}</select></label>)}</details>}
@@ -107,7 +108,7 @@ export function TeamChat({ chatId }: { chatId: string }) {
         {run.closingSessions?.map((session,i)=><button key={session} className="btn btn-sm" onClick={()=>openSession(session,run.team.allowedRepositories[0])}>Abrir revisión final {i+1}</button>)}
         {run.tasks.map((t) => t.attempts.map((a, i) => <article className="team-card" key={a.id}><h4>{t.title} · intento {i + 1}</h4><p>{a.agent.name} · {modelKey(a.agent.model)} {a.agent.variant ?? ""}</p><p className="team-note">{statusLabel[a.status] ?? a.status} · {formatDateTime(a.startedAt)}</p><div className="team-actions">{a.sessionId && <button className="btn btn-xs" onClick={() => openSession(a.sessionId!, t.repository)}>Abrir sesión del empleado / permisos</button>}{a.reviewSessionId && <button className="btn btn-xs" onClick={() => openSession(a.reviewSessionId!, t.repository)}>Abrir revisión del Lead</button>}</div>{a.summary && <p className="selectable">{a.summary}</p>}{a.review && <p>Revisión: {reviewLabels[a.review.status] ?? "Revisión pendiente"} · {a.review.summary}</p>}{a.error && <p className="team-error">{readableTeamError(a.error)}</p>}{a.declaredChecks?.length ? <details><summary>Pruebas informadas y resultados registrados</summary><ul>{a.declaredChecks.map(check => <li key={check}><code>{check}</code> · {a.commands.some(c => c.command === check && c.exitCode === 0) ? "Ejecución correcta registrada" : "Falta una ejecución correcta registrada"}</li>)}</ul></details> : null}{a.observations?.length ? <details><summary>Observaciones del navegador, la web y las apps</summary>{a.observations.map((observation, index) => <details key={index}><summary>{observation.tool}</summary><pre className="team-evidence-preview">{observation.output}</pre></details>)}</details> : null}{a.commands.map((c, i) => <details key={i}><summary>{c.command} · {c.exitCode === 0 ? "Correcto" : c.exitCode == null ? "Sin resultado" : `Falló (código ${c.exitCode})`}</summary><pre className="team-evidence-preview">{c.output}</pre></details>)}</article>))}
       </>}
-      {view === "Configuración" && <TeamSettings team={chat.team} run={run} />}
+      {view === "Configuración" && <TeamSettings team={chat.team} run={run} chatId={chat.id} pending={pendingReply} />}
       {view === "Resultados / Comportamientos" && (run ? <Results key={run.id} run={run} history={chat.runs} /> : <p className="team-note">Las evidencias aparecerán al iniciar una ejecución.</p>)}
     </div>
     {chat.archived ? <p className="team-note">Chat archivado. Restauralo desde Equipos IA para continuar.</p> : <TeamComposer key={chatId} chatId={chatId} label={latest?.status === "awaiting_manual_qa" || latest?.status === "qa_approved" ? "Feedback de QA / siguiente mensaje" : "Mensaje para el equipo"} pending={pendingReply} onSent={() => { setSelectedRunId(null); setView("Chat") }} />}
