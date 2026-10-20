@@ -4,7 +4,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
 
 const READ_TOOLS: &[&str] = &["read", "glob", "grep"];
@@ -334,6 +334,13 @@ pub(super) fn execute(
         body["variant"] = json!(v);
     }
     // The session ID has already been durably committed by the caller.
+    if app.try_state::<crate::desktop::tasks::Tasks>().is_some() {
+        update_run(app, run_id, |r| {
+            if r.status == "cancelling" { return Err("Cancelación solicitada antes de enviar".into()); }
+            crate::desktop::tasks::begin(app, session, &r.goal, None)?;
+            Ok(())
+        })?;
+    }
     client.post(&format!("/session/{}/prompt_async", session), body)?;
     let start = Instant::now();
     let mut waiting = false;
@@ -341,7 +348,7 @@ pub(super) fn execute(
         std::thread::sleep(Duration::from_secs(2));
         let state = run(app, run_id)?;
         if state.status == "cancelling" || start.elapsed() > Duration::from_secs(45 * 60) {
-            stop(client, session)?;
+            stop(app, client, session)?;
             return Err(if state.status == "cancelling" {
                 "Cancelado. Se conservan los cambios ya aplicados"
             } else {
@@ -353,7 +360,7 @@ pub(super) fn execute(
         let live_messages = client.get(&format!("/session/{}/message", session))?;
         record_usage(app, run_id, session, &live_messages)?;
         if let Err(e) = enforce_limits(&run(app, run_id)?) {
-            stop(client, session)?;
+            stop(app, client, session)?;
             return Err(e);
         }
         if !statuses.is_object() {
@@ -482,8 +489,15 @@ fn enforce_limits(r: &Run) -> Result<(), String> {
     Ok(())
 }
 
-fn stop(client: &Opencode, session: &str) -> Result<(), String> {
-    client.post(&format!("/session/{}/abort", session), json!({}))?;
+pub(super) fn stop(app: &AppHandle, client: &Opencode, session: &str) -> Result<(), String> {
+    // Revoke queued PC input before aborting the model, just like normal chat.
+    // Isolated runner tests need not install the desktop subsystem.
+    let desktop = if app.try_state::<crate::desktop::tasks::Tasks>().is_some() {
+        crate::desktop::tasks::cancel(app, session).map(|_| ())
+    } else { Ok(()) };
+    let aborted = client.post(&format!("/session/{}/abort", session), json!({}));
+    desktop?;
+    aborted?;
     for _ in 0..15 {
         let states = client.get("/session/status")?;
         if !states.is_object() {
@@ -1035,7 +1049,7 @@ pub fn reconcile(app: &AppHandle, r: &Run, abort: bool) -> Result<(), String> {
             ));
         }
         if busy {
-            stop(&client, session)?;
+            stop(app, &client, session)?;
         }
     }
     if r.tasks.is_empty() && !abort {
@@ -1278,7 +1292,7 @@ fn schedule(app: &AppHandle, id: &str) -> Result<(), String> {
                     .last()
                     .map(|s| {
                         client(app, &task.repository)
-                            .and_then(|client| stop(&client, s))
+                            .and_then(|client| stop(&app, &client, s))
                             .is_ok()
                     })
                     .unwrap_or(true);
@@ -1319,7 +1333,7 @@ fn schedule(app: &AppHandle, id: &str) -> Result<(), String> {
                 if let Some(a) = task.attempts.last() {
                     let c = client(app, &task.repository)?;
                     for session in a.session_id.iter().chain(a.review_session_id.iter()) {
-                        if stop(&c, session).is_err() {
+                        if stop(&app, &c, session).is_err() {
                             settled = false;
                         }
                     }

@@ -2,7 +2,7 @@ use super::{domain::*, errors, evidence, read, runner, update, update_run};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 fn brief(text: &str, max: usize) -> String {
     let safe = evidence::sanitize(text);
@@ -285,7 +285,7 @@ pub(super) fn cancel(app: &AppHandle, chat_id: &str) -> Result<(), String> {
         message.text = "Detuve este pedido del Lead. Su actividad y los resultados observados se conservan; revisalos antes de repetir una acción.".into();
         Ok((chat.team.project_root.clone(), message.session_id.clone()))
     })?;
-    if let Some(session) = session { runner::client(app, &root)?.post(&format!("/session/{}/abort", session), json!({}))?; }
+    if let Some(session) = session { runner::stop(app, &runner::client(app, &root)?, &session)?; }
     Ok(())
 }
 
@@ -371,6 +371,16 @@ fn respond(
         body["variant"] = json!(variant);
     }
     let result = (|| {
+        // Keep admission and the PC epoch ordered against the cancel command;
+        // a delayed tool catalog must never reactivate a stopped request.
+        update(app, |s| {
+            let pending = s.chats.iter().find(|c| c.id == chat_id).and_then(|c| c.messages.iter().find(|m| m.id == reply_id)).is_some_and(|m| m.status == "pending");
+            if !pending { return Err("Pedido detenido antes de enviar".into()); }
+            if app.try_state::<crate::desktop::tasks::Tasks>().is_some() {
+                crate::desktop::tasks::begin(app, &session, text, None)?;
+            }
+            Ok(())
+        })?;
         client.post(&format!("/session/{}/prompt_async", session), body)?;
         let start = Instant::now();
         while start.elapsed() < Duration::from_secs(15 * 60) {
@@ -415,7 +425,7 @@ fn respond(
         Err("El Lead alcanzó el límite de quince minutos. Su sesión y los resultados observados se conservan; abrí su actividad antes de reintentar".into())
     })();
     if result.is_err() {
-        let _ = client.post(&format!("/session/{}/abort", session), json!({}));
+        let _ = runner::stop(app, &client, &session);
     }
     result
 }
