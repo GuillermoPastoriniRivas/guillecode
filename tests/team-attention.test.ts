@@ -1,6 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { attentionLabel, teamAttention } from "../src/team/attention.ts"
+import { memberState } from "../src/team/member-state.ts"
 import type { TeamChatRecord, TeamRun } from "../src/team/types.ts"
 
 function fixture() {
@@ -10,6 +11,59 @@ function fixture() {
   const chat: TeamChatRecord = { id: "chat", title: "Equipo", team, skills: [], archived: false, createdAt: 1, messages: [], runs: [run] }
   return { chat, run }
 }
+
+test("la lista distingue al Lead listo, respondiendo y planificando", () => {
+  const { chat, run } = fixture()
+  const lead = chat.team.members[0]
+  chat.runs = []
+  assert.deepEqual(memberState(lead, chat, undefined, []), { label: "Listo", detail: "Esperando tu objetivo.", tone: "idle", needsHelp: false })
+  chat.messages = [{ id: "reply", role: "assistant", text: "", createdAt: 2, status: "pending", runId: null, sessionId: "reply" }]
+  assert.equal(memberState(lead, chat, undefined, []).label, "Respondiendo")
+  chat.messages = []; chat.runs = [run]; run.status = "planning"
+  assert.equal(memberState(lead, chat, run, []).label, "Planificando")
+})
+
+test("cada integrante conserva su estado cuando otro necesita ayuda, incluso con nombres iguales", () => {
+  const { chat, run } = fixture()
+  const [lead, front, back] = run.team.members
+  front.name = back.name = "Especialista"
+  run.tasks[0].status = "blocked"; run.tasks[0].error = "Falta configurar la API local."
+  let attention = teamAttention(chat, run)
+  assert.equal(memberState(front, chat, run, attention).needsHelp, true)
+  assert.match(memberState(front, chat, run, attention).detail, /API local/)
+  assert.equal(memberState(back, chat, run, attention).label, "Trabajando")
+  assert.equal(memberState(back, chat, run, attention).needsHelp, false)
+  run.tasks[0].status = "running"
+  attention = teamAttention(chat, run, [{ sessionID: "session-frontend", kind: "permission" }])
+  assert.equal(memberState(front, chat, run, attention).label, "Espera un permiso")
+  assert.equal(memberState(back, chat, run, attention).label, "Trabajando")
+  assert.equal(memberState(front, chat, run, teamAttention(chat, run)).needsHelp, false)
+  run.tasks[1].attempts[0].reviewSessionId = "review"
+  attention = teamAttention(chat, run, [{ sessionID: "review", kind: "question" }])
+  assert.equal(memberState(lead, chat, run, attention).label, "Espera tu respuesta")
+  assert.equal(memberState(back, chat, run, attention).needsHelp, false)
+})
+
+test("las dependencias y revisiones no piden ayuda al usuario salvo al fallar la revisión del Lead", () => {
+  const { chat, run } = fixture()
+  const [lead, front] = run.team.members
+  run.tasks[0].status = "waiting_dependency"
+  assert.equal(memberState(front, chat, run, teamAttention(chat, run)).needsHelp, false)
+  run.tasks[0].status = "verifying"
+  assert.equal(memberState(front, chat, run, []).label, "Esperando revisión")
+  assert.equal(memberState(lead, chat, run, []).label, "Revisando")
+  run.tasks[0].status = "review_error"
+  run.tasks[0].attempts[0].review = { status: "review_error", summary: "El modelo de revisión no está disponible.", criteriaSatisfied: false }
+  const attention = teamAttention(chat, run)
+  assert.equal(memberState(lead, chat, run, attention).needsHelp, true)
+  assert.equal(memberState(front, chat, run, attention).needsHelp, false)
+  run.status = "cancelled"
+  assert.equal(memberState(lead, chat, run, teamAttention(chat, run)).label, "Cancelado")
+  run.status = "awaiting_manual_qa"
+  assert.equal(memberState(lead, chat, run, teamAttention(chat, run)).label, "Espera tu revisión")
+  run.status = "qa_approved"
+  assert.equal(memberState(lead, chat, run, teamAttention(chat, run)).needsHelp, false)
+})
 
 test("un integrante bloqueado se ve aunque el equipo siga trabajando y no tenga error general", () => {
   const { chat, run } = fixture()

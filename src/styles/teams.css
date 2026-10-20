@@ -34,6 +34,14 @@
 .team-attention-agent { display: flex; gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap; color: var(--warn); }
 .team-attention-list { display: grid; gap: 8px; max-height: min(24vh, 200px); overflow-y: auto; }
 .team-attention-list article + article { padding-top: 8px; border-top: 1px solid var(--border); }
+.team-chat .team-roster ul { list-style: none; padding: 0; margin-top: 8px; max-height: min(28vh, 220px); overflow: auto; }
+.team-member { padding: 7px 0; border-top: 1px solid var(--border); }
+.team-member > div { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; font-size: 12px; }
+.team-member-status { padding: 2px 6px; border-radius: var(--radius); background: var(--accent-bg); }
+.team-member-status.working { color: var(--accent-strong); }
+.team-member-status.blocked, .team-member-help { color: var(--warn); }
+.team-member-status.done { color: var(--success); }
+.team-chat-header .team-member p { font-size: 11px; margin-top: 2px; overflow-wrap: anywhere; }
 .team-chat-header .team-attention-list p { color: var(--fg); overflow-wrap: anywhere; line-height: 1.5; }
 .team-chat-header .team-attention-list .team-attention-task { color: var(--fg-dim); }
 .team-chat-nav { display: flex; gap: 3px; padding: 0 10px; overflow-x: auto; flex-shrink: 0; border-bottom: 1px solid var(--border); }

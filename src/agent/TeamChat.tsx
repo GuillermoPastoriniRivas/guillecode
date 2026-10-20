@@ -19,6 +19,7 @@ import { ChatImages } from "../team/ChatImages"
 import { TeamComposer } from "../team/TeamComposer"
 import { TeamSettings } from "../team/TeamSettings"
 import { attentionLabel, teamAttention } from "../team/attention"
+import { memberState } from "../team/member-state"
 
 function RunReply({ run }: { run: TeamRun }) {
   const blockedTask = run.tasks.find(t => ["blocked", "failed", "review_error", "interrupted"].includes(t.status))
@@ -97,7 +98,13 @@ export function TeamChat({ chatId }: { chatId: string }) {
         </article>)}</div>
         <p>Podés ayudarlo desde este chat.{otherWork && attention.some(i => i.kind !== "waiting") ? " Las tareas independientes siguen trabajando." : ""}</p>
       </section>}
-      {roster.autonomous && <details className="team-roster"><summary>Equipo elegido por el Lead</summary>{roster.members.map(m => <p key={m.id}>{m.name} · {m.role}</p>)}</details>}</header>
+      {roster.autonomous && <details className="team-roster"><summary>Equipo elegido por el Lead</summary><ul aria-label="Estado de los integrantes">{roster.members.map(m => ({ m, current: memberState(m, chat, run, attention) })).sort((a, b) => Number(b.current.needsHelp) - Number(a.current.needsHelp)).map(({ m, current }) => {
+        return <li className="team-member" key={m.id}>
+          <div><strong>{m.name}</strong>{m.name.toLowerCase() !== m.role.toLowerCase() && <span> · {m.role}</span>}<span className={`team-member-status ${current.tone}`}>{current.label}</span></div>
+          <small className={current.needsHelp ? "team-member-help" : "team-note"}>{current.needsHelp ? "Necesita tu ayuda" : "Sin pedidos de ayuda"}</small>
+          <p>{current.detail}</p>
+        </li>
+      })}</ul></details>}</header>
     <nav className="team-chat-nav" aria-label="Vistas del equipo">{["Chat", "Tareas", "Actividad", "Resultados / Comportamientos"].map((v) => <button key={v} className={view === v ? "active" : ""} onClick={() => setView(v)}>{v}</button>)}</nav>
     {chat.runs.length > 1 && <label className="team-run-select">Entrega / ejecución<select value={run?.id} onChange={(e) => setSelectedRunId(e.target.value)}>{chat.runs.map((r, i) => <option value={r.id} key={r.id}>#{i + 1} · {formatDateTime(r.startedAt)} · {statusLabel[r.status]}</option>)}</select></label>}
     {run && <div className="team-run-controls">

@@ -140,6 +140,12 @@ test("modo equipo abre sin plantilla y muestra integrantes elegidos por el Lead 
   expect(store.teams).toHaveLength(0)
   expect(store.chats[0].team.members).toHaveLength(1)
   expect(calls.filter(c => c.command === "team_chats_auto")).toHaveLength(1)
+  await page.getByText("Equipo elegido por el Lead", { exact: true }).click()
+  const roster = page.getByRole("list", { name: "Estado de los integrantes" })
+  await expect(roster).toContainText("Listo")
+  await expect(roster).toContainText("Sin pedidos de ayuda")
+  await expect(roster).toContainText("Esperando tu objetivo.")
+  await page.screenshot({ path: test.info().outputPath("integrantes-listos.png") })
   await page.getByLabel("Mensaje para el equipo").fill("Necesito dos servicios backend y una pantalla")
   await page.getByLabel("Mensaje para el equipo").press("Enter")
   const run = store.chats[0].runs[0]
@@ -149,9 +155,23 @@ test("modo equipo abre sin plantilla y muestra integrantes elegidos por el Lead 
   }
   await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
   await expect(page.locator(".team-chat-header")).toContainText("4 integrantes")
-  await page.getByText("Equipo elegido por el Lead", { exact: true }).click()
   await expect(page.locator(".team-roster")).toContainText("Backend 2")
+  await expect(roster.locator(".team-member-status.working")).toHaveCount(4)
   await page.screenshot({ path: test.info().outputPath("modo-equipo-paralelo.png") })
+  run.tasks[2].status = "blocked"
+  run.tasks[2].error = "Falta configurar la API local."
+  await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
+  const frontend = roster.locator(".team-member").filter({ hasText: "Frontend 1" })
+  await expect(frontend).toContainText("Bloqueado")
+  await expect(frontend).toContainText("Necesita tu ayuda")
+  await expect(frontend).toContainText("Falta configurar la API local")
+  await expect(roster.locator(".team-member").first()).toContainText("Frontend 1")
+  await expect(roster.locator(".team-member").filter({ hasText: "Backend 2" })).toContainText("Trabajando")
+  await page.screenshot({ path: test.info().outputPath("integrantes-estado-y-ayuda.png") })
+  run.tasks[2].status = "running"; run.tasks[2].error = null
+  await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
+  await expect(frontend).toContainText("Trabajando")
+  await expect(frontend).not.toContainText("Necesita tu ayuda")
   run.status = "awaiting_manual_qa"; run.finishedAt = Date.now()
   run.chatSummary = { done: "Creé los dos servicios y la pantalla.", tested: "Las pruebas de integración pasaron.", pending: "Nada pendiente." }
   run.summary = "Detalle técnico completo: comando interno node --check backend/server.js y puertos de la integración. ".repeat(15)
