@@ -272,6 +272,8 @@ pub struct ChatSummary {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Coordination {
+    #[serde(default)]
+    pub cycle_task_ids: Vec<String>,
     pub id: String,
     pub from_task_id: String,
     pub message: String,

@@ -140,6 +140,12 @@ test("modo equipo abre sin plantilla y muestra integrantes elegidos por el Lead 
   expect(store.teams).toHaveLength(0)
   expect(store.chats[0].team.members).toHaveLength(1)
   expect(calls.filter(c => c.command === "team_chats_auto")).toHaveLength(1)
+  await page.getByText("Equipo elegido por el Lead", { exact: true }).click()
+  const roster = page.getByRole("list", { name: "Estado de los integrantes" })
+  await expect(roster).toContainText("Listo")
+  await expect(roster).toContainText("Sin pedidos de ayuda")
+  await expect(roster).toContainText("Esperando tu objetivo.")
+  await page.screenshot({ path: test.info().outputPath("integrantes-listos.png") })
   await page.getByLabel("Mensaje para el equipo").fill("Necesito dos servicios backend y una pantalla")
   await page.getByLabel("Mensaje para el equipo").press("Enter")
   const run = store.chats[0].runs[0]
@@ -149,9 +155,35 @@ test("modo equipo abre sin plantilla y muestra integrantes elegidos por el Lead 
   }
   await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
   await expect(page.locator(".team-chat-header")).toContainText("4 integrantes")
-  await page.getByText("Equipo elegido por el Lead", { exact: true }).click()
   await expect(page.locator(".team-roster")).toContainText("Backend 2")
+  await expect(roster.locator(".team-member-status.working")).toHaveCount(4)
   await page.screenshot({ path: test.info().outputPath("modo-equipo-paralelo.png") })
+  run.tasks[0].status = "waiting_dependency"; run.tasks[2].status = "waiting_dependency"
+  run.coordination = [
+    { id: "cycle-front", fromTaskId: "front-1", taskIds: ["back-1"], cycleTaskIds: ["front-1", "back-1"], status: "checking", message: "Necesito el contrato de Backend", summary: "Detecté una espera circular. Estoy separando el contrato de la integración.", createdAt: Date.now(), sessions: [] },
+    { id: "cycle-back", fromTaskId: "back-1", taskIds: ["front-1"], status: "waiting", message: "Necesito la integración de Frontend", summary: "", createdAt: Date.now(), sessions: [] },
+  ]
+  await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
+  const lead = roster.locator(".team-member").filter({ has: page.locator("strong", { hasText: /^Lead$/ }) })
+  await expect(lead).toContainText("Destrabando equipo")
+  await expect(lead).toContainText("Sin pedidos de ayuda")
+  await expect(lead).toContainText("separando el contrato de la integración")
+  await page.screenshot({ path: test.info().outputPath("lead-separa-espera-circular.png") })
+  run.tasks[0].status = "running"; run.coordination = []
+  run.tasks[2].status = "blocked"
+  run.tasks[2].error = "Falta configurar la API local."
+  await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
+  const frontend = roster.locator(".team-member").filter({ hasText: "Frontend 1" })
+  await expect(frontend).toContainText("Bloqueado")
+  await expect(frontend).toContainText("Necesita tu ayuda")
+  await expect(frontend).toContainText("Falta configurar la API local")
+  await expect(roster.locator(".team-member").first()).toContainText("Frontend 1")
+  await expect(roster.locator(".team-member").filter({ hasText: "Backend 2" })).toContainText("Trabajando")
+  await page.screenshot({ path: test.info().outputPath("integrantes-estado-y-ayuda.png") })
+  run.tasks[2].status = "running"; run.tasks[2].error = null
+  await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
+  await expect(frontend).toContainText("Trabajando")
+  await expect(frontend).not.toContainText("Necesita tu ayuda")
   run.status = "awaiting_manual_qa"; run.finishedAt = Date.now()
   run.chatSummary = { done: "Creé los dos servicios y la pantalla.", tested: "Las pruebas de integración pasaron.", pending: "Nada pendiente." }
   run.summary = "Detalle técnico completo: comando interno node --check backend/server.js y puertos de la integración. ".repeat(15)
@@ -399,6 +431,71 @@ test("se conversa con el Lead durante bloqueos y trabajo sin duplicar las tareas
   await page.screenshot({ path: test.info().outputPath("lead-conversacion-recuperada.png") })
 })
 
+test("el encabezado avisa quién está bloqueado aunque los otros sigan trabajando", async ({ page }) => {
+  const { store } = await setup(page)
+  await createTeam(page)
+  await page.getByLabel("Mensaje para el equipo").fill("Frontend y Backend en paralelo")
+  await page.getByRole("button", { name: "Enviar", exact: true }).click()
+  const run = store.chats[0].runs[0]
+  const front = run.team.members.find(m => m.role === "Frontend")!, back = run.team.members.find(m => m.role === "Backend")!
+  run.tasks = [front, back].map((agent, index) => ({ id: agent.id, title: index ? "Servicio web" : "Página de saludo", objective: "Saludo", assignedAgentId: agent.id, repository: run.team.projectRoot, dependencies: [], expectedFiles: [], acceptanceCriteria: [], status: index ? "running" : "blocked", error: index ? null : "No se pudo conectar con la API local. Iniciá el backend para continuar.", attempts: [{ id: `attempt-${agent.id}`, agent, sessionId: `session-${agent.id}`, reviewSessionId: null, startedAt: Date.now(), finishedAt: null, status: index ? "running" : "blocked", summary: "", error: null, review: null, commands: [] }] }))
+  run.chatSummary = { done: "Organicé las dos tareas.", tested: "Todavía no finalizamos las pruebas.", pending: "Nada pendiente." }
+  await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
+  const header = page.locator(".team-chat-header")
+  const notice = header.getByRole("region", { name: "Bloqueos del equipo" })
+  await expect(header).toContainText("Trabajando · 1 bloqueo")
+  await expect(notice).toContainText(`Bloqueado · ${front.name}`)
+  await expect(notice).toContainText("No se pudo conectar con la API local")
+  await expect(notice).toContainText("Las tareas independientes siguen trabajando")
+  await expect(page.locator(".team-chat-message .team-lead-message")).not.toContainText("Nada pendiente")
+  for (const view of ["Actividad", "Tareas", "Chat"]) {
+    await page.getByRole("button", { name: view, exact: true }).click()
+    await expect(notice).toBeInViewport()
+  }
+  await page.screenshot({ path: test.info().outputPath("lead-avisa-bloqueo-con-otros-trabajando.png") })
+  run.tasks[0].status = "running"; run.tasks[0].error = null
+  await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
+  await expect(notice).toHaveCount(0)
+  await expect(header).not.toContainText("1 bloqueo")
+})
+
+test("el encabezado distingue una espera entre agentes de un permiso y permite abrirlo", async ({ page }) => {
+  const { store } = await setup(page)
+  await createTeam(page)
+  await page.getByLabel("Mensaje para el equipo").fill("Integrar la pantalla y la API")
+  await page.getByRole("button", { name: "Enviar", exact: true }).click()
+  const run = store.chats[0].runs[0], front = run.team.members.find(m => m.role === "Frontend")!, back = run.team.members.find(m => m.role === "Backend")!
+  run.tasks = [front, back].map(agent => ({ id: agent.id, title: agent.role, objective: "Saludo", assignedAgentId: agent.id, repository: run.team.projectRoot, dependencies: [], expectedFiles: [], acceptanceCriteria: [], status: agent.id === front.id ? "waiting_dependency" : "running", error: null, attempts: [{ id: `attempt-${agent.id}`, agent, sessionId: `session-${agent.id}`, reviewSessionId: null, startedAt: Date.now(), finishedAt: null, status: "running", summary: "", error: null, review: null, commands: [] }] }))
+  run.coordination = [{ id: "request", fromTaskId: front.id, message: "Necesito el contrato de la API.", taskIds: [back.id], status: "waiting", summary: "", createdAt: Date.now(), sessions: ["coordination"] }]
+  await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
+  const notice = page.getByRole("region", { name: "Bloqueos del equipo" })
+  await expect(notice).toContainText(`En espera · ${front.name}`)
+  await expect(notice).toContainText(`Espera una entrega de ${back.name}`)
+  await expect(notice).not.toContainText("Bloqueado")
+  await page.evaluate(async (sessionID) => {
+    const { useAgent } = await import(/* @vite-ignore */ "/src/state/agent.ts")
+    const request = { id: "permission", sessionID, permission: "bash", patterns: [], metadata: {}, always: [] }
+    useAgent.setState({ permissions: [request, { ...request, id: "foreign", sessionID: "otro-chat" }] })
+  }, `session-${front.id}`)
+  await expect(notice).toContainText(`Bloqueado · ${front.name}`)
+  await expect(notice).toContainText("Espera tu autorización")
+  await expect(notice.locator("article")).toHaveCount(1)
+  await notice.screenshot({ path: test.info().outputPath("lead-identifica-permiso-pendiente.png") })
+  await notice.getByRole("button", { name: "Ver permiso", exact: true }).click()
+  const opened = await page.evaluate(async () => {
+    const { useEditors } = await import(/* @vite-ignore */ "/src/state/editors.ts")
+    return useEditors.getState().groups.flatMap(g => g.tabs.flatMap(t => t.input.kind === "chat" ? [t.input.sessionId] : []))
+  })
+  expect(opened).toContain(`session-${front.id}`)
+  run.tasks[0].status = "running"; run.coordination[0].status = "resolved"
+  await page.evaluate(async () => {
+    const { useAgent } = await import(/* @vite-ignore */ "/src/state/agent.ts")
+    useAgent.setState({ permissions: [] })
+    const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams()
+  })
+  await expect(notice).toHaveCount(0)
+})
+
 
 test("imágenes: adjuntar, quitar, enviar y recuperar del historial", async ({ page }) => {
   const { store, calls } = await setup(page)
@@ -471,6 +568,8 @@ test("se puede cambiar el modelo del Lead tras un rechazo sin recrear el chat", 
   const chat = store.chats[0]
   chat.messages = [{ id: "failed", role: "assistant", text: "Ese modelo gratuito de OpenCode Zen está restringido a la aplicación OpenCode. Elegí otro modelo en Configuración.", status: "error", createdAt: Date.now(), sessionId: "failed-lead", runId: null }]
   await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
+  await expect(page.locator(".team-chat-header")).toContainText("Necesita tu ayuda · 1 bloqueo")
+  await expect(page.locator(".team-chat-header")).toContainText("Bloqueado · Lead")
   await page.getByRole("button", { name: "Configuración del equipo", exact: true }).click()
   await page.getByLabel("Modelo de Team Lead para nuevos mensajes", { exact: true }).selectOption("openai/worker")
   await expect(page.getByLabel("Modelo de Team Lead para nuevos mensajes", { exact: true })).toHaveValue("openai/worker")

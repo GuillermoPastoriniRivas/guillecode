@@ -1,6 +1,6 @@
 import type { TeamRun, TeamTask } from "./types"
-import { readableTeamError } from "../lib/provider-error"
-import { firstTeamSentence } from "../lib/team-response"
+import { readableTeamError } from "../lib/provider-error.ts"
+import { firstTeamSentence } from "../lib/team-response.ts"
 
 export function taskProblem(task: TeamTask): string {
   const last = task.attempts.at(-1)
@@ -14,7 +14,7 @@ export function taskProblem(task: TeamTask): string {
 }
 
 export function runProblem(run: TeamRun): string {
-  const task = run.tasks.find(t => ["blocked", "failed", "changes_requested", "review_error"].includes(t.status))
+  const task = run.tasks.find(t => ["blocked", "failed", "changes_requested", "review_error", "interrupted"].includes(t.status))
   if (task) {
     const name = run.team.members.find(m => m.id === task.assignedAgentId)?.name ?? "Un integrante"
     return `${name} · ${task.title}: ${taskProblem(task)}`

@@ -15,18 +15,73 @@ struct Decision {
     wait_for_task_ids: Vec<String>,
     #[serde(default)]
     tasks: Vec<Task>,
+    #[serde(default)]
+    resume_tasks: Vec<ResumeTask>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ResumeTask {
+    task_id: String,
+    summary: String,
+}
+
+const CIRCULAR_WAIT: &str = "El pedido crea una espera circular entre agentes; el Lead debe separar el contrato de la integración";
+
+// Pending requests are suggestions, not scheduler edges, but must be included
+// when diagnosing a mutual wait before the Lead installs its next decision.
+pub(super) fn circular_tasks(r: &Run) -> Vec<String> {
+    fn reaches(r: &Run, current: &str, target: &str, seen: &mut HashSet<String>) -> bool {
+        if !seen.insert(current.into()) {
+            return false;
+        }
+        let Some(task) = r
+            .tasks
+            .iter()
+            .find(|t| t.id == current && !["completed", "cancelled"].contains(&t.status.as_str()))
+        else {
+            return false;
+        };
+        let waits = r
+            .coordination
+            .iter()
+            .filter(|c| {
+                c.from_task_id == current
+                    && ["pending", "checking", "waiting"].contains(&c.status.as_str())
+            })
+            .flat_map(|c| &c.task_ids);
+        task.dependencies
+            .iter()
+            .chain(waits)
+            .any(|next| next == target || reaches(r, next, target, seen))
+    }
+    r.tasks
+        .iter()
+        .filter(|t| reaches(r, &t.id, &t.id, &mut HashSet::new()))
+        .map(|t| t.id.clone())
+        .collect()
+}
+
+fn cycle_summary(r: &Run, ids: &[String]) -> String {
+    let names: Vec<_> = ids
+        .iter()
+        .filter_map(|id| r.tasks.iter().find(|t| &t.id == id))
+        .map(|t| t.title.as_str())
+        .collect();
+    format!("Detecté una espera circular entre {}. Estoy revisando cómo separar el contrato de la integración para que puedan avanzar.", names.join(" y "))
 }
 
 // Include runtime waits as well as planned dependencies: two workers must never
 // silently wait for one another forever.
 pub(super) fn validate_wait(r: &Run, from: &str, targets: &[String]) -> Result<(), String> {
+    if targets.iter().any(|id| id == from) {
+        return Err(CIRCULAR_WAIT.into());
+    }
     if targets
         .iter()
-        .any(|id| id == from || !r.tasks.iter().any(|t| &t.id == id))
+        .any(|id| !r.tasks.iter().any(|t| &t.id == id))
     {
-        return Err(
-            "Pedido al Lead con una tarea inexistente o una dependencia de sí misma".into(),
-        );
+        return Err("Pedido al Lead con una tarea inexistente".into());
     }
     let mut done = HashSet::new();
     loop {
@@ -54,30 +109,72 @@ pub(super) fn validate_wait(r: &Run, from: &str, targets: &[String]) -> Result<(
             return Ok(());
         }
         if n == done.len() {
-            return Err("El pedido crea una espera circular entre agentes; el Lead debe separar el contrato de la integración".into());
+            return Err(CIRCULAR_WAIT.into());
         }
     }
 }
 
 pub(super) fn ready(r: &Run) -> Option<String> {
+    if let Some(request) = r
+        .coordination
+        .iter()
+        .find(|c| ["pending", "checking"].contains(&c.status.as_str()))
+    {
+        return Some(request.id.clone());
+    }
+    let cycles = circular_tasks(r);
     r.coordination
         .iter()
         .find(|c| {
             c.status == "pending"
                 || c.status == "checking"
                 || (c.status == "waiting"
-                    && c.task_ids.iter().all(|id| {
-                        r.tasks.iter().any(|t| {
-                            &t.id == id
-                                && ["completed", "blocked", "cancelled"]
-                                    .contains(&t.status.as_str())
-                        })
-                    }))
+                    && (cycles.contains(&c.from_task_id)
+                        || c.task_ids.iter().all(|id| {
+                            r.tasks.iter().any(|t| {
+                                &t.id == id
+                                    && ["completed", "blocked", "cancelled"]
+                                        .contains(&t.status.as_str())
+                            })
+                        })))
         })
         .map(|c| c.id.clone())
 }
 
 pub(super) fn check(app: &AppHandle, run_id: &str, request_id: &str) -> Result<(), String> {
+    loop {
+        match check_once(app, run_id, request_id) {
+            Err(error) if error == CIRCULAR_WAIT => {
+                // This is invalid read-only planning, not a failed worker. Ask
+                // the Lead to repair it, with a persisted bound across restarts.
+                update_run(app, run_id, |r| request_repair(r, request_id))?;
+            }
+            result => return result,
+        }
+    }
+}
+
+fn request_repair(r: &mut Run, request_id: &str) -> Result<(), String> {
+    let c = r
+        .coordination
+        .iter_mut()
+        .find(|c| c.id == request_id)
+        .ok_or("Pedido inexistente")?;
+    if c.replies
+        .iter()
+        .filter(|reply| reply["status"] == "repair_requested")
+        .count()
+        >= 2
+    {
+        return Err("El Lead no logró separar las dependencias circulares después de dos correcciones. Se conserva el trabajo; preguntale qué contrato o decisión falta para continuar.".into());
+    }
+    c.status = "pending".into();
+    c.summary = "El Lead está corrigiendo una espera circular. Debe separar el contrato de la integración sin reiniciar el trabajo.".into();
+    c.replies.push(json!({"at":now(),"sessionId":c.sessions.last(),"status":"repair_requested","summary":c.summary,"taskIds":c.task_ids}));
+    Ok(())
+}
+
+fn check_once(app: &AppHandle, run_id: &str, request_id: &str) -> Result<(), String> {
     let r = run(app, run_id)?;
     let request = r
         .coordination
@@ -107,6 +204,12 @@ pub(super) fn check(app: &AppHandle, run_id: &str, request_id: &str) -> Result<(
             true,
         )?
     };
+    let cycles = circular_tasks(&r);
+    let cycle_note = if cycles.is_empty() {
+        String::new()
+    } else {
+        cycle_summary(&r, &cycles)
+    };
     update_run(app, run_id, |r| {
         let c = r
             .coordination
@@ -114,12 +217,16 @@ pub(super) fn check(app: &AppHandle, run_id: &str, request_id: &str) -> Result<(
             .find(|c| c.id == request_id)
             .ok_or("Pedido inexistente")?;
         c.status = "checking".into();
+        c.cycle_task_ids = cycles.clone();
+        if !cycle_note.is_empty() {
+            c.summary = cycle_note.clone();
+        }
         if !reuse {
             c.sessions.push(session.clone());
         }
         Ok(())
     })?;
-    let prompt = format!("Sos el Lead de coordinación, con herramientas SOLO de lectura. Un agente necesita algo de otro. Revisá los archivos actuales y los estados reales de todas las tareas. Los demás siguen trabajando: no los reinicies ni cambies archivos. Respondé resume solo si el solicitante ya puede continuar con un contrato concreto; wait si falta una entrega, indicando IDs reales; blocked si falta información del usuario o hay un fallo. Si falta trabajo no asignado, creá tareas nuevas para el responsable con writePaths propios; no alteres tareas en ejecución. Separá preparación/contrato de integración; evitá esperas circulares.\nPEDIDO: {}\nESTADO ACTUAL DEL EQUIPO: {}\nHISTORIAL DE COORDINACIÓN: {}\nSKILLS DEL LEAD:\n{}\nRespondé SOLO JSON: {{\"status\":\"resume|wait|blocked\",\"summary\":\"estado comprobado, contrato y respuesta concreta al agente\",\"waitForTaskIds\":[],\"tasks\":[]}}. Las tareas nuevas usan el contrato del plan: id,title,objective,assignedAgentId,repository,dependencies,expectedFiles,writePaths,acceptanceCriteria.",serde_json::to_string(request).unwrap_or_default(),serde_json::to_string(&r.tasks).unwrap_or_default(),serde_json::to_string(&r.coordination).unwrap_or_default(),runner::skills_prompt(&r,&employee));
+    let prompt = format!("Sos el Lead de coordinación, con herramientas SOLO de lectura. Un agente necesita algo de otro. Revisá los archivos actuales y los estados reales de todas las tareas. Los demás siguen trabajando: no los reinicies ni cambies archivos. Respondé resume solo si el solicitante ya puede continuar con un contrato concreto; wait si falta una entrega, indicando IDs reales; blocked si falta información del usuario o hay un fallo. Si falta trabajo no asignado, creá tareas nuevas para el responsable con writePaths propios; no alteres tareas en ejecución. Separá preparación/contrato de integración; evitá esperas circulares.\nPEDIDO: {}\nESTADO ACTUAL DEL EQUIPO: {}\nHISTORIAL DE COORDINACIÓN: {}\nSKILLS DEL LEAD:\n{}\nRespondé SOLO JSON: {{\"status\":\"resume|wait|blocked\",\"summary\":\"estado comprobado, contrato y respuesta concreta al agente\",\"waitForTaskIds\":[],\"tasks\":[],\"resumeTasks\":[]}}. Las tareas nuevas usan el contrato del plan: id,title,objective,assignedAgentId,repository,dependencies,expectedFiles,writePaths,acceptanceCriteria.",serde_json::to_string(request).unwrap_or_default(),serde_json::to_string(&r.tasks).unwrap_or_default(),serde_json::to_string(&r.coordination).unwrap_or_default(),runner::skills_prompt(&r,&employee));
     let prompt = format!(
         "{}{}\nINTEGRANTES ACTUALES: {}\nCATÁLOGO DE SKILLS: {}",
         prompt,
@@ -128,6 +235,7 @@ pub(super) fn check(app: &AppHandle, run_id: &str, request_id: &str) -> Result<(
         serde_json::to_string(&r.skills.iter().map(|s| &s.id).collect::<Vec<_>>())
             .unwrap_or_default()
     );
+    let prompt = format!("{}\nDEPENDENCIAS CIRCULARES DETECTADAS (IDs): {}\nSi hay un ciclo o se rechazó tu decisión por crearlo, intervení: acordá un contrato concreto para que un integrante avance en preparación y dejá la integración para después. Podés reanudar otras tareas suspendidas con resumeTasks:[{{taskId:ID,summary:instrucción concreta y contrato para continuar sin esperar al otro}}]. Esto libera únicamente sus esperas de coordinación: conserva sus sesiones, archivos, dependencias del plan y criterios originales. No reanuda tareas activas ni terminadas. Podés crear tareas independientes de contrato con writePaths propios, sin invadir archivos reservados. No afirmes que una dependencia ya está implementada si solo acordaste su contrato. No marques una entrega completa ni elimines criterios para romper un ciclo. Si no hay forma segura sin información del usuario, devolvé blocked y explicá la decisión exacta que falta. Respondé en summary qué separaste y quién puede avanzar; no pidas una microdecisión que puedas resolver con el estado actual.",prompt,serde_json::to_string(&cycles).unwrap_or_default());
     let previous = if reuse {
         Some(client.get_resilient(&format!("/session/{}/message", session))?)
     } else {
@@ -156,6 +264,9 @@ fn apply(
 }
 
 fn apply_decision(r: &mut Run, request_id: &str, mut decision: Decision) -> Result<(), String> {
+    if !["running", "paused"].contains(&r.status.as_str()) {
+        return Err("La ejecución ya no admite cambios de coordinación".into());
+    }
     if !["resume", "wait", "blocked"].contains(&decision.status.as_str())
         || decision.summary.trim().is_empty()
     {
@@ -178,6 +289,49 @@ fn apply_decision(r: &mut Run, request_id: &str, mut decision: Decision) -> Resu
     let mut proposed = r.clone();
     proposed.team = super::staffing::with_agents(&r.team, &decision.agents, &r.skills)?;
     proposed.tasks.extend(decision.tasks.clone());
+    let mut resumed = HashSet::new();
+    for resume in &decision.resume_tasks {
+        if resume.task_id == from
+            || resume.summary.trim().is_empty()
+            || !resumed.insert(resume.task_id.clone())
+        {
+            return Err("El Lead debe dar instrucciones concretas para cada otra tarea suspendida, sin repetir IDs".into());
+        }
+        let task = proposed
+            .tasks
+            .iter_mut()
+            .find(|t| t.id == resume.task_id)
+            .ok_or("Tarea a reanudar inexistente")?;
+        if task.status != "waiting_dependency"
+            || task
+                .attempts
+                .last()
+                .is_some_and(|a| a.status != "waiting_dependency" || !a.recovered)
+        {
+            return Err("Solo se pueden separar esperas de tareas suspendidas; el trabajo activo o terminado se conserva".into());
+        }
+        let waits: Vec<_> = proposed
+            .coordination
+            .iter_mut()
+            .filter(|c| {
+                c.from_task_id == resume.task_id
+                    && ["pending", "waiting"].contains(&c.status.as_str())
+            })
+            .collect();
+        if waits.is_empty() {
+            return Err(
+                "La tarea no tiene una espera de coordinación que el Lead pueda resolver".into(),
+            );
+        }
+        let summary = evidence::sanitize(&resume.summary);
+        for c in waits {
+            c.status = "resolved".into();
+            c.summary = summary.clone();
+            c.replies.push(json!({"at":now(),"sessionId":r.coordination.iter().find(|c| c.id == request_id).and_then(|c| c.sessions.last()),"status":"resume","summary":summary,"taskIds":[]}));
+        }
+        task.status = "pending".into();
+        task.error = None;
+    }
     validate_plan(
         &Plan {
             agents: vec![],
@@ -186,7 +340,9 @@ fn apply_decision(r: &mut Run, request_id: &str, mut decision: Decision) -> Resu
         },
         &proposed.team,
     )?;
-    validate_wait(&proposed, &from, &decision.wait_for_task_ids)?;
+    if decision.status != "blocked" {
+        validate_wait(&proposed, &from, &decision.wait_for_task_ids)?;
+    }
     if decision.status == "wait" && decision.wait_for_task_ids.is_empty() {
         return Err("El Lead pidió esperar sin una entrega pendiente".into());
     }
@@ -203,9 +359,7 @@ fn apply_decision(r: &mut Run, request_id: &str, mut decision: Decision) -> Resu
             .iter()
             .any(|t| &t.id == id && t.status == "completed")
     });
-    r.team = proposed.team;
-    r.tasks.extend(decision.tasks);
-    let c = r
+    let c = proposed
         .coordination
         .iter_mut()
         .find(|c| c.id == request_id)
@@ -222,7 +376,7 @@ fn apply_decision(r: &mut Run, request_id: &str, mut decision: Decision) -> Resu
     }
     .into();
     c.replies.push(json!({"at":now(),"sessionId":c.sessions.last(),"status":decision.status,"summary":c.summary,"taskIds":c.task_ids}));
-    let task = r
+    let task = proposed
         .tasks
         .iter_mut()
         .find(|t| t.id == from)
@@ -234,7 +388,8 @@ fn apply_decision(r: &mut Run, request_id: &str, mut decision: Decision) -> Resu
         task.status = "blocked".into();
         task.error = Some(decision.summary);
     }
-    r.configuration_changes.push(json!({"kind":"leadCoordination","at":now(),"requestId":request_id,"status":c.status,"summary":c.summary,"taskIds":c.task_ids}));
+    proposed.configuration_changes.push(json!({"kind":"leadCoordination","at":now(),"requestId":request_id,"status":c.status,"summary":c.summary,"taskIds":c.task_ids,"resumedTaskIds":resumed}));
+    *r = proposed;
     Ok(())
 }
 
@@ -260,10 +415,126 @@ mod tests {
         let mut r = fixture();
         assert!(validate_wait(&r, "front", &["back".into()]).is_ok());
         assert!(validate_wait(&r, "front", &["missing".into()]).is_err());
-        assert!(validate_wait(&r, "front", &["front".into()]).is_err());
+        assert_eq!(
+            validate_wait(&r, "front", &["front".into()]).unwrap_err(),
+            CIRCULAR_WAIT
+        );
         assert!(validate_wait(&r, "back", &["front".into()]).is_err());
         r.tasks[0].status = "completed".into();
         assert!(validate_wait(&r, "front", &["back".into()]).is_ok());
+    }
+
+    fn mutual_wait() -> Run {
+        let mut r = fixture();
+        r.tasks[0].status = "waiting_dependency".into();
+        r.coordination.push(serde_json::from_value(json!({"id":"back-req","fromTaskId":"back","message":"Necesito la UI para terminar la API","taskIds":["front"],"status":"pending","summary":"","createdAt":2,"sessions":[]})).unwrap());
+        r
+    }
+
+    #[test]
+    fn cycle_correction_budget_survives_restart_and_does_not_loop_forever() {
+        let mut r = mutual_wait();
+        request_repair(&mut r, "back-req").unwrap();
+        let mut restored: Run = serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
+        request_repair(&mut restored, "back-req").unwrap();
+        let before = serde_json::to_value(&restored).unwrap();
+        assert!(request_repair(&mut restored, "back-req")
+            .unwrap_err()
+            .contains("después de dos correcciones"));
+        assert_eq!(serde_json::to_value(&restored).unwrap(), before);
+    }
+
+    #[test]
+    fn cycles_include_pending_and_persisted_waits_but_not_their_dependants_or_finished_work() {
+        let mut r = mutual_wait();
+        let mut downstream = r.tasks[1].clone();
+        downstream.id = "integration".into();
+        downstream.dependencies = vec!["front".into()];
+        downstream.status = "pending".into();
+        r.tasks.push(downstream);
+        assert_eq!(circular_tasks(&r), vec!["back", "front"]);
+        r.coordination[1].status = "waiting".into();
+        let restored: Run = serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
+        assert_eq!(
+            ready(&restored).as_deref(),
+            Some("req"),
+            "A saved mutual wait must wake the Lead without a completed dependency"
+        );
+        r.tasks[0].status = "completed".into();
+        assert!(circular_tasks(&r).is_empty());
+    }
+
+    #[test]
+    fn lead_separates_mutual_wait_atomically_and_keeps_sessions_criteria_and_other_work() {
+        let mut r = mutual_wait();
+        let mut independent = r.tasks[0].clone();
+        independent.id = "independent".into();
+        independent.status = "running".into();
+        r.tasks.push(independent.clone());
+        let original = serde_json::to_value(&r.tasks).unwrap();
+        let decision = serde_json::from_value(json!({"status":"wait","summary":"Separé el contrato: Backend publica primero la API y Frontend integra después.","waitForTaskIds":["back"],"resumeTasks":[{"taskId":"back","summary":"Implementá el contrato acordado GET /saludo, respuesta {saludo: Hola}. La UI se integra después; conservá tus criterios y comprobaciones originales."}]})).unwrap();
+        apply_decision(&mut r, "req", decision).unwrap();
+        assert!(circular_tasks(&r).is_empty());
+        assert_eq!(r.tasks[0].status, "pending");
+        assert_eq!(r.tasks[1].status, "waiting_dependency");
+        assert_eq!(r.coordination[1].status, "resolved");
+        for (i, task) in r.tasks.iter().enumerate() {
+            let after = serde_json::to_value(task).unwrap();
+            for field in [
+                "attempts",
+                "acceptanceCriteria",
+                "dependencies",
+                "writePaths",
+                "objective",
+            ] {
+                assert_eq!(after[field], original[i][field]);
+            }
+        }
+        assert_eq!(
+            serde_json::to_value(&r.tasks[2]).unwrap(),
+            serde_json::to_value(independent).unwrap()
+        );
+        assert!(r.coordination[1].summary.contains("GET /saludo"));
+    }
+
+    #[test]
+    fn separation_cannot_modify_active_completed_or_unknown_tasks_or_install_another_cycle() {
+        let mut r = mutual_wait();
+        let mut active = r.tasks[0].clone();
+        active.id = "active".into();
+        active.status = "running".into();
+        r.tasks.push(active);
+        let mut done = r.tasks[0].clone();
+        done.id = "done".into();
+        done.status = "completed".into();
+        r.tasks.push(done);
+        for ids in [
+            vec!["active"],
+            vec!["done"],
+            vec!["unknown"],
+            vec!["back", "active"],
+            vec!["back", "back"],
+        ] {
+            let before = serde_json::to_value(&r).unwrap();
+            let resume: Vec<_> = ids
+                .into_iter()
+                .map(|id| json!({"taskId":id,"summary":"Publicar contrato primero"}))
+                .collect();
+            let decision = serde_json::from_value(json!({"status":"wait","summary":"Separar","waitForTaskIds":["back"],"resumeTasks":resume})).unwrap();
+            assert!(apply_decision(&mut r, "req", decision).is_err());
+            assert_eq!(serde_json::to_value(&r).unwrap(), before);
+        }
+        r.coordination[1].status = "waiting".into();
+        let before = serde_json::to_value(&r).unwrap();
+        let decision = serde_json::from_value(
+            json!({"status":"wait","summary":"Crear otro ciclo","waitForTaskIds":["back"]}),
+        )
+        .unwrap();
+        assert_eq!(
+            apply_decision(&mut r, "req", decision).unwrap_err(),
+            CIRCULAR_WAIT
+        );
+        assert_eq!(serde_json::to_value(&r).unwrap(), before);
     }
     #[test]
     fn write_paths_reject_scope_escapes_and_wildcards() {

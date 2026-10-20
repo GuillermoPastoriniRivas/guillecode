@@ -20,3 +20,17 @@ En Configuración se puede cambiar el modelo para los siguientes mensajes del ch
 - La prueba de reinicio conserva la obligación de reconciliar las sesiones registradas antes de continuar operaciones con efectos.
 
 Las pruebas de inferencia usan un servidor local determinista; no acreditan disponibilidad ni acceso de cuentas de proveedores externos.
+
+## Avisos de bloqueo en el encabezado
+
+La lista «Equipo elegido por el Lead» muestra el estado individual de cada integrante, si necesita ayuda y la causa o tarea actual. Antes del primer objetivo, el Lead aparece «Listo · Sin pedidos de ayuda · Esperando tu objetivo». Los permisos y preguntas se atribuyen por identificador de agente, incluso si varios integrantes tienen el mismo nombre. Esperar una dependencia no solicita ayuda humana; una revisión fallida corresponde al Lead.
+
+Si dos o más tareas esperan unas a otras, el Lead se activa aunque ninguna dependencia haya terminado. La lista muestra «Destrabando equipo» mientras revisa el ciclo. Puede acordar un contrato y liberar esperas concretas con instrucciones para continuar la preparación, dejando la integración pendiente. Solo puede reanudar tareas suspendidas: conserva la misma sesión, archivos, dependencias del plan y criterios de aceptación; no toca tareas activas ni terminadas. Las decisiones de espera que crean un ciclo vuelven al Lead para hasta dos correcciones automáticas, registradas y limitadas incluso tras reiniciar. Si no logra separarlo, explica el bloqueo sin entrar en un bucle de reintentos.
+
+`node tests/teams-engine.mjs --no-git --circular-wait` usa Tauri y OpenCode reales con inferencia local determinista. Hace que ambos trabajadores esperen mutuamente, rechaza una decisión circular deliberada del Lead y verifica la corrección automática, la continuación de las mismas sesiones sin repetir escrituras y las comprobaciones de ambas entregas. Las pruebas unitarias cubren ciclos persistidos, aislamiento de trabajo independiente, conservación de criterios y rechazo atómico de cambios inválidos.
+
+El chat de equipo muestra arriba los integrantes bloqueados, la tarea, la causa legible y un acceso a su actividad. Esto funciona aunque el estado general siga en ejecución y otros agentes estén trabajando. Los permisos pendientes ofrecen «Ver permiso» y las preguntas «Responder al agente»; ambos abren la sesión correspondiente. Las solicitudes de otros chats se excluyen.
+
+Las esperas explícitas de coordinación se muestran como «En espera», con el responsable de la entrega y el pedido al Lead. Las tareas pendientes normales no se presentan como fallos. Los avisos se recalculan con el estado guardado y las solicitudes del motor, y desaparecen al resolverse. Las cancelaciones y las tareas terminadas no conservan avisos antiguos. Si el Lead falla antes de planificar, el encabezado también muestra que necesita ayuda. La sección «Qué falta» del Lead refleja los bloqueos aunque no exista un error general de ejecución.
+
+Validación: cinco pruebas unitarias de selección de avisos, aislamiento entre chats y resolución; pruebas de interfaz de bloqueo con trabajo paralelo, espera de otra entrega, permiso y apertura de su sesión, y fallo del Lead antes del plan. Las capturas de interfaz de Playwright usan estados de prueba; no representan ejecuciones de proveedores externos.

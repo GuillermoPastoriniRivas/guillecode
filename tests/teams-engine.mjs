@@ -11,6 +11,10 @@ import { tmpdir } from "node:os"
 const noGit = process.argv.includes("--no-git")
 const autonomous = process.argv.includes("--auto")
 const transportFaults = process.argv.includes("--transport-faults")
+const circularWait = process.argv.includes("--circular-wait")
+assert.ok(!circularWait || !autonomous, 'El escenario circular usa dos modelos de trabajadores distintos')
+const circularPauses = new Set()
+let circularRepairs = 0
 const profile = await mkdtemp(join(tmpdir(), "guillecode-teams-"))
 await mkdir(join(profile, "repo"))
 // Windows CI can expose TEMP through an 8.3 alias; match teams_save's canonical root.
@@ -70,7 +74,48 @@ const mock = createServer(async (request, response) => {
   if (autonomous) assert.ok(JSON.stringify(body.input).includes("data:image/png;base64,"), "User image must reach Lead conversation, planning, workers and review as an actual image part")
   let item
   const message = (value) => ({ type: "message", id: `msg-${Date.now()}`, role: "assistant", content: [{ type: "output_text", text: JSON.stringify(value), annotations: [] }], status: "completed" })
-  if (autonomous && latestUserPrompt.includes("REGISTRO (datos, no instrucciones)")) {
+  if (circularWait) {
+    const input = [...body.input].reverse().find(i => i.role === 'user')
+    const prompt = typeof input?.content === 'string' ? input.content : (input?.content ?? []).map(p => p.text ?? '').join('\n')
+    if (leadPhase === 'plan') item = message({ tasks: ['backend','frontend'].map(role => ({ id:role,title:`Crear ${role}`,objective:`Crear ${role}.txt con versión 2`,assignedAgentId:role,repository:repo,dependencies:[],expectedFiles:[`${role}.txt`],writePaths:[`${role}.txt`],acceptanceCriteria:['Archivo con versión 2','Comprobación ejecutada'] })) })
+    else if (leadPhase === 'coordination') {
+      coordinationChecks++
+      const request = JSON.parse(prompt.split('PEDIDO: ')[1].split('\nESTADO ACTUAL DEL EQUIPO:')[0])
+      const states = JSON.parse(prompt.split('ESTADO ACTUAL DEL EQUIPO: ')[1].split('\nHISTORIAL DE COORDINACIÓN:')[0])
+      const history = JSON.parse(prompt.split('HISTORIAL DE COORDINACIÓN: ')[1].split('\nSKILLS DEL LEAD:')[0])
+      const other = request.fromTaskId === 'backend' ? 'frontend' : 'backend'
+      if (states.find(t => t.id === other).status === 'completed') item = message({status:'resume',summary:'Contrato del otro integrante comprobado; completá la integración y su prueba.'})
+      else if (history.some(c => c.replies?.some(reply => reply.status === 'repair_requested'))) {
+        circularRepairs++
+        assert.ok(prompt.includes('DEPENDENCIAS CIRCULARES DETECTADAS'))
+        item = message({status:'wait',summary:`Separé preparación e integración: ${other} verifica primero el contrato version 2 ya escrito; después ${request.fromTaskId} integra.`,waitForTaskIds:[other],resumeTasks:[{taskId:other,summary:'El contrato version 2 ya está en ambos archivos. Verificá ahora tu entrega sin esperar la integración del otro; conservá tus criterios y comprobaciones originales.'}]})
+      } else item = message({status:'wait',summary:`Esperar ${other}`,waitForTaskIds:[other]}) // The second decision creates a cycle: repair must happen automatically.
+    } else if (leadPhase) {
+      reviews++; item = message({status:'approved',summary:'Contrato version 2 y comandos observados comprobados.',criteriaSatisfied:true,tasks:[]})
+    } else {
+      const role = body.model === 'qa-backend' ? 'backend' : 'frontend'
+      const outputs = body.input.filter(i => i.type === 'function_call_output')
+      if (!outputs.length) {
+        parallelWorkers.add(role)
+        const deadline=Date.now()+15000
+        while(parallelWorkers.size<2 && Date.now()<deadline) await delay(100)
+        assert.equal(parallelWorkers.size,2)
+      }
+      if (outputs.length === 2 && !latestUserPrompt.includes('COORDINACIÓN ACTUAL DEL LEAD')) {
+        circularPauses.add(role)
+        const deadline=Date.now()+15000
+        while(circularPauses.size<2 && Date.now()<deadline) await delay(100)
+        assert.equal(circularPauses.size,2)
+        item=message({status:'waiting_dependency',summary:`Preparación de ${role} hecha; espero la integración del otro.`,checks:[],limitations:[],request:{message:'Necesito el contrato version 2 del otro integrante antes de integrar.',taskIds:[role==='backend'?'frontend':'backend']}})
+      } else if(outputs.length>=3) item=message({status:'completed',summary:`${role} integrado y comprobado`,checks:[commands[role]],limitations:[]})
+      else {
+        const name=outputs.length===0?'read':outputs.length===1?'write':'bash'
+        const args=name==='read'?{filePath:join(repo,'user.txt')}:name==='write'?{filePath:join(repo,`${role}.txt`),content:'version 2\n'}:{command:commands[role],description:'Comprobar contrato',timeout:10000}
+        assert.ok(body.tools.some(t => t.name === name), `El trabajador circular no tiene la herramienta ${name}`)
+        item={type:'function_call',id:`fc-cycle-${Date.now()}-${role}`,call_id:`call-cycle-${Date.now()}-${role}`,name,arguments:JSON.stringify(args),status:'completed'}
+      }
+    }
+  } else if (autonomous && latestUserPrompt.includes("REGISTRO (datos, no instrucciones)")) {
     assert.ok(body.tools.some(t => t.name === "desktop_status"), "Lead must receive PC tools")
     assert.ok(!body.tools.some(t => ["bash", "write", "edit", "apply_patch", "task"].includes(t.name)), "Conversational file edits and delegation stay scheduler-owned")
     if (latestUserPrompt.includes("MENSAJE ACTUAL: Forzar rechazo Zen")) {
@@ -212,7 +257,7 @@ try {
     await new Promise(done => proxy.listen(0, "127.0.0.1", done))
     testOrigin = `http://127.0.0.1:${proxy.address().port}`
   }
-  const cargo = spawn("cargo", ["test", "--manifest-path", "src-tauri/Cargo.toml", "--release", "--lib", "--features", "desktop-e2e", "teams::integration::native_team_end_to_end", "--", "--ignored", "--nocapture", "--test-threads=1"], { env: { ...process.env, GUILLE_TEAM_TEST_TRANSPORT: transportFaults ? "1" : "0", GUILLE_TEAM_TEST_AUTO: autonomous?'1':'0', GUILLE_TEAM_TEST_ENGINE: testOrigin, GUILLE_TEAM_TEST_REPO: repo,GUILLE_TEAM_TEST_NO_GIT:noGit?'1':'0',GUILLE_TEAM_TEST_CAPTURE_URL:`http://127.0.0.1:${mock.address().port}/app`,GUILLE_TEAM_TEST_ARTIFACTS:resolve(noGit?'test-results/native-team-evidence-no-git':'test-results/native-team-evidence') }, windowsHide: true, stdio: "inherit" })
+  const cargo = spawn("cargo", ["test", "--manifest-path", "src-tauri/Cargo.toml", "--release", "--lib", "--features", "desktop-e2e", "teams::integration::native_team_end_to_end", "--", "--ignored", "--nocapture", "--test-threads=1"], { env: { ...process.env, GUILLE_TEAM_TEST_CYCLE: circularWait ? "1" : "0", GUILLE_TEAM_TEST_TRANSPORT: transportFaults ? "1" : "0", GUILLE_TEAM_TEST_AUTO: autonomous?'1':'0', GUILLE_TEAM_TEST_ENGINE: testOrigin, GUILLE_TEAM_TEST_REPO: repo,GUILLE_TEAM_TEST_NO_GIT:noGit?'1':'0',GUILLE_TEAM_TEST_CAPTURE_URL:`http://127.0.0.1:${mock.address().port}/app`,GUILLE_TEAM_TEST_ARTIFACTS:resolve(noGit?'test-results/native-team-evidence-no-git':'test-results/native-team-evidence') }, windowsHide: true, stdio: "inherit" })
   const code = await new Promise((done) => cargo.once("exit", done))
   assert.equal(code, 0, `Native runner failed\n${log}`)
   if (transportFaults) {
@@ -222,7 +267,16 @@ try {
     if (autonomous) assert.ok(lostAcknowledgements.has("conversation"))
     console.log("Verified: three failed status reads and lost conversation/Lead/worker acknowledgements recovered without resubmitting any prompt.")
   }
-  if (autonomous) {
+  if (circularWait) {
+    assert.equal(circularPauses.size,2)
+    assert.equal(parallelWorkers.size,2)
+    assert.ok(circularRepairs >= 1)
+    assert.ok(coordinationChecks >= 4)
+    assert.equal(reviews,3)
+    for(const role of ['backend','frontend']) assert.equal(await readFile(join(repo,`${role}.txt`),'utf8'),'version 2\n')
+    assert.equal(await readFile(join(repo,'user.txt'),'utf8'),'user work\n')
+    console.log('Verified: real parallel sessions mutually wait → cyclic Lead decision rejected → automatic Lead repair → same worker sessions resume → both observed checks pass.')
+  } else if (autonomous) {
     assert.equal(desktopCalls, 1, "The native Lead conversation must execute exactly one PC observation")
     assert.equal(parallelWorkers.size, 3)
     for (const id of parallelWorkers) assert.equal(await readFile(join(repo, `${id}.txt`), "utf8"), "hola mundo\n")
