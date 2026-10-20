@@ -38,6 +38,20 @@ pub fn message(value: &Value) -> String {
     let mut messages = vec![];
     parts(value, 0, &mut messages);
     let text = messages.join(" ").to_lowercase();
+    if payment_required(value, 0)
+        || [
+            "payment_required",
+            "payment required",
+            "insufficient credits",
+            "out of credits",
+            "credit balance",
+            "insufficient funds",
+        ]
+        .iter()
+        .any(|s| text.contains(s))
+    {
+        return "El proveedor rechazó la solicitud por un requisito de pago o falta de saldo (HTTP 402). Revisá el saldo o la facturación de esa cuenta, o elegí un modelo con acceso disponible. Los cambios ya guardados se conservan.".into();
+    }
     if ["does not support image", "does not support images", "image input is not supported", "unsupported image", "invalid image"].iter().any(|s| text.contains(s)) { return "El modelo no pudo leer la imagen. Comprobá el archivo y usá un modelo que admita imágenes".into(); }
     if [
         "usage_limit_reached",
@@ -170,6 +184,53 @@ pub fn message(value: &Value) -> String {
     "El agente no pudo completar la tarea. Abrí su sesión en Actividad para ver el último paso; sus cambios se conservan. Corregí lo indicado y reintentá.".into()
 }
 
+pub fn before_plan(value: &Value, provider_id: &str, model_id: &str) -> String {
+    let detail = message(value);
+    if !detail.starts_with("El agente no pudo completar la tarea") {
+        return detail;
+    }
+    let provider = match provider_id {
+        "opencode" => "OpenCode",
+        "openai" => "ChatGPT",
+        other => other,
+    };
+    format!(
+        "El Lead no pudo obtener una respuesta de «{}» en {}. No se creó el plan ni se iniciaron tareas. Revisá el acceso y la disponibilidad de ese modelo, o reasigná el Lead desde Configuración.",
+        super::evidence::sanitize(model_id),
+        provider
+    )
+}
+
+fn payment_required(value: &Value, depth: usize) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    match value {
+        Value::String(text) => {
+            if let Ok(parsed) = serde_json::from_str::<Value>(text) {
+                return payment_required(&parsed, depth + 1);
+            }
+            let text = text.to_lowercase();
+            text.contains("http 402") || text.contains("status 402")
+        }
+        Value::Object(record) => {
+            ["status", "statusCode", "status_code"]
+                .iter()
+                .any(|key| {
+                    record.get(*key).is_some_and(|status| {
+                        status.as_i64() == Some(402)
+                            || status.as_str().is_some_and(|s| s.trim() == "402")
+                    })
+                })
+                || ["data", "error", "response", "responseBody"]
+                    .iter()
+                    .filter_map(|key| record.get(*key))
+                    .any(|child| payment_required(child, depth + 1))
+        }
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,6 +243,31 @@ mod tests {
         assert!(text.contains("alcanzó su límite de uso"));
         assert!(!text.contains("private"));
         assert_eq!(message(&json!(error.to_string())), text);
+    }
+
+    #[test]
+    fn payment_required_explains_balance_problem_without_transport_metadata() {
+        let error = json!({"data":{"statusCode":402,"message":"The upstream request failed","responseHeaders":{"set-cookie":"private-session"}}});
+        let text = message(&error);
+        assert!(text.contains("HTTP 402"));
+        assert!(text.contains("saldo o la facturación"));
+        assert!(text.contains("elegí un modelo"));
+        assert!(!text.contains("private-session"));
+        assert_eq!(message(&json!(error.to_string())), text);
+    }
+
+    #[test]
+    fn unknown_lead_failure_before_plan_names_model_and_next_step() {
+        let text = before_plan(
+            &json!("The upstream request failed unexpectedly"),
+            "opencode",
+            "deepseek-v4.1-flash-free",
+        );
+        assert!(text.contains("deepseek-v4.1-flash-free"));
+        assert!(text.contains("OpenCode"));
+        assert!(text.contains("No se creó el plan"));
+        assert!(text.contains("reasigná el Lead"));
+        assert!(!text.contains("upstream"));
     }
 
     #[test]

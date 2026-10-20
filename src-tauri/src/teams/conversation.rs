@@ -224,6 +224,12 @@ pub(super) fn send(
         Ok(())
     })?;
     let result = reply_id.clone();
+    let lead_model = snapshot
+        .team
+        .members
+        .iter()
+        .find(|member| member.id == snapshot.team.lead_agent_id)
+        .map(|member| (member.model.provider_id.clone(), member.model.model_id.clone()));
     std::thread::spawn(move || {
         let answer = respond(&app, &chat_id, &reply_id, &text, &images);
         let (content, status) = match answer {
@@ -232,7 +238,21 @@ pub(super) fn send(
                 let saved = read(&app)
                     .ok()
                     .and_then(|s| s.chats.into_iter().find(|c| c.id == chat_id));
-                (format!("No pude completar ese pedido: {}\n\nCon el registro guardado puedo decirte esto:\n\n{}", brief(&errors::message(&json!(error)), 300), diagnosis(saved.as_ref().and_then(|c| c.runs.last()))), "error")
+                let no_run = saved.as_ref().map(|chat| chat.runs.is_empty()).unwrap_or(true);
+                let friendly_error = if no_run {
+                    lead_model
+                        .as_ref()
+                        .map(|(provider, model)| errors::before_plan(&json!(error), provider, model))
+                        .unwrap_or_else(|| errors::message(&json!(error)))
+                } else {
+                    errors::message(&json!(error))
+                };
+                let diagnosis = if no_run {
+                    "No se creó ningún plan ni se iniciaron tareas. La sesión del Lead quedó guardada en Actividad para consultar el último paso.".into()
+                } else {
+                    diagnosis(saved.as_ref().and_then(|c| c.runs.last()))
+                };
+                (format!("No pude completar ese pedido: {}\n\n{}", brief(&friendly_error, 300), diagnosis), "error")
             }
         };
         let _ = update(&app, |s| {

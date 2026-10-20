@@ -33,6 +33,13 @@ test("autenticación y modelo reciben instrucciones concretas", () => {
   assert.match(readableProviderError({ data: { message: "The upstream request failed unexpectedly" } }), /proveedor de IA no pudo completar/i)
 })
 
+test("el HTTP 402 de OpenCode explica saldo o facturación sin revelar cabeceras", () => {
+  const error = { data: { statusCode: 402, message: "The upstream request failed", responseHeaders: { "set-cookie": "private-session" } } }
+  const text = readableTeamError(error)
+  assert.match(text, /HTTP 402.*saldo o la facturación.*modelo con acceso disponible/)
+  assert.doesNotMatch(text, /private-session|upstream|set-cookie/)
+})
+
 test("mensajes de equipos explican la causa y el siguiente paso sin mostrar errores crudos", () => {
   assert.match(readableTeamError("fatal: not a git repository (or any of the parent directories): .git"), /Git.*no tiene un repositorio Git.*no impide trabajar/i)
   assert.match(readableTeamError("Falta una comprobación satisfactoria observada para cada comando declarado."), /dio pruebas por aprobadas.*falta el registro.*repetir esa verificación/i)

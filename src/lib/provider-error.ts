@@ -18,6 +18,22 @@ function errorParts(value: unknown, depth = 0): string[] {
   return ["code", "type", "message", "data", "error", "response", "responseBody"].flatMap((key) => errorParts(record[key], depth + 1))
 }
 
+function hasPaymentRequired(error: unknown, depth = 0): boolean {
+  if (depth > 8 || error == null) return false
+  if (error instanceof Error) return hasPaymentRequired(error.message, depth + 1)
+  if (typeof error === "string") {
+    const text = error.trim()
+    if (text.startsWith("{") || text.startsWith("[")) {
+      try { return hasPaymentRequired(JSON.parse(text), depth + 1) } catch { return false }
+    }
+    return /\bHTTP\s*402\b|payment_required|payment required|insufficient credits|out of credits|credit balance|insufficient funds/i.test(text)
+  }
+  if (typeof error !== "object" || Array.isArray(error)) return false
+  const record = error as ErrorRecord
+  return ["status", "statusCode", "status_code"].some((key) => record[key] === 402 || record[key] === "402")
+    || ["data", "error", "response", "responseBody"].some((key) => hasPaymentRequired(record[key], depth + 1))
+}
+
 export function isAccountLimitError(error: unknown): boolean {
   return /usage_limit_reached|subscription_sharing_usage_limit_exceeded|usage limit|rate_limit_exceeded|rate limit|quota exceeded|insufficient_quota|monthly spending limit|límite de uso de tu cuenta/i.test(errorParts(error).join(" "))
 }
@@ -25,6 +41,7 @@ export function isAccountLimitError(error: unknown): boolean {
 export function readableProviderError(error: unknown): string {
   const parts = errorParts(error)
   const text = parts.join(" ")
+  if (hasPaymentRequired(error) || /\bHTTP\s*402\b|payment_required|payment required|insufficient credits|out of credits|credit balance|insufficient funds/i.test(text)) return "El proveedor rechazó la solicitud por un requisito de pago o falta de saldo (HTTP 402). Revisá el saldo o la facturación de esa cuenta, o elegí un modelo con acceso disponible. Los cambios ya guardados se conservan."
   if (/does not support images?|image input is not supported|unsupported image|invalid image/i.test(text)) return "El modelo no pudo leer la imagen. Comprobá el archivo y usá un modelo que admita imágenes."
   if (isAccountLimitError(error)) return "La cuenta o el proveedor alcanzó su límite de uso. Esperá a que se restablezca o elegí otro modelo o proveedor y reintentá. Tus cambios se conservan."
   if (/invalid_api_key|authentication_error|unauthorized|token.*expired|expired.*token|incorrect api key/i.test(text)) return "La cuenta de IA necesita volver a conectarse. Revisá la conexión del proveedor y reintentá. Tus cambios se conservan."
@@ -51,7 +68,7 @@ export function readableTeamError(error: unknown): string {
   const parts = errorParts(error)
   const text = parts.join(" ").replace(/[\r\n]+/g, " ").trim()
   const lower = text.toLowerCase()
-  if (isAccountLimitError(error)) return readableProviderError(error)
+  if (isAccountLimitError(error) || hasPaymentRequired(error)) return readableProviderError(error)
   if (/invalid_api_key|authentication_error|unauthorized|token.*expired|model_not_found|unsupported_model|ECONNREFUSED|ECONNRESET|ERR_CONNECTION|connection refused|fetch failed|network error|timed? ?out|overloaded|service unavailable|\bHTTP\s*\d{3}\b/i.test(text)) return readableProviderError(error)
   if (!text || text.startsWith("{") || text.startsWith("[")) return readableProviderError(error)
   if (/fatal: not a git repository|not a git repository|no es un repositorio git/i.test(text)) return "El agente intentó usar Git, pero la carpeta elegida no tiene un repositorio Git. Eso no impide trabajar en esa carpeta: reintentá y, si vuelve a pasar, indicá en el objetivo que no use comandos Git."
