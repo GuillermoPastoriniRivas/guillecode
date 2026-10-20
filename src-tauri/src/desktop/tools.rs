@@ -129,7 +129,8 @@ fn verify(app: &AppHandle, expect: &Value) -> Result<String, String> {
         } else if let Some(page) = expect["pageId"].as_u64() {
             // Scope the read to the calling conversation's assigned Chrome window.
             let session = tasks::current(app).map(|t| t.session).unwrap_or_default();
-            let response = super::browser::call_session(&session, "evaluate_script", json!({"pageId":page, "function":"() => (document.querySelector('main') ?? document.body).innerText.slice(0, 30000)"}))?;
+            let workspace = crate::teams::browser_session(app, &session);
+            let response = super::browser::call_session(&workspace, "evaluate_script", json!({"pageId":page, "function":"() => (document.querySelector('main') ?? document.body).innerText.slice(0, 30000)"}))?;
             if response["isError"].as_bool().unwrap_or(false) { return Err(response.to_string()); }
             let text = response["content"].as_array().map(|a| a.iter().filter_map(|v| v["text"].as_str()).collect::<Vec<_>>().join("\n")).unwrap_or_default();
             Ok(text.contains(arg(expect, "text")))

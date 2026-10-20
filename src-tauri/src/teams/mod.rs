@@ -1,5 +1,6 @@
 mod capture;
 mod attachments;
+mod capabilities;
 mod coordination;
 mod conversation;
 pub mod domain;
@@ -79,11 +80,8 @@ pub fn read(app: &AppHandle) -> Result<Store, String> {
     Ok(result)
 }
 
-pub fn is_team_session(app: &AppHandle, session: &str) -> bool {
-    app.try_state::<TeamsState>()
-        .and_then(|state| {
-            state.store.lock().ok().map(|s| {
-                s.chats.iter().any(|c| c.messages.iter().any(|m| m.session_id.as_deref() == Some(session))) || s.chats.iter().flat_map(|c| &c.runs).any(|r| {
+fn owns_session(c: &Chat, session: &str) -> bool {
+    !session.is_empty() && (c.messages.iter().any(|m| m.session_id.as_deref() == Some(session)) || c.runs.iter().any(|r| {
                     r.plan_session_id.as_deref() == Some(session)
                         || r.closing_sessions.iter().any(|id| id == session)
                         || r.coordination
@@ -93,10 +91,24 @@ pub fn is_team_session(app: &AppHandle, session: &str) -> bool {
                             a.session_id.as_deref() == Some(session)
                                 || a.review_session_id.as_deref() == Some(session)
                         })
-                })
-            })
-        })
-        .unwrap_or(false)
+                }))
+}
+
+pub fn is_team_session(app: &AppHandle, session: &str) -> bool {
+    app.try_state::<TeamsState>().and_then(|state| state.store.lock().ok().map(|s|
+        s.chats.iter().any(|c| owns_session(c, session)))).unwrap_or(false)
+}
+
+/// The native session registry, never model arguments, assigns every team
+/// session to the single Chrome workspace selected for its chat.
+pub(crate) fn browser_session(app: &AppHandle, session: &str) -> String {
+    app.try_state::<TeamsState>().and_then(|state| state.store.lock().ok().and_then(|s|
+        browser_owner(&s, session)))
+        .unwrap_or_else(|| session.to_string())
+}
+
+fn browser_owner(store: &Store, session: &str) -> Option<String> {
+    store.chats.iter().find(|c| owns_session(c, session)).map(|c| format!("team:{}", c.id))
 }
 
 pub fn busy(app: &AppHandle) -> bool {
@@ -218,6 +230,11 @@ pub fn teams_state(app: AppHandle) -> Result<Store, String> {
 #[tauri::command]
 pub fn team_chat_send(app: AppHandle, chat_id: String, text: String, images: Option<Vec<ImageInput>>) -> Result<String, String> {
     conversation::send(app, chat_id, text, images.unwrap_or_default())
+}
+
+#[tauri::command]
+pub async fn team_chat_cancel(app: AppHandle, chat_id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || conversation::cancel(&app, &chat_id)).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -407,10 +424,10 @@ pub fn team_chats_edit(
 
 #[tauri::command]
 pub fn team_runs_start(app: AppHandle, chat_id: String, goal: String) -> Result<String, String> {
-    start_run(app, chat_id, goal, vec![])
+    start_run(app, chat_id, goal, vec![], None)
 }
 
-fn start_run(app: AppHandle, chat_id: String, goal: String, images: Vec<ChatImage>) -> Result<String, String> {
+fn start_run(app: AppHandle, chat_id: String, goal: String, images: Vec<ChatImage>, source_reply: Option<&str>) -> Result<String, String> {
     if goal.trim().is_empty() || goal.len() > 64_000 {
         return Err("Ingresá un objetivo (máximo 64 KB)".into());
     }
@@ -439,6 +456,9 @@ fn start_run(app: AppHandle, chat_id: String, goal: String, images: Vec<ChatImag
         }
         if c.archived {
             return Err("Restaurá el chat antes de continuar".into());
+        }
+        if source_reply.is_some_and(|id| !c.messages.iter().any(|m| m.id == id && m.status == "pending")) {
+            return Err("Pedido del Lead detenido o ya finalizado; no se inició una ejecución nueva".into());
         }
         validate_team(&c.team, &c.skills)?;
         for r in s.chats.iter().flat_map(|c| &c.runs) {
@@ -769,6 +789,29 @@ pub fn team_evidence_open(app: AppHandle, run_id: String) -> Result<(), String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn chrome_workspace_belongs_to_chat_across_lead_workers_and_restart() {
+        let team = domain::tests::team();
+        let agent = team.members[0].clone();
+        let chat: Chat = serde_json::from_value(serde_json::json!({"id":"chat","title":"Original","team":team,"skills":[],"archived":false,"createdAt":1,
+            "messages":[{"id":"m","role":"assistant","text":"","createdAt":1,"status":"pending","runId":null,"sessionId":"conversation"}],
+            "runs":[{"id":"r","goal":"goal","team":team,"skills":[],"status":"running","startedAt":1,"planSessionId":"plan","closingSessions":["closing"],
+                "tasks":[{"id":"t","title":"browse","objective":"browse","assignedAgentId":agent.id,"repository":"C:/demo","dependencies":[],"expectedFiles":[],"acceptanceCriteria":["observed"],
+                    "attempts":[{"id":"a","agent":agent,"sessionId":"worker","reviewSessionId":"review","startedAt":1,"status":"running","summary":"","commands":[]}]}],
+                "summary":"","evidenceDir":"unused","artifacts":[],"baseline":[],"notified":false}]})).unwrap();
+        let mut store = empty(); store.chats.push(chat);
+        for session in ["conversation", "worker", "review", "plan", "closing"] {
+            assert_eq!(browser_owner(&store, session).as_deref(), Some("team:chat"));
+        }
+        assert_eq!(browser_owner(&store, "normal-chat"), None);
+        assert_eq!(browser_owner(&store, ""), None);
+        let mut db = Connection::open_in_memory().unwrap();
+        db.execute_batch("CREATE TABLE team_store(id INTEGER PRIMARY KEY, document TEXT NOT NULL)").unwrap();
+        write_db(&mut db, &store).unwrap();
+        let mut reopened = read_db(&db).unwrap(); recover(&mut reopened);
+        assert_eq!(browser_owner(&reopened, "worker").as_deref(), Some("team:chat"));
+        assert_eq!(browser_owner(&reopened, "conversation").as_deref(), Some("team:chat"));
+    }
     #[test]
     fn persistence_is_versioned_and_keeps_skills() {
         let mut db = Connection::open_in_memory().unwrap();

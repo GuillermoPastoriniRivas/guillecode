@@ -22,11 +22,11 @@ const server = createServer(async (request, response) => {
     response.setHeader("Content-Type", "application/json")
     return response.end(JSON.stringify({ token: `cap-${body.session}`, run: 3, task: null }))
   }
-  if (request.url === "/mcp/desktop") {
+  if (["/mcp/desktop", "/mcp/browser"].includes(request.url)) {
     if (body.id === undefined) { response.writeHead(202); return response.end() }
     let result = {}
     if (body.method === "initialize") result = { protocolVersion: body.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "desktop-test", version: "1" } }
-    if (body.method === "tools/list") result = { tools: [{ name: "status", description: "Read desktop status", inputSchema: { type: "object", properties: {}, additionalProperties: false } }] }
+    if (body.method === "tools/list") result = { tools: [{ name: request.url === "/mcp/browser" ? "list_pages" : "status", description: "Read assigned workspace status", inputSchema: { type: "object", properties: {}, additionalProperties: false } }] }
     if (body.method === "tools/call") { calls.push(body.params); result = { content: [{ type: "text", text: "Window verified" }] } }
     response.setHeader("Content-Type", "application/json")
     return response.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result }))
@@ -34,7 +34,7 @@ const server = createServer(async (request, response) => {
   if (request.url?.endsWith("/responses")) {
     generations++
     const toolOutput = body.input?.some((part) => part.type === "function_call_output")
-    const toolName = body.tools?.find((tool) => tool.name?.startsWith("desktop_"))?.name
+    const toolName = body.tools?.find((tool) => tool.name?.startsWith("browser_"))?.name ?? body.tools?.find((tool) => tool.name?.startsWith("desktop_"))?.name
     const item = toolOutput || !toolName
       ? { type: "message", id: "msg-qa", role: "assistant", content: [{ type: "output_text", text: "Verificado", annotations: [] }], status: "completed" }
       : { type: "function_call", id: "fc-qa", call_id: "call-qa", name: toolName, arguments: "{}", status: "completed" }
@@ -63,7 +63,8 @@ Object.assign(env, {
   OPENCODE_CONFIG_CONTENT: JSON.stringify({
     plugin: [pathToFileURL(join(profile, "desktop-session.js")).href], enabled_providers: ["openai"],
     provider: { openai: { options: { apiKey: "qa-fake-key", baseURL: `${origin}/v1` }, models: { "qa-model": { name: "QA", limit: { context: 200000, output: 32000 } } } } },
-    mcp: { desktop: { type: "remote", url: `${origin}/mcp/desktop`, oauth: false, headers: { Authorization: "Bearer test" } } },
+    mcp: { desktop: { type: "remote", url: `${origin}/mcp/desktop`, oauth: false, headers: { Authorization: "Bearer test" } }, browser: { type: "remote", url: `${origin}/mcp/browser`, oauth: false } },
+    permission: { "desktop_*": "deny", "browser_*": "deny" },
     agent: { title: { disable: true }, summary: { disable: true }, escritorio: { mode: "primary", permission: { "desktop_*": "allow" } } },
   }),
 })
@@ -91,6 +92,21 @@ try {
   assert.ok(bindings.includes(session.id))
   assert.ok(generations <= 3)
   console.log("Real engine → tool.execute.before → strict-schema MCP: authenticated session identity received")
+  const team = await api("POST", "/session", { title: "Equipo · Lead", permission: [
+    { permission: "*", pattern: "*", action: "deny" },
+    { permission: "browser_*", pattern: "*", action: "allow" },
+    { permission: "desktop_*", pattern: "*", action: "allow" },
+  ] })
+  await api("POST", `/session/${team.id}/prompt_async`, { model: { providerID: "openai", modelID: "qa-model" }, agent: "build", tools: { "*": false, browser_list_pages: true, desktop_status: false }, parts: [{ type: "text", text: "[GUILLECODE_TEAM_RUN] Inspect the assigned browser workspace." }] })
+  for (let n = 0; calls.length < 2 && n < 150; n++) await delay(200)
+  assert.equal(calls.length, 2, `${log}\n${JSON.stringify(await api("GET", `/session/${team.id}/message`))}`)
+  assert.equal(calls[1].name, "list_pages")
+  assert.deepEqual(calls[1].arguments._guillecode, { token: `cap-${team.id}`, run: 3 })
+  assert.ok(bindings.includes(team.id))
+  assert.deepEqual(await api("GET", "/permission"), [])
+  const globalHistory = await api("GET", "/experimental/session?limit=100")
+  assert.ok(globalHistory.some(s => s.id === session.id) && globalHistory.some(s => s.id === team.id))
+  console.log("Team build session → explicit MCP tool map → browser tool executes with its authenticated session, despite normal build defaults denying PC/browser")
 } finally {
   child.kill()
   await new Promise((done) => child.exitCode !== null ? done() : child.once("exit", done))

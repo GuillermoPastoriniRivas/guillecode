@@ -429,6 +429,30 @@ export async function loadOtherSessions(): Promise<void> {
   })
 }
 
+// The project-scoped list intentionally hides idle conversations in other
+// folders. The history can query the engine's durable, cross-project index.
+export async function loadGlobalSessions(): Promise<void> {
+  const load = async (archived: boolean) => {
+    const sessions = new Map<string, Session>()
+    let cursor: number | undefined
+    for (let page = 0; page < 20; page++) {
+      const list = await api<Session[]>("GET", "/experimental/session", undefined,
+        { limit: "100", archived: String(archived), ...(cursor === undefined ? {} : { cursor: String(cursor) }) }, { directory: "" })
+      if (!Array.isArray(list)) throw new Error("El motor no devolvió un historial válido.")
+      const previous = sessions.size
+      for (const session of list) sessions.set(session.id, session)
+      if (list.length < 100 || sessions.size === previous) break
+      cursor = list.at(-1)?.time.updated
+      if (cursor === undefined) break
+    }
+    return [...sessions.values()]
+  }
+  const lists = await Promise.all([load(false), load(true)])
+  const index = new Map(lists.flat().map(session => [session.id, session]))
+  for (const session of index.values()) rememberSessionDirectory(session.id, session.directory)
+  useAgent.setState(s => ({ allSessions: sortSessions([...s.allSessions.filter(session => !index.has(session.id)), ...index.values()]) }))
+}
+
 const sessionLoads = new Map<string, Promise<void>>()
 export function ensureSessionView(sessionID: string, force = false): Promise<void> {
   const pending = sessionLoads.get(sessionID)
@@ -1008,7 +1032,7 @@ export function selectSession(id: string | null) {
     } else {
       open = s.openSessionIds.includes(id) ? s.openSessionIds : [...s.openSessionIds, id]
     }
-    return { activeSessionId: id, openSessionIds: open, context: sessionRuntime(id).context ?? [] }
+    return { activeSessionId: id, openSessionIds: open, context: sessionRuntime(id).context ?? [], composerFocus: s.composerFocus + 1 }
   })
   if (id) void ensureSessionView(id)
 }

@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react"
+import { useMemo, useRef, useState } from "react"
 import type { Session } from "@opencode-ai/sdk"
-import { deleteSession, newSession, renameSession, selectSession, sessionInRoot, sessionWaiting, setSessionArchived, useAgent } from "../state/agent"
+import { deleteSession, loadGlobalSessions, newSession, renameSession, selectSession, sessionInRoot, sessionWaiting, setSessionArchived, useAgent } from "../state/agent"
 import { useSessionMark } from "../state/unseen"
 import { useApprovals } from "../state/approvals"
 import { useProject } from "../state/project"
@@ -15,7 +15,7 @@ import { openContextMenu } from "../components/ContextMenu"
 import { confirmAction } from "../components/Dialog"
 import { EmptyState, Icon, IconButton } from "../components/ui"
 
-function SessionRow({ session, depth, childCount }: { session: Session; depth: number; childCount: number }) {
+function SessionRow({ session, depth, childCount, showDirectory = false }: { session: Session; depth: number; childCount: number; showDirectory?: boolean }) {
   const active = useAgent((s) => s.activeSessionId === session.id)
   const mark = useSessionMark(session.id)
   const flash = useAgent((s) => !!s.doneFlash[session.id])
@@ -89,6 +89,7 @@ function SessionRow({ session, depth, childCount }: { session: Session; depth: n
       </span>
       <span className="session-main">
         <span className="session-title">{session.title || "Sin título"}</span>
+        {showDirectory && <span className="session-meta" title={session.directory}>{session.directory}</span>}
         <span className="session-meta">
           {summary && summary.files > 0 && (
             <span className="session-diff">
@@ -117,8 +118,23 @@ function SessionRow({ session, depth, childCount }: { session: Session; depth: n
 }
 
 export function AgentsView() {
-  const sessions = useAgent((s) => s.sessions)
+  const localSessions = useAgent((s) => s.sessions)
+  const allSessions = useAgent((s) => s.allSessions)
+  const root = useProject((s) => s.root)
   const loaded = useAgent((s) => s.sessionsLoaded)
+  const [allFolders, setAllFolders] = useState(false)
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyError, setHistoryError] = useState("")
+  const sessions = allFolders ? allSessions : localSessions
+  const historyRequest = useRef(0)
+  const changeScope = async (value: boolean) => {
+    const request = ++historyRequest.current
+    setAllFolders(value); setHistoryError(""); setHistoryLoading(value)
+    if (!value) return
+    try { await loadGlobalSessions() }
+    catch { if (historyRequest.current === request) setHistoryError("No se pudo cargar el historial de otras carpetas. Las conversaciones guardadas se conservan.") }
+    finally { if (historyRequest.current === request) setHistoryLoading(false) }
+  }
   const [query, setQuery] = useState("")
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [showArchived, setShowArchived] = useState(false)
@@ -171,6 +187,10 @@ export function AgentsView() {
         <Icon name="search" />
         <input placeholder="Filtrar sesiones" value={query} onChange={(e) => setQuery(e.target.value)} />
       </div>
+      <label className="team-check"><input type="checkbox" checked={allFolders} onChange={e => void changeScope(e.target.checked)} />Todas las carpetas</label>
+      {!allFolders && <p className="team-note selectable">Conversaciones en {root || "la carpeta actual"}. Para buscar las anteriores, activá «Todas las carpetas».</p>}
+      {historyLoading && <p role="status" className="team-note">Buscando conversaciones guardadas…</p>}
+      {historyError && <p role="alert" className="team-error">{historyError}</p>}
       <div className="session-list">
         {loaded && tree.roots.length === 0 && (
           <EmptyState icon={showArchived ? "archive" : "comment-discussion"} title={query ? "Sin resultados" : showArchived ? "No hay conversaciones archivadas" : "Todavía no hay sesiones"}>
@@ -187,13 +207,13 @@ export function AgentsView() {
                     <Icon name={expanded[s.id] ? "chevron-down" : "chevron-right"} />
                   </button>
                 )}
-                <SessionRow session={s} depth={0} childCount={kids.length} />
+                <SessionRow session={s} depth={0} childCount={kids.length} showDirectory={allFolders} />
               </div>
-              {expanded[s.id] && kids.map((k) => <SessionRow key={k.id} session={k} depth={1} childCount={0} />)}
+              {expanded[s.id] && kids.map((k) => <SessionRow key={k.id} session={k} depth={1} childCount={0} showDirectory={allFolders} />)}
             </div>
           )
         })}
-        {!showArchived && <OtherFeatureSessions />}
+        {!showArchived && !allFolders && <OtherFeatureSessions />}
       </div>
     </div>
   )

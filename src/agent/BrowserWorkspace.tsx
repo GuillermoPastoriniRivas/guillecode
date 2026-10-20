@@ -9,7 +9,7 @@ type Workspace = { assigned: boolean; missing: boolean; windowId: number | null;
 
 // All tabs in the chosen window belong to the agent's workspace. The Chrome
 // profile (cookies/accounts) is shared; personal tabs should be in other windows.
-export function BrowserWorkspace({ sessionId }: { sessionId: string }) {
+export function BrowserWorkspace({ sessionId, shared = false }: { sessionId: string; shared?: boolean }) {
   const [state, setState] = useState<Workspace | null>(null)
   const [busy, setBusy] = useState(false)
   const [open, setOpen] = useState(false)
@@ -68,12 +68,12 @@ export function BrowserWorkspace({ sessionId }: { sessionId: string }) {
         onClick={() => { setOpen((v) => !v); if (!open) void inspect() }}
       >
         <Icon name="globe" />
-        <span>{busy ? "Consultando browser…" : state?.assigned ? `Browser · ${owned.length} pestañas` : state?.missing ? "Browser: elegí ventana" : runtime.browserWindow !== undefined ? "Browser asignado" : "Elegir browser"}</span>
+        <span>{busy ? "Consultando navegador…" : state?.assigned ? `Navegador · ${owned.length} pestañas` : state?.missing ? "Navegador: elegí ventana" : runtime.browserWindow !== undefined ? "Navegador asignado" : "Elegir navegador"}</span>
       </button>
       {open && (
         <div className="composer-popover">
-          <div className="composer-popover-title">Ventana del browser para esta conversación</div>
-          <p>El agente usará todas sus pestañas. Cookies y cuentas son compartidas.</p>
+          <div className="composer-popover-title">Ventana del navegador para {shared ? "este equipo" : "esta conversación"}</div>
+          <p>{shared ? "El Lead y los especialistas comparten esta ventana y trabajan en pestañas propias. " : "El agente usará todas sus pestañas. "}Cookies y cuentas son compartidas.</p>
           {error && <div role="alert">{error}</div>}
           {!busy && !error && windows.size === 0 && (
             <div className="composer-suggestion-desc">No veo pestañas del browser. Habilitá las DevTools remotas del navegador y volvé a abrir esta lista.</div>

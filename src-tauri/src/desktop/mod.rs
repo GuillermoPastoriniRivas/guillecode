@@ -194,7 +194,7 @@ const PC_PROMPT: &str = "Sos el agente de GuilleCode que maneja la PC del usuari
 
 ";
 
-fn escritorio_prompt() -> String {
+pub(crate) fn escritorio_prompt() -> String {
     let guide = SKILL.trim_start().strip_prefix("---").and_then(|rest| rest.split_once("---")).map(|(_, body)| body).unwrap_or(SKILL);
     format!("{}{}", PC_PROMPT, guide.trim())
 }
@@ -396,7 +396,8 @@ fn call_tool(app: &AppHandle, channel: Channel, name: &str, args: &Value) -> Val
                 if let Err(e) = tasks::flight(app, Some(summary.clone())) { return json!({ "content": [{ "type": "text", "text": e }], "isError": true }); }
             }
             let session = tasks::current(app).map(|t| t.session).unwrap_or_default();
-            match browser::call_session(&session, name, args.clone()) {
+            let workspace = crate::teams::browser_session(app, &session);
+            match browser::call_session(&workspace, name, args.clone()) {
                 Ok(result) => {
                     let failed = result["isError"].as_bool().unwrap_or(false);
                     record(app, "browser", name, &summary, !failed);

@@ -344,6 +344,7 @@ pub fn run() {
             teams::team_chats_edit,
             teams::team_runs_start,
             teams::team_chat_send,
+            teams::team_chat_cancel,
             teams::team_image_read,
             teams::team_runs_control,
             teams::team_tasks_reassign,

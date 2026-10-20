@@ -13,6 +13,7 @@ async function setup(page: Page, open = ["s1", "c1", "s2"]) {
     mutations: [] as Array<{ method: string; path: string; body: unknown; directory: string }>,
     failure: "" as "" | "http" | "unsupported",
     events: [] as unknown[],
+    globalRequests: [] as { directory: string | null; header?: string }[],
   }
   await page.addInitScript(({ root, open }) => {
     const key = root.toLowerCase()
@@ -34,6 +35,7 @@ async function setup(page: Page, open = ["s1", "c1", "s2"]) {
         return null
       },
     } })
+    Object.assign(window, { __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: () => undefined } })
   }, { root, open })
   await page.route("**/test-oc/**", (route) => {
     const request = route.request()
@@ -54,6 +56,10 @@ async function setup(page: Page, open = ["s1", "c1", "s2"]) {
       }
     }
     if (path === "/session") return route.fulfill({ json: state.sessions })
+    if (path === "/experimental/session") {
+      state.globalRequests.push({ directory: new URL(request.url()).searchParams.get("directory"), header: request.headers()["x-opencode-directory"] })
+      return route.fulfill({ json: state.sessions })
+    }
     if (path === "/session/status") return route.fulfill({ json: {} })
     if (path === "/session/s1/message") return route.fulfill({ json: [{
       info: { id: "msg1", sessionID: "s1", role: "user", time: { created: now - 40000 }, agent: "build", model: { providerID: "openai", modelID: "m" } },
@@ -69,6 +75,21 @@ async function setup(page: Page, open = ["s1", "c1", "s2"]) {
 
 const row = (page: Page, title: string) => page.locator(".session-row", { hasText: title })
 const tab = (page: Page, title: string) => page.locator(".agent-tab", { hasText: title })
+
+test("el historial recupera conversaciones de otras carpetas sin cambiar ni borrar las locales", async ({ page }) => {
+  const state = await setup(page)
+  state.sessions.push({ ...session("foreign", "Conversación de otra carpeta"), directory: "E:/otro-proyecto" })
+  await expect(row(page, "Conversación de otra carpeta")).toHaveCount(0)
+  await page.getByLabel("Todas las carpetas", { exact: true }).check()
+  await expect(row(page, "Conversación de otra carpeta")).toBeVisible()
+  await expect(row(page, "Conversación de otra carpeta")).toContainText("E:/otro-proyecto")
+  await expect(row(page, "Conversación vieja")).toBeVisible()
+  expect(state.globalRequests).toHaveLength(2)
+  expect(state.globalRequests.every(r => r.directory === null && !r.header)).toBe(true)
+  await page.getByLabel("Todas las carpetas", { exact: true }).uncheck()
+  await expect(row(page, "Conversación de otra carpeta")).toHaveCount(0)
+  expect(state.mutations).toHaveLength(0)
+})
 
 test("archiva con sus subagentes, persiste al recargar y restaura conservando el historial", async ({ page }) => {
   const state = await setup(page)
