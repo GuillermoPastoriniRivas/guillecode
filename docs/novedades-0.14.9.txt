@@ -1,0 +1,5 @@
+Equipos IA ahora tolera fallos transitorios del motor: las consultas de estado, mensajes, permisos y catálogo se reintentan con esperas cortas, y si se pierde la confirmación de un envío no se repite el pedido aceptado. Un error de IA transitorio puede reintentarse hasta dos veces solo si el motor está inactivo, la respuesta terminó y no hubo herramientas en ese turno. Los problemas de cuenta, saldo, autenticación, contexto o búfer no se recuperan repitiendo la misma solicitud y se explican con claridad.
+
+Cuando algo falla, la interfaz ofrece Continuar lo pendiente y permite preguntarle al Lead qué pasó. Las tareas terminadas se conservan, el trabajo independiente puede seguir aunque otra tarea quede bloqueada, y los casos particulares se explican sin sugerir reintentos inútiles, como un modelo gratuito de Zen restringido a la aplicación OpenCode.
+
+En Configuración podés cambiar el modelo para los siguientes mensajes del chat aunque el primer pedido haya fallado y todavía no exista una ejecución. Las ejecuciones y los intentos anteriores conservan su configuración y el cambio se bloquea mientras el Lead está respondiendo.
