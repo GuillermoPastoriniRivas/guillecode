@@ -98,6 +98,12 @@ async function setup(page: Page) {
       const chat = store.chats.find((c) => c.id === args.id)!
       chat.title = String(args.title); chat.archived = Boolean(args.archived)
     }
+    if (command === "team_chats_model") {
+      const chat = store.chats.find(c => c.id === args.chatId)!
+      const agent = chat.team.members.find(a => a.id === args.agentId)!
+      agent.model = structuredClone(args.model as typeof agent.model)
+      agent.variant = args.variant as string | null
+    }
     await route.fulfill({ json: result })
   })
   await page.route("**/test-oc/**", (route) => {
@@ -246,8 +252,9 @@ test("el equipo abre como chat, envía con Enter y oculta controles técnicos ir
   run.error = "El plan debe contener entre 1 y 100 tareas"
   run.sessionUsage = { plan: { tokens: 100, costUsd: 0 } }
   await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
-  await expect(page.getByRole("status")).toContainText("lo reparará automáticamente")
-  await expect(page.getByRole("button", { name: "Reintentar automáticamente" })).toBeVisible()
+  await expect(page.getByRole("status")).toContainText("lo reparará al continuar")
+  await expect(page.getByRole("button", { name: "Continuar lo pendiente" })).toBeVisible()
+  await expect(page.getByText("Podés preguntarle al Lead qué falló", { exact: false })).toBeVisible()
   await expect(page.getByText("Ajustar límites de esta ejecución")).toHaveCount(0)
   await expect(page.getByText("Cambiar el modelo que falló")).toHaveCount(0)
   await expect(page.getByText("Uso de esta ejecución")).toHaveCount(0)
@@ -273,6 +280,8 @@ test("los errores guardados del proveedor son legibles en chat, tareas y activid
     expect(banner!.height).toBeLessThan(160)
   }
   await page.getByRole("button", { name: "Chat", exact: true }).click()
+  await expect(page.getByText("Reintentar no restablece el saldo", { exact: false })).toBeVisible()
+  await expect(page.getByRole("button", { name: "Continuar lo pendiente" })).toBeVisible()
   await expect(page.getByText("Ajustar límites de esta ejecución")).toHaveCount(0)
   run.tasks = []
   run.error = "fatal: not a git repository (or any of the parent directories): .git"
@@ -454,6 +463,21 @@ test("configuración muestra asignación actual y modelos históricos de cada in
   await backend.getByText("Modelo del intento en curso · API",{exact:true}).click()
   await expect(backend).toContainText("Lead Model")
   await page.screenshot({path:test.info().outputPath("configuracion-modelos-equipo.png")})
+})
+
+test("se puede cambiar el modelo del Lead tras un rechazo sin recrear el chat", async ({ page }) => {
+  const { store, calls } = await setup(page)
+  await createTeam(page)
+  const chat = store.chats[0]
+  chat.messages = [{ id: "failed", role: "assistant", text: "Ese modelo gratuito de OpenCode Zen está restringido a la aplicación OpenCode. Elegí otro modelo en Configuración.", status: "error", createdAt: Date.now(), sessionId: "failed-lead", runId: null }]
+  await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
+  await page.getByRole("button", { name: "Configuración del equipo", exact: true }).click()
+  await page.getByLabel("Modelo de Team Lead para nuevos mensajes", { exact: true }).selectOption("openai/worker")
+  await expect(page.getByLabel("Modelo de Team Lead para nuevos mensajes", { exact: true })).toHaveValue("openai/worker")
+  expect(chat.runs).toHaveLength(0)
+  expect(chat.messages[0].status).toBe("error")
+  expect(calls.find(c => c.command === "team_chats_model")?.args).toMatchObject({ chatId: chat.id, agentId: chat.team.leadAgentId, model: { providerID: "openai", modelID: "worker" }, variant: null })
+  await page.screenshot({ path: test.info().outputPath("cambiar-lead-despues-de-rechazo.png") })
 })
 
 test("el navegador se asigna al chat de equipo y conserva el mismo destino al reabrir", async ({ page }) => {

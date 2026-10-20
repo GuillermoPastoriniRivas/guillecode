@@ -2,6 +2,7 @@ import { useAgent } from "../state/agent"
 import { modelKey } from "../lib/opencode"
 import { variantLabel } from "../state/agent"
 import type { Employee, Team, TeamRun } from "./types"
+import { teamCall } from "../state/teams"
 
 function ModelDetails({ agent }: { agent: Employee }) {
   const models = useAgent(s => s.models)
@@ -14,7 +15,8 @@ function ModelDetails({ agent }: { agent: Employee }) {
   </dl>
 }
 
-export function TeamSettings({ team, run }: { team: Team; run?: TeamRun }) {
+export function TeamSettings({ team, run, chatId, pending }: { team: Team; run?: TeamRun; chatId: string; pending: boolean }) {
+  const models = useAgent(s => s.models)
   const roster = run?.team ?? team
   return <section className="team-settings">
     <h3>Configuración del equipo</h3>
@@ -26,6 +28,14 @@ export function TeamSettings({ team, run }: { team: Team; run?: TeamRun }) {
       <ModelDetails agent={agent} />
       {run?.tasks.filter(t => t.assignedAgentId === agent.id).flatMap(t => t.attempts.filter(a => ["running", "verifying", "waiting_dependency"].includes(a.status)).map(a => <details key={a.id}><summary>Modelo del intento en curso · {t.title}</summary><ModelDetails agent={a.agent} /></details>))}
     </article>)}
+    <details className="team-card" open={!run}><summary>Modelo para los próximos mensajes</summary>
+      <p className="team-note">Se aplica a tus siguientes pedidos en este chat. Los modelos de las ejecuciones e intentos anteriores se conservan. En modo automático, los nuevos especialistas heredan el modelo del Lead.</p>
+      {team.members.map(agent => <label key={agent.id}>{agent.name}<select disabled={pending} aria-label={`Modelo de ${agent.name} para nuevos mensajes`} value={modelKey(agent.model)} onChange={e => {
+        const model = models.find(m => modelKey(m) === e.target.value)
+        if (model) void teamCall("team_chats_model", { chatId, agentId: agent.id, model: { providerID: model.providerID, modelID: model.modelID }, variant: null })
+      }}><option value={modelKey(agent.model)}>{models.find(m => modelKey(m) === modelKey(agent.model))?.name ?? modelKey(agent.model)}</option>{models.filter(m => modelKey(m) !== modelKey(agent.model)).map(m => <option key={modelKey(m)} value={modelKey(m)}>{m.providerName} · {m.name}</option>)}</select></label>)}
+      {pending && <p className="team-note">Esperá o detené la respuesta del Lead para cambiar el modelo.</p>}
+    </details>
     {run && <details className="team-card"><summary>Modelos usados en los intentos</summary>{run.tasks.map(task => <section key={task.id}><h4>{task.title}</h4>{task.attempts.length ? task.attempts.map((attempt, i) => <details key={attempt.id}><summary>Intento {i + 1} · {attempt.agent.name}</summary><ModelDetails agent={attempt.agent} /></details>) : <p className="team-note">Todavía no comenzó.</p>}</section>)}</details>}
   </section>
 }

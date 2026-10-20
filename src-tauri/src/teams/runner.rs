@@ -55,6 +55,33 @@ pub fn unsettled(r: &Run) -> bool {
         })
 }
 
+fn task_unsettled(task: &Task) -> bool {
+    task.attempts.iter().any(|a| a.finished_at.is_none() && (a.session_id.is_some() || a.review_session_id.is_some()))
+}
+
+// A continuation must never consume the previous turn's final reply while the
+// engine is still accepting the new prompt (including a lost acknowledgement).
+pub(super) fn assistant_ids(messages: &Value) -> HashSet<String> {
+    messages.as_array().into_iter().flatten()
+        .filter(|m| m["info"]["role"] == "assistant")
+        .filter_map(|m| m["info"]["id"].as_str().map(String::from)).collect()
+}
+
+pub(super) fn new_assistant<'a>(messages: &'a Value, previous: &HashSet<String>) -> Option<&'a Value> {
+    messages.as_array()?.iter().rev().find(|m| {
+        m["info"]["role"] == "assistant"
+            && m["info"]["id"].as_str().is_some_and(|id| !previous.contains(id))
+    })
+}
+
+pub(super) fn retry_before_tools(messages: &Value, previous: &HashSet<String>, last: &Value, retries: usize) -> bool {
+    retries < 2 && super::errors::retryable(&last["info"]["error"])
+        && last["info"]["time"]["completed"].as_i64().is_some()
+        && messages.as_array().is_some_and(|items| items.iter()
+            .filter(|m| m["info"]["role"] == "assistant" && !m["info"]["id"].as_str().is_some_and(|id| previous.contains(id)))
+            .all(|m| m["info"]["id"].is_string() && m["parts"].as_array().is_some_and(|parts| !parts.iter().any(|p| p["type"] == "tool"))))
+}
+
 fn notify(app: &AppHandle, r: &Run, done: bool) {
     if cfg!(test) {
         let _ = app.emit("team://test-notice", json!({"runId":r.id,"done":done}));
@@ -121,7 +148,7 @@ pub(super) fn test_client(app: &AppHandle, repo: &str) -> Result<Opencode, Strin
 }
 
 fn check_model(client: &Opencode, employee: &Employee) -> Result<(), String> {
-    let providers = client.get("/config/providers")?;
+    let providers = client.get_resilient("/config/providers")?;
     check_model_catalog(&providers, employee)
 }
 
@@ -179,7 +206,7 @@ fn ready_tasks(r: &Run, running: &HashSet<String>) -> Result<Vec<String>, String
         let live: Vec<_> = r
             .tasks
             .iter()
-            .filter(|v| running.contains(&v.id) || dispatch.contains(&v.id))
+            .filter(|v| running.contains(&v.id) || dispatch.contains(&v.id) || (v.id != t.id && task_unsettled(v)))
             .collect();
         if live.iter().any(|v| task_conflict(v, t))
             || live.iter().filter(|v| v.assigned_agent_id == a.id).count() >= a.max_concurrent_tasks
@@ -317,7 +344,7 @@ pub(super) fn execute(
     readonly: bool,
 ) -> Result<Value, String> {
     enforce_limits(&run(app, run_id)?)?;
-    let ids = client.get("/experimental/tool/ids")?;
+    let ids = client.get_resilient("/experimental/tool/ids")?;
     let mode = if readonly { super::capabilities::Mode::ReadOnly } else { super::capabilities::Mode::Worker };
     let tools = super::capabilities::tool_map(&ids, employee, mode)?;
     if run(app, run_id)?.status == "cancelling" {
@@ -333,6 +360,7 @@ pub(super) fn execute(
     if let Some(v) = employee.variant.as_ref().filter(|v| !v.is_empty()) {
         body["variant"] = json!(v);
     }
+    let mut previous = assistant_ids(&client.get_resilient(&format!("/session/{}/message", session))?);
     // The session ID has already been durably committed by the caller.
     if app.try_state::<crate::desktop::tasks::Tasks>().is_some() {
         update_run(app, run_id, |r| {
@@ -341,7 +369,13 @@ pub(super) fn execute(
             Ok(())
         })?;
     }
-    client.post(&format!("/session/{}/prompt_async", session), body)?;
+    if run(app, run_id)?.status == "cancelling" { return Err("Cancelación solicitada antes de enviar".into()); }
+    let mut retries = 0;
+    let mut send_error = match client.post(&format!("/session/{}/prompt_async", session), body.clone()) {
+        Ok(_) => None,
+        Err(error) if crate::oc::transient_read_error(&error) => Some(error),
+        Err(error) => return Err(error),
+    };
     let start = Instant::now();
     let mut waiting = false;
     loop {
@@ -356,8 +390,8 @@ pub(super) fn execute(
             }
             .into());
         }
-        let statuses = client.get("/session/status")?;
-        let live_messages = client.get(&format!("/session/{}/message", session))?;
+        let statuses = client.get_resilient("/session/status")?;
+        let live_messages = client.get_resilient(&format!("/session/{}/message", session))?;
         record_usage(app, run_id, session, &live_messages)?;
         if let Err(e) = enforce_limits(&run(app, run_id)?) {
             stop(app, client, session)?;
@@ -372,7 +406,7 @@ pub(super) fn execute(
             .as_str()
             .map(|s| s != "idle")
             .unwrap_or(false);
-        let requests = client.get("/permission")?;
+        let requests = client.get_resilient("/permission")?;
         let awaiting = requests
             .as_array()
             .into_iter()
@@ -395,12 +429,28 @@ pub(super) fn execute(
         if busy || awaiting {
             continue;
         }
-        let messages = client.get(&format!("/session/{}/message", session))?;
-        let last = messages
-            .as_array()
-            .and_then(|v| v.iter().rev().find(|m| m["info"]["role"] == "assistant"));
+        let messages = live_messages;
+        let last = new_assistant(&messages, &previous);
         if let Some(last) = last {
             if last["info"]["error"].is_object() {
+                if retry_before_tools(&messages, &previous, last, retries) {
+                    retries += 1;
+                    std::thread::sleep(Duration::from_secs(2 * retries as u64));
+                    let state = run(app, run_id)?;
+                    enforce_limits(&state)?;
+                    if state.status == "cancelling" { continue; }
+                    previous = assistant_ids(&messages);
+                    send_error = match client.post(&format!("/session/{}/prompt_async", session), body.clone()) {
+                        Ok(_) => None,
+                        Err(error) if crate::oc::transient_read_error(&error) => Some(error),
+                        Err(error) => return Err(error),
+                    };
+                    update_run(app, run_id, |r| {
+                        r.configuration_changes.push(json!({"kind":"automaticInferenceRetry","at":now(),"agent":employee.id,"sessionId":session,"attempt":retries,"reason":"Error transitorio antes de ejecutar herramientas"}));
+                        Ok(())
+                    })?;
+                    continue;
+                }
                 return Err(super::errors::message(&last["info"]["error"]));
             }
             // An idle/missing status alone is not evidence of a completed response.
@@ -416,7 +466,9 @@ pub(super) fn execute(
             }
         }
         if start.elapsed() > Duration::from_secs(90) && last.is_none() {
-            return Err("La sesión quedó inactiva sin respuesta final".into());
+            return Err(if send_error.is_some() {
+                "Se cortó la conexión al enviar el pedido y no llegó una respuesta nueva. No reenviamos el pedido para evitar repetir acciones. Los cambios y la sesión se conservan; podés consultar al Lead qué pasó y reanudar desde el estado actual."
+            } else { "La sesión quedó inactiva sin respuesta final" }.into());
         }
     }
 }
@@ -499,7 +551,7 @@ pub(super) fn stop(app: &AppHandle, client: &Opencode, session: &str) -> Result<
     desktop?;
     aborted?;
     for _ in 0..15 {
-        let states = client.get("/session/status")?;
+        let states = client.get_resilient("/session/status")?;
         if !states.is_object() {
             return Err("No se pudo confirmar la detención".into());
         }
@@ -828,7 +880,7 @@ fn worker(app: &AppHandle, run_id: &str, task_id: &str) -> Result<(), String> {
     let prompt = format!("{}\nROL: {} ({})\nINSTRUCCIONES: {}\nSKILLS HABILITADAS:\n{}\nOBJETIVO GENERAL: {}\nTAREA: {}\nCRITERIOS: {}\nCARPETA AUTORIZADA: {}\nARCHIVOS ESPERADOS (respetar la propiedad de escritura): {}\nCONTRATOS/DEPENDENCIAS: {}\nFEEDBACK PREVIO: {}\nNo alteres los cambios preexistentes. Leé archivos antes de escribirlos. Ejecutá el pedido con las herramientas disponibles y verificá el resultado. Para código, corré las pruebas pertinentes con bash; para una tarea puramente de web o interfaz sin archivos esperados, comprobá el estado final con herramientas de observación y dejá checks vacío. No uses herramientas externas para saltar permisos de bash. Si no podés comprobar, devolvé blocked con motivo. Devolvé SOLO JSON: {{\"status\":\"completed|waiting_dependency|blocked|failed\",\"summary\":\"implementación, archivos modificados y resultados\",\"checks\":[\"comando EXACTO realmente ejecutado\"],\"limitations\":[\"limitaciones reales\"]}}", POLICY, a.name, a.role, a.instructions, skills_prompt(&r,&a), r.goal,t.objective,t.acceptance_criteria.join("; "),t.repository,t.expected_files.join(", "),serde_json::to_string(&deps).map_err(|e| e.to_string())?,feedback);
     let prompt = format!("{}\nESTADO DEL EQUIPO (IDs para pedidos al Lead): {}\nPROPIEDAD DE ESCRITURA: {}\nCOORDINACIÓN CON EL LEAD: {}\nOtros agentes trabajan simultáneamente. Solo escribí en writePaths cuando no esté vacío; no uses bash para modificar archivos ajenos. Podés leer los contratos de otros. Avanzá en todo lo independiente sin esperar a que termine otro agente. Si necesitás algo de otro, devolvé status=waiting_dependency y request={{message:pedido concreto,taskIds:[IDs de tareas relacionadas]}}; no lo trates como fallo. El Lead revisará archivos y el estado real, y continuará ESTA sesión con su respuesta. No inventes contratos como si estuvieran implementados.", prompt, serde_json::to_string(&r.tasks.iter().map(|v| json!({"id":v.id,"title":v.title,"agentId":v.assigned_agent_id,"status":v.status,"writePaths":v.write_paths})).collect::<Vec<_>>()).unwrap_or_default(), serde_json::to_string(&t.write_paths).unwrap_or_default(), serde_json::to_string(&r.coordination).unwrap_or_default());
     let messages = if recovering {
-        let history = client.get(&format!("/session/{}/message", session))?;
+        let history = client.get_resilient(&format!("/session/{}/message", session))?;
         if parse_json::<WorkerResult>(&final_text(&history))
             .map(|r| r.status == "completed")
             .unwrap_or(false)
@@ -1031,13 +1083,13 @@ pub fn reconcile(app: &AppHandle, r: &Run, abort: bool) -> Result<(), String> {
         }))
     {
         let client = client(app, repo)?;
-        let state = client.get("/session/status")?;
+        let state = client.get_resilient("/session/status")?;
         if !state.is_object() {
             return Err("No se pudo reconciliar el motor".into());
         }
         // Prove the session still exists, even if status omitted idle sessions.
-        client.get(&format!("/session/{}", session))?;
-        client.get(&format!("/session/{}/message", session))?;
+        client.get_resilient(&format!("/session/{}", session))?;
+        client.get_resilient(&format!("/session/{}/message", session))?;
         let busy = state[session]["type"]
             .as_str()
             .map(|s| s != "idle")
@@ -1055,7 +1107,7 @@ pub fn reconcile(app: &AppHandle, r: &Run, abort: bool) -> Result<(), String> {
     if r.tasks.is_empty() && !abort {
         if let Some(session) = &r.plan_session_id {
             let messages = client(app, &r.team.allowed_repositories[0])?
-                .get(&format!("/session/{}/message", session))?;
+                .get_resilient(&format!("/session/{}/message", session))?;
             let text = final_text(&messages);
             if let Ok(plan) = parse_json::<Plan>(&text) {
                 if super::staffing::with_agents(&r.team, &plan.agents, &r.skills)
@@ -1078,7 +1130,7 @@ pub fn reconcile(app: &AppHandle, r: &Run, abort: bool) -> Result<(), String> {
             if a.finished_at.is_none() {
                 if let Some(session) = &a.session_id {
                     let messages = client(app, &t.repository)?
-                        .get(&format!("/session/{}/message", session))?;
+                        .get_resilient(&format!("/session/{}/message", session))?;
                     recovered.push((
                         a.id.clone(),
                         evidence::sanitize(&final_text(&messages)),
@@ -1330,6 +1382,7 @@ fn schedule(app: &AppHandle, id: &str) -> Result<(), String> {
                     .find(|t| t.id == task_id)
                     .ok_or("Tarea inexistente")?;
                 let mut settled = true;
+                let mut history = None;
                 if let Some(a) = task.attempts.last() {
                     let c = client(app, &task.repository)?;
                     for session in a.session_id.iter().chain(a.review_session_id.iter()) {
@@ -1337,12 +1390,23 @@ fn schedule(app: &AppHandle, id: &str) -> Result<(), String> {
                             settled = false;
                         }
                     }
+                    if let Some(session) = &a.session_id {
+                        history = c.get_resilient(&format!("/session/{}/message", session)).ok();
+                    }
                 }
                 attempt_update(app, id, &task_id, |t, a| {
                     t.status = "blocked".into();
                     t.error = Some(super::errors::message(&json!(error)));
                     a.status = "blocked".into();
                     a.error = t.error.clone();
+                    if let Some(messages) = &history {
+                        a.commands = observed_commands(messages);
+                        a.observations = observed_interactions(messages);
+                        if let Ok(result) = parse_json::<WorkerResult>(&final_text(messages)) {
+                            a.summary = evidence::sanitize(&result.summary);
+                            a.declared_checks = result.checks;
+                        }
+                    }
                     if settled {
                         a.finished_at = Some(now());
                     }
@@ -1373,20 +1437,6 @@ fn schedule(app: &AppHandle, id: &str) -> Result<(), String> {
                 Ok(())
             })?;
             return Ok(());
-        }
-        if r.tasks.iter().any(|t| t.status == "blocked")
-            && workers.is_empty()
-            && coordinator.is_none()
-        {
-            return Err(r
-                .tasks
-                .iter()
-                .find_map(|t| t.error.clone())
-                .unwrap_or("Tarea bloqueada".into()));
-        }
-        if r.tasks.iter().any(|t| t.status == "blocked") {
-            std::thread::sleep(Duration::from_millis(500));
-            continue;
         }
         if r.status == "paused" || r.status == "cancelling" {
             std::thread::sleep(Duration::from_millis(500));
@@ -1444,7 +1494,8 @@ fn schedule(app: &AppHandle, id: &str) -> Result<(), String> {
         }
         let dispatch = ready_tasks(&r, &workers.keys().cloned().collect())?;
         if dispatch.is_empty() && workers.is_empty() && coordinator.is_none() {
-            return Err("No hay tareas que puedan avanzar. El Lead debe revisar las dependencias pendientes".into());
+            return Err(r.tasks.iter().filter(|t| t.status == "blocked").find_map(|t| t.error.clone())
+                .unwrap_or("No hay tareas que puedan avanzar. El Lead debe revisar las dependencias pendientes".into()));
         }
         for task_id in dispatch {
             let (app, id) = (app.clone(), id.to_string());
@@ -1503,6 +1554,61 @@ fn schedule(app: &AppHandle, id: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inference_retry_is_bounded_and_never_replays_a_turn_with_tools() {
+        let error = json!({"name":"APIError","data":{"message":"temporary unavailable","isRetryable":true,"statusCode":503}});
+        let failed = json!({"info":{"id":"failed","role":"assistant","error":error,"time":{"completed":1}},"parts":[]});
+        let previous = HashSet::from(["old".into()]);
+        let mut messages = json!([
+            {"info":{"id":"old","role":"assistant"},"parts":[{"type":"tool"}]}, failed
+        ]);
+        assert!(retry_before_tools(&messages, &previous, &failed, 0));
+        assert!(!retry_before_tools(&messages, &previous, &failed, 2));
+        for status in ["pending", "running", "completed", "error"] {
+            messages.as_array_mut().unwrap().insert(1, json!({"info":{"id":"effect","role":"assistant"},"parts":[{"type":"tool","state":{"status":status}}]}));
+            assert!(!retry_before_tools(&messages, &previous, &failed, 0));
+            messages.as_array_mut().unwrap().remove(1);
+        }
+        let mut unfinished = failed.clone();
+        unfinished["info"]["time"]["completed"] = Value::Null;
+        assert!(!retry_before_tools(&messages, &previous, &unfinished, 0));
+        for (message, code) in [("usage_limit_reached", 503), ("insufficient credits", 503), ("exceeded request buffer limit while retrying upstream", 507), ("rejected", 401), ("rate_limit_exceeded", 429)] {
+            let mut permanent = failed.clone();
+            permanent["info"]["error"]["data"]["message"] = json!(message);
+            permanent["info"]["error"]["data"]["statusCode"] = json!(code);
+            assert!(!retry_before_tools(&json!([permanent]), &HashSet::new(), &permanent, 0));
+        }
+    }
+
+    #[test]
+    fn continuation_waits_for_its_own_response_including_after_lost_ack() {
+        let old = json!([{"info":{"id":"old","role":"assistant","finish":"stop","time":{"completed":1}}}]);
+        let previous = assistant_ids(&old);
+        assert!(new_assistant(&old, &previous).is_none());
+        let intermediate = json!([
+            {"info":{"id":"old","role":"assistant","finish":"stop","time":{"completed":1}}},
+            {"info":{"id":"user","role":"user"}},
+            {"info":{"id":"tool-turn","role":"assistant","finish":"tool-calls","time":{"completed":2}}}
+        ]);
+        assert_eq!(new_assistant(&intermediate, &previous).unwrap()["info"]["finish"], "tool-calls");
+        let mut completed = intermediate;
+        completed.as_array_mut().unwrap().push(json!({"info":{"id":"new","role":"assistant","finish":"stop","time":{"completed":3}}}));
+        assert_eq!(new_assistant(&completed, &previous).unwrap()["info"]["id"], "new");
+        assert!(new_assistant(&json!([{"info":{"role":"assistant","finish":"stop"}}]), &previous).is_none());
+    }
+
+    #[test]
+    fn blocked_work_only_holds_dependencies_and_unsettled_file_locks() {
+        let mut r: Run = serde_json::from_value(json!({"id":"r","goal":"g","team":super::super::domain::tests::team(),"skills":[],"status":"running","startedAt":0,"tasks":[],"summary":"","evidenceDir":"unused","artifacts":[],"baseline":[],"notified":false})).unwrap();
+        r.team.members[0].max_concurrent_tasks = 4;
+        r.tasks = ["blocked", "overlapping", "independent", "dependent"].iter().map(|id| serde_json::from_value(json!({"id":id,"title":id,"objective":id,"assignedAgentId":"lead","repository":"D:/repo","dependencies":if *id == "dependent" {vec!["blocked"]} else {vec![]},"expectedFiles":[],"writePaths":[if *id == "independent" {"web/"} else {"api/"}],"acceptanceCriteria":["check"]})).unwrap()).collect();
+        r.tasks[0].status = "blocked".into();
+        r.tasks[0].attempts.push(serde_json::from_value(json!({"id":"a","agent":r.team.members[0],"sessionId":"uncertain","startedAt":0,"status":"blocked","summary":"","commands":[]})).unwrap());
+        assert_eq!(ready_tasks(&r, &HashSet::new()).unwrap(), vec!["independent"]);
+        r.tasks[0].attempts[0].finished_at = Some(1);
+        assert_eq!(ready_tasks(&r, &HashSet::new()).unwrap(), vec!["overlapping", "independent"]);
+    }
     #[test]
     fn ui_tasks_require_real_completed_observations_and_do_not_replace_code_checks() {
         let mut task: Task = serde_json::from_value(json!({"id":"t","title":"inspect","objective":"inspect","assignedAgentId":"lead","repository":"C:/demo","dependencies":[],"expectedFiles":[],"acceptanceCriteria":["observed page"]})).unwrap();

@@ -1,5 +1,19 @@
 use serde_json::Value;
 
+pub(super) fn retryable(value: &Value) -> bool {
+    if value["name"] != "APIError" || value["data"]["isRetryable"] != true {
+        return false;
+    }
+    let mut messages = vec![];
+    parts(value, 0, &mut messages);
+    let text = messages.join(" ").to_lowercase();
+    // Some providers call quota/payment errors retryable. Replaying those is
+    // ineffective, as is replaying an oversized request without compaction.
+    !payment_required(value, 0)
+        && !["usage_limit", "usage limit", "rate_limit", "rate limit", "quota", "spending limit", "payment", "credits", "saldo", "invalid_api_key", "unauthorized", "authentication", "token expired", "model_not_found", "unsupported_model", "context", "request buffer", "retry_buffer", "payload too large"].iter().any(|s| text.contains(s))
+        && ![400, 401, 402, 403, 404, 413, 429, 507].iter().any(|status| value["data"]["statusCode"].as_i64() == Some(*status))
+}
+
 fn parts(value: &Value, depth: usize, out: &mut Vec<String>) {
     if depth > 8 {
         return;
@@ -38,6 +52,9 @@ pub fn message(value: &Value) -> String {
     let mut messages = vec![];
     parts(value, 0, &mut messages);
     let text = messages.join(" ").to_lowercase();
+    if text.contains("free tier can only be used from within opencode") {
+        return "Ese modelo gratuito de OpenCode Zen está restringido a la aplicación OpenCode. El proveedor lo rechaza desde GuilleCode. Elegí otro modelo habilitado para tu cuenta en Configuración; reintentar el mismo modelo no lo habilita.".into();
+    }
     if payment_required(value, 0)
         || [
             "payment_required",
@@ -235,6 +252,17 @@ fn payment_required(value: &Value, depth: usize) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn zen_app_only_model_explains_permanent_rejection() {
+        let error = json!({"name":"APIError","data":{"isRetryable":false,"statusCode":403,"message":"OpenCode's free tier can only be used from within OpenCode. Download it at https://opencode.ai and keep building.","responseHeaders":{"set-cookie":"private"}}});
+        let human = message(&error);
+        assert!(human.contains("restringido a la aplicación OpenCode"));
+        assert!(human.contains("Elegí otro modelo"));
+        assert!(!human.contains("https://") && !human.contains("private"));
+        assert_eq!(before_plan(&error, "opencode", "example-free"), human);
+        assert!(!retryable(&error));
+    }
 
     #[test]
     fn quota_error_omits_transport_metadata() {

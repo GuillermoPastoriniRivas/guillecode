@@ -507,4 +507,60 @@ fn automatic_team_scenario(handle: &tauri::AppHandle, repo: &str) {
     assert_eq!(interrupted.chats[0].messages[7].status, "interrupted");
     assert!(interrupted.chats[0].messages[7].text.contains("no se repitió"));
     assert_eq!(interrupted.chats[0].runs.len(), 1);
+    if std::env::var("GUILLE_TEAM_TEST_TRANSPORT").as_deref() == Ok("1") {
+        // A real blocked task must not prevent a later independent task from
+        // getting a worker when there is only one execution slot.
+        let mut followup = result.clone();
+        followup.id = super::domain::id();
+        followup.status = "running".into();
+        followup.finished_at = None;
+        followup.notified = false;
+        followup.team.max_parallel_tasks = 1;
+        followup.evidence_dir = format!("{}-independent", result.evidence_dir);
+        followup.baseline = evidence::baseline(&followup.team.allowed_repositories, std::path::Path::new(&followup.evidence_dir)).unwrap();
+        followup.artifacts.clear();
+        followup.observations.clear();
+        evidence::initial(&mut followup).unwrap();
+        followup.tasks[0].status = "blocked".into();
+        followup.tasks[0].error = Some("La cuenta de este integrante necesita atención".into());
+        followup.tasks[2].status = "pending".into();
+        followup.tasks[2].attempts.clear();
+        let retained_attempt = followup.tasks[1].attempts[0].id.clone();
+        let followup_id = followup.id.clone();
+        update(handle, |store| { store.chats[0].runs.push(followup); Ok(()) }).unwrap();
+        runner::launch(handle, &followup_id);
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let final_run = loop {
+            for permission in client.get_resilient("/permission").unwrap().as_array().into_iter().flatten() {
+                client.post(&format!("/permission/{}/reply", permission["id"].as_str().unwrap()), serde_json::json!({"reply":"once"})).unwrap();
+            }
+            let current = run(handle, &followup_id).unwrap();
+            if !active(&current.status) { break current; }
+            assert!(Instant::now() < deadline, "independent task did not advance: {:?}", current);
+            std::thread::sleep(Duration::from_millis(100));
+        };
+        assert_eq!(final_run.status, "blocked");
+        assert_eq!(final_run.tasks[2].status, "completed", "independent work must finish before requiring intervention: {:?}", final_run.tasks[2]);
+        assert_eq!(final_run.tasks[1].attempts.len(), 1);
+        assert_eq!(final_run.tasks[1].attempts[0].id, retained_attempt, "completed work must not be replayed");
+        let failed_id = team_chat_send(handle.clone(), chat.id.clone(), "Forzar rechazo Zen".into(), None).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let store = read(handle).unwrap();
+            let failed = store.chats[0].messages.iter().find(|m| m.id == failed_id).unwrap();
+            if failed.status != "pending" {
+                assert_eq!(failed.status, "error");
+                assert!(failed.text.contains("restringido a la aplicación OpenCode"), "{}", failed.text);
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let question = team_chat_send(handle.clone(), chat.id.clone(), "¿Qué falló?".into(), None).unwrap();
+        let explanation = wait_reply(&question);
+        assert!(explanation.session_id.is_none(), "explaining saved failure must not use inference");
+        assert!(explanation.text.contains("restringido a la aplicación OpenCode"));
+        team_chats_model(handle.clone(), chat.id.clone(), chat.team.lead_agent_id.clone(), ModelRef { provider_id:"openai".into(), model_id:"qa-lead".into() }, None).unwrap();
+        assert_eq!(run(handle, &followup_id).unwrap().tasks[1].attempts[0].id, retained_attempt);
+    }
 }
