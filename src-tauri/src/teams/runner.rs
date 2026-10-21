@@ -98,7 +98,7 @@ fn notify(app: &AppHandle, r: &Run, done: bool) {
     );
     let body = if done {
         format!(
-            "Terminamos el trabajo y sus comprobaciones. Evidencias: {}.",
+            "El equipo terminó el trabajo y sus pruebas. Revisá la entrega y decime «trabajo completado» o pedime mejoras. Evidencias: {}.",
             r.evidence_dir
         )
     } else {
@@ -1209,7 +1209,7 @@ fn closeout(app: &AppHandle, id: &str) -> Result<bool, String> {
         Ok(())
     })?;
     let outcomes: Vec<_> = r.tasks.iter().map(|t| json!({"id":t.id,"title":t.title,"criteria":t.acceptance_criteria,"attempt":t.attempts.last()})).collect();
-    let prompt = format!("{}\nSos el Lead de cierre. Verificá que el OBJETIVO GENERAL completo se cumplió y que hay comprobaciones suficientes de integración, incluso sin un empleado QA. Las revisiones individuales no bastan si faltan flujos o contratos. Revisá evidencia observada y archivos de lectura disponibles. No inventes verificaciones. Podés crear tareas de corrección, integración o verificación asignadas a miembros existentes.\nOBJETIVO: {}\nEQUIPO: {}\nENTREGAS Y COMANDOS REALES: {}\nDIFF: {}\nRespondé SOLO JSON: {{\"status\":\"approved|changes_requested|review_error\",\"summary\":\"resumen verificable o defectos concretos\",\"criteriaSatisfied\":true,\"tasks\":[]}}. Si pedís cambios, tasks debe contener tareas NUEVAS con IDs únicos y el mismo contrato del plan: id,title,objective,assignedAgentId,repository,dependencies,expectedFiles,acceptanceCriteria. No apruebes si hay trabajo pendiente. Si falta implementar o verificar algo del objetivo, asigná tareas de corrección al equipo; no lo delegues al usuario como QA manual pendiente. La aprobación personal del usuario es opcional y no frena la entrega técnica. Las capturas no disponibles son una limitación explícita, no prueba visual.",POLICY,r.goal,serde_json::to_string(&r.team).map_err(|e|e.to_string())?,serde_json::to_string(&outcomes).map_err(|e|e.to_string())?,evidence::changes(&r)?);
+    let prompt = format!("{}\nSos el Lead de cierre. Verificá que el OBJETIVO GENERAL completo se cumplió y que hay comprobaciones suficientes de integración, incluso sin un empleado QA. Las revisiones individuales no bastan si faltan flujos o contratos. Revisá evidencia observada y archivos de lectura disponibles. No inventes verificaciones. Podés crear tareas de corrección, integración o verificación asignadas a miembros existentes.\nOBJETIVO: {}\nEQUIPO: {}\nENTREGAS Y COMANDOS REALES: {}\nDIFF: {}\nRespondé SOLO JSON: {{\"status\":\"approved|changes_requested|review_error\",\"summary\":\"resumen verificable o defectos concretos\",\"criteriaSatisfied\":true,\"tasks\":[]}}. Si pedís cambios, tasks debe contener tareas NUEVAS con IDs únicos y el mismo contrato del plan: id,title,objective,assignedAgentId,repository,dependencies,expectedFiles,acceptanceCriteria. No apruebes si hay trabajo pendiente. Si falta implementar o verificar algo del objetivo, asigná tareas de corrección al equipo; no lo delegues al usuario como QA manual pendiente. Solo después de terminar e integrar todas las tareas, pedile al usuario su QA manual: puede decir «trabajo completado» o pedir mejoras. No esperes su intervención durante el trabajo ni reemplaces sus conclusiones por una aprobación propia. Las capturas no disponibles son una limitación explícita, no prueba visual.",POLICY,r.goal,serde_json::to_string(&r.team).map_err(|e|e.to_string())?,serde_json::to_string(&outcomes).map_err(|e|e.to_string())?,evidence::changes(&r)?);
     let prompt = format!(
         "{}\nOBSERVACIONES REALES DE LOS FLUJOS (antes/después y pasos, no inferidas): {}",
         prompt,
@@ -1485,7 +1485,7 @@ fn schedule(app: &AppHandle, id: &str) -> Result<(), String> {
             })?;
             let mut r = run(app, id)?;
             r.summary = format!(
-                "Terminamos. {}\n\n{}",
+                "Terminamos. {}\n\n{}\n\nRevisá la entrega: decime «trabajo completado» para dar tu visto bueno, o pedime mejoras y las implementamos.",
                 r.summary,
                 r.tasks
                     .iter()

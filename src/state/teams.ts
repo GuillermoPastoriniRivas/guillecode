@@ -34,7 +34,7 @@ export function startTeams() {
   onEvent<{ runId: string }>("team://run-completed", ({ runId }) => {
     void refreshTeams().then(() => {
       const chat = useTeams.getState().chats.find((c) => c.runs.some((r) => r.id === runId))
-      if (chat) notify.success(`${chat.team.name}: Terminamos`, "Trabajo y comprobaciones terminados. Entrega guardada.")
+      if (chat) notify.success(`${chat.team.name}: Terminamos`, "Trabajo y pruebas terminados. Revisá la entrega: podés aceptarla o pedir mejoras.")
     })
   })
   useProject.subscribe((s, prev) => { if (s.root !== prev.root) useTeams.setState({ activeChatId: null }) })

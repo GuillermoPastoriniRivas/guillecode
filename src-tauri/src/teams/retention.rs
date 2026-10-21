@@ -3,7 +3,7 @@ use std::path::Path;
 use tauri::AppHandle;
 
 fn eligible(r: &Run) -> bool {
-    matches!(r.status.as_str(), "completed" | "qa_approved" | "cancelled" | "failed")
+    matches!(r.status.as_str(), "qa_approved" | "cancelled" | "failed")
         && r.evidence_expired_at.is_none()
         && r.team
             .limits
@@ -86,7 +86,7 @@ mod tests {
         r.status = "awaiting_manual_qa".into();
         assert!(!eligible(&r));
         r.status = "completed".into();
-        assert!(eligible(&r));
+        assert!(!eligible(&r));
         let root = std::env::temp_dir().join(format!("teams-retention-{}", id()));
         std::fs::create_dir_all(&root).unwrap();
         r.evidence_dir = std::env::temp_dir().to_string_lossy().into();

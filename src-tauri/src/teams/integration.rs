@@ -127,7 +127,7 @@ fn native_team_end_to_end() {
             assert!(result.finished_at.is_some());
             assert!(result.closing_reviews.last().is_some_and(|r| matches!(r.status, ReviewStatus::Approved) && r.criteria_satisfied));
             let report: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(std::path::Path::new(&result.evidence_dir).join("resultado.json")).unwrap()).unwrap();
-            assert_eq!(report["manualQaStatus"], "optional");
+            assert_eq!(report["manualQaStatus"], "pending");
             let mut completed_store = read(&handle).unwrap();
             recover(&mut completed_store);
             assert_eq!(completed_store.chats[0].runs[0].status, "completed", "completed delivery must survive restart without manual approval");
@@ -260,7 +260,22 @@ fn native_team_end_to_end() {
                 "user work\n"
             );
             assert!(read_db(&db(&handle).unwrap()).unwrap().chats[0].runs[0].notified);
-            control(&handle, &run_id, "approve").unwrap();
+            let acceptance = conversation::send(handle.clone(), chat.id.clone(), "trabajo completado".into(), vec![]).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                let saved = read(&handle).unwrap();
+                let saved_chat = saved.chats.iter().find(|c| c.id == chat.id).unwrap();
+                let reply = saved_chat.messages.iter().find(|m| m.id == acceptance).unwrap();
+                if reply.status != "pending" {
+                    assert_eq!(reply.status, "complete");
+                    assert!(reply.text.contains("Registré tu visto bueno"));
+                    assert!(reply.session_id.is_none(), "acceptance must not call inference or launch an agent");
+                    assert_eq!(saved_chat.runs.len(), 1, "acceptance must not create another run");
+                    break;
+                }
+                assert!(Instant::now() < deadline);
+                std::thread::sleep(Duration::from_millis(20));
+            }
             assert_eq!(run(&handle, &run_id).unwrap().status, "qa_approved");
             // Recovery blocks active attempts without sending another prompt.
             let mut durable = read(&handle).unwrap();

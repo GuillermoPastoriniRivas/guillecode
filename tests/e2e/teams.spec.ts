@@ -61,7 +61,10 @@ async function setup(page: Page) {
       })
       const run = chat.runs.at(-1)
       chat.messages.push({ id: `u-${chat.messages.length}`, role: "user", text, images, status: "complete", createdAt: Date.now(), runId: run?.id ?? null, sessionId: null })
-      if (/qué falló|cómo va/i.test(text)) {
+      if (text.trim().toLowerCase() === "trabajo completado" && run && ["completed", "awaiting_manual_qa"].includes(run.status)) {
+        run.status = "qa_approved"
+        chat.messages.push({ id: `a-${chat.messages.length}`, role: "assistant", text: "Registré tu visto bueno: trabajo completado. La entrega y sus evidencias quedan guardadas.", status: "complete", createdAt: Date.now(), runId: run.id, sessionId: null })
+      } else if (/qué falló|cómo va/i.test(text)) {
         chat.messages.push({ id: `a-${chat.messages.length}`, role: "assistant", text: "Frontend quedó frenado en la página. Falta registrar la prueba HTTP. La tarea Backend terminada se conserva.", status: "complete", createdAt: Date.now(), runId: run?.id ?? null, sessionId: null })
       } else if (/corregilo/i.test(text) && run) {
         run.status = "running"; run.guidance = [text]
@@ -200,9 +203,9 @@ test("modo equipo abre sin plantilla y muestra integrantes elegidos por el Lead 
   await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
   const brief = page.locator(".team-lead-message .lead-brief")
   await expect(brief).toContainText("Creé los dos servicios")
-  await expect(brief).toContainText("No necesitás intervenir")
-  await expect(page.getByRole("button", { name: "Dar mi visto bueno (opcional)", exact: true })).toBeVisible()
-  await expect(lead).toContainText("Completado")
+  await expect(brief).toContainText("Ahora revisá la entrega")
+  await expect(page.getByRole("button", { name: "Trabajo completado", exact: true })).toBeVisible()
+  await expect(lead).toContainText("Espera tu revisión")
   await expect(lead).not.toContainText("Necesita tu ayuda")
   await expect(page.locator(".lead-details")).not.toHaveAttribute("open", "")
   await expect(page.getByText(/Detalle técnico completo:/).first()).not.toBeVisible()
@@ -274,7 +277,7 @@ test("objetivo, pausa, entrega pendiente y feedback conservan revisiones en el m
   first.artifacts = [{ id: "evidence", taskId: null, phase: "test", kind: "log", relativePath: "pruebas/log.txt", capturedAt: Date.now(), status: "captured", source: "fixture E2E", reason: null }]
   await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
   await page.getByRole("button", { name: "Resultados / Comportamientos", exact: true }).click()
-  await expect(page.locator(".team-results").getByRole("heading", { name: "Terminada · revisión opcional" })).toBeVisible()
+  await expect(page.locator(".team-results").getByRole("heading", { name: "Listo para tu revisión" })).toBeVisible()
   await page.getByRole("button", { name: "Ver evidencia", exact: true }).click()
   await expect(page.locator(".team-evidence-preview")).toContainText("Evidencia observada")
   await page.screenshot({ path: test.info().outputPath("entrega-qa-pendiente.png") })
@@ -667,7 +670,7 @@ test("el historial pliega cada equipo completo y conserva los chats normales al 
   await expect(group.locator(".session-row")).toHaveCount(6)
   await expect(group.getByRole("button", { name: "Hablar con el Lead" })).toBeVisible()
   await group.getByRole("button", { name: "Hablar con el Lead" }).click()
-  await expect(page.locator(".team-chat-header")).toContainText("Completada")
+  await expect(page.locator(".team-chat-header")).toContainText("Listo para tu revisión")
   await page.getByPlaceholder("Filtrar sesiones").fill("Subagente anidado")
   await expect(group).toHaveCount(1)
   await expect(page.locator(".session-row", { hasText: "Charla normal" })).toHaveCount(0)
@@ -686,4 +689,38 @@ test("el historial pliega cada equipo completo y conserva los chats normales al 
   await recentGroup.locator("summary").click()
   await expect(recent.getByRole("button", { name: "Backend renombrado", exact: true })).toBeVisible()
   await expect(recentGroup.getByRole("button", { name: "Hablar con el Lead" })).toBeVisible()
+})
+
+test("QA manual viene después del trabajo: mejoras crean otra entrega y trabajo completado la aprueba", async ({ page }) => {
+  const { store, calls } = await setup(page)
+  await createTeam(page)
+  const composer = page.getByLabel("Mensaje para el equipo", { exact: true })
+  await composer.fill("Crear formulario y API")
+  await composer.press("Enter")
+  const chat = store.chats[0]
+  const first = chat.runs[0]
+  first.status = "completed"; first.finishedAt = Date.now(); first.summary = "Formulario y API integrados y comprobados."
+  first.artifacts = [{ id: "first-proof", taskId: null, phase: "test", kind: "log", relativePath: "primera-entrega.log", capturedAt: Date.now(), status: "captured", source: "fixture", reason: null }]
+  await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
+  await expect(page.locator(".team-chat-header")).toContainText("Listo para tu revisión")
+  await expect(page.getByRole("button", { name: "Trabajo completado", exact: true })).toBeVisible()
+  await composer.fill("Mejorá el contraste del formulario")
+  await composer.press("Enter")
+  await expect(page.locator(".team-chat-header")).toContainText("Trabajando")
+  await expect(page.getByRole("button", { name: "Trabajo completado", exact: true })).toHaveCount(0)
+  expect(chat.runs).toHaveLength(2)
+  expect(first.status).toBe("completed")
+  expect(first.artifacts[0].relativePath).toBe("primera-entrega.log")
+  const second = chat.runs[1]
+  second.status = "completed"; second.finishedAt = Date.now(); second.summary = "Contraste mejorado y comprobado."
+  await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
+  await expect(page.locator(".team-chat-header")).toContainText("Listo para tu revisión")
+  await composer.fill("trabajo completado")
+  await composer.press("Enter")
+  await expect(page.locator(".team-chat-header")).toContainText("Aprobado por usuario")
+  await expect(page.getByText(/Registré tu visto bueno:/)).toBeVisible()
+  expect(chat.runs).toHaveLength(2)
+  expect(second.status).toBe("qa_approved")
+  expect(first.status).toBe("completed")
+  expect(calls.filter(c => c.command === "team_chat_send")).toHaveLength(3)
 })
