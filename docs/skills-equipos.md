@@ -17,7 +17,7 @@ La 0.14.1 incorpora las trece skills del documento proporcionado, adaptadas al c
 | Docker | Docker | Build, redes, volúmenes, health checks y secretos |
 | Git Integration | Git Integration | Ownership, locks, cambios previos y conflictos sin sobrescrituras |
 
-El identificador interno `review` se conserva por compatibilidad; su archivo OpenCode es `code-reviewer/SKILL.md`. Las skills nuevas usan versión 2. El catálogo inicial simplificado se conserva como versión 1 en las bases que ya lo tenían. Si el usuario editó una skill, su versión se conserva y no se tapa con otra incluida. Los chats y runs anteriores mantienen exactamente su snapshot.
+El identificador interno `review` se conserva por compatibilidad; su archivo OpenCode es `code-reviewer/SKILL.md`. Las skills incluidas usan versión 3 y aclaran que las comprobaciones del encargo son responsabilidad del equipo y el QA manual personal es opcional. Se agregan sobre versiones 2 oficiales reconocidas por su huella exacta, sin cambiar selecciones ni snapshots anteriores. El catálogo inicial simplificado se conserva como versión 1 en las bases que ya lo tenían. Si el usuario editó una skill, su versión se conserva y no se tapa con otra incluida. Los chats y runs anteriores mantienen exactamente su snapshot.
 
 En el editor, **Aplicar perfil de skills** agrega las skills pertinentes y conserva selecciones adicionales. Las versiones antiguas seleccionadas muestran un botón explícito para actualizarlas. Una plantilla modificada se usa en chats nuevos. Las skills no son una sandbox ni conceden permisos: el scheduler y OpenCode siguen controlando las herramientas y repositorios.
 

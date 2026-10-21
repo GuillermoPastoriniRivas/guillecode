@@ -98,7 +98,7 @@ fn notify(app: &AppHandle, r: &Run, done: bool) {
     );
     let body = if done {
         format!(
-            "Terminamos. Evidencias: {}. Queda pendiente tu QA manual.",
+            "Terminamos el trabajo y sus comprobaciones. Evidencias: {}.",
             r.evidence_dir
         )
     } else {
@@ -1209,7 +1209,7 @@ fn closeout(app: &AppHandle, id: &str) -> Result<bool, String> {
         Ok(())
     })?;
     let outcomes: Vec<_> = r.tasks.iter().map(|t| json!({"id":t.id,"title":t.title,"criteria":t.acceptance_criteria,"attempt":t.attempts.last()})).collect();
-    let prompt = format!("{}\nSos el Lead de cierre. Verificá que el OBJETIVO GENERAL completo se cumplió y que hay comprobaciones suficientes de integración, incluso sin un empleado QA. Las revisiones individuales no bastan si faltan flujos o contratos. Revisá evidencia observada y archivos de lectura disponibles. No inventes verificaciones. Podés crear tareas de corrección, integración o verificación asignadas a miembros existentes.\nOBJETIVO: {}\nEQUIPO: {}\nENTREGAS Y COMANDOS REALES: {}\nDIFF: {}\nRespondé SOLO JSON: {{\"status\":\"approved|changes_requested|review_error\",\"summary\":\"resumen verificable o defectos concretos\",\"criteriaSatisfied\":true,\"tasks\":[]}}. Si pedís cambios, tasks debe contener tareas NUEVAS con IDs únicos y el mismo contrato del plan: id,title,objective,assignedAgentId,repository,dependencies,expectedFiles,acceptanceCriteria. No apruebes si hay trabajo pendiente. Las capturas no disponibles son una limitación explícita, no prueba visual.",POLICY,r.goal,serde_json::to_string(&r.team).map_err(|e|e.to_string())?,serde_json::to_string(&outcomes).map_err(|e|e.to_string())?,evidence::changes(&r)?);
+    let prompt = format!("{}\nSos el Lead de cierre. Verificá que el OBJETIVO GENERAL completo se cumplió y que hay comprobaciones suficientes de integración, incluso sin un empleado QA. Las revisiones individuales no bastan si faltan flujos o contratos. Revisá evidencia observada y archivos de lectura disponibles. No inventes verificaciones. Podés crear tareas de corrección, integración o verificación asignadas a miembros existentes.\nOBJETIVO: {}\nEQUIPO: {}\nENTREGAS Y COMANDOS REALES: {}\nDIFF: {}\nRespondé SOLO JSON: {{\"status\":\"approved|changes_requested|review_error\",\"summary\":\"resumen verificable o defectos concretos\",\"criteriaSatisfied\":true,\"tasks\":[]}}. Si pedís cambios, tasks debe contener tareas NUEVAS con IDs únicos y el mismo contrato del plan: id,title,objective,assignedAgentId,repository,dependencies,expectedFiles,acceptanceCriteria. No apruebes si hay trabajo pendiente. Si falta implementar o verificar algo del objetivo, asigná tareas de corrección al equipo; no lo delegues al usuario como QA manual pendiente. La aprobación personal del usuario es opcional y no frena la entrega técnica. Las capturas no disponibles son una limitación explícita, no prueba visual.",POLICY,r.goal,serde_json::to_string(&r.team).map_err(|e|e.to_string())?,serde_json::to_string(&outcomes).map_err(|e|e.to_string())?,evidence::changes(&r)?);
     let prompt = format!(
         "{}\nOBSERVACIONES REALES DE LOS FLUJOS (antes/después y pasos, no inferidas): {}",
         prompt,
@@ -1485,7 +1485,7 @@ fn schedule(app: &AppHandle, id: &str) -> Result<(), String> {
             })?;
             let mut r = run(app, id)?;
             r.summary = format!(
-                "Terminamos. {}\n\n{}\n\nQueda pendiente tu QA manual.",
+                "Terminamos. {}\n\n{}",
                 r.summary,
                 r.tasks
                     .iter()
@@ -1501,7 +1501,7 @@ fn schedule(app: &AppHandle, id: &str) -> Result<(), String> {
                 v.artifacts = r.artifacts.clone();
                 v.summary = r.summary.clone();
                 v.finished_at = Some(now());
-                v.status = "awaiting_manual_qa".into();
+                v.status = "completed".into();
                 v.error = None;
                 v.notified = true;
                 Ok(())

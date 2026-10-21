@@ -14,6 +14,9 @@ import { shortAgo } from "../lib/time"
 import { openContextMenu } from "../components/ContextMenu"
 import { confirmAction } from "../components/Dialog"
 import { EmptyState, Icon, IconButton } from "../components/ui"
+import { useTeams } from "../state/teams"
+import { groupTeamSessions } from "../team/session-index"
+import { TeamSessionHistory } from "../team/TeamSessionHistory"
 
 function SessionRow({ session, depth, childCount, showDirectory = false }: { session: Session; depth: number; childCount: number; showDirectory?: boolean }) {
   const active = useAgent((s) => s.activeSessionId === session.id)
@@ -120,6 +123,7 @@ function SessionRow({ session, depth, childCount, showDirectory = false }: { ses
 export function AgentsView() {
   const localSessions = useAgent((s) => s.sessions)
   const allSessions = useAgent((s) => s.allSessions)
+  const chats = useTeams(s => s.chats)
   const root = useProject((s) => s.root)
   const loaded = useAgent((s) => s.sessionsLoaded)
   const [allFolders, setAllFolders] = useState(false)
@@ -139,13 +143,18 @@ export function AgentsView() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [showArchived, setShowArchived] = useState(false)
   const archived = useMemo(() => archivedSessionIds(sessions), [sessions])
-  const counts = useMemo(() => ({
-    active: sessions.filter((s) => !archived.has(s.id) && (!s.parentID || !sessions.some((p) => p.id === s.parentID))).length,
-    archived: sessions.filter((s) => archived.has(s.id) && (!s.parentID || !archived.has(s.parentID))).length,
-  }), [sessions, archived])
+  const counts = useMemo(() => {
+    const count = (value: boolean) => {
+      const grouped = groupTeamSessions(sessions.filter(s => archived.has(s.id) === value), chats, allSessions)
+      const ids = new Set(grouped.normal.map(s => s.id))
+      return grouped.groups.length + grouped.normal.filter(s => !s.parentID || !ids.has(s.parentID)).length
+    }
+    return { active: count(false), archived: count(true) }
+  }, [sessions, archived, chats, allSessions])
 
   const tree = useMemo(() => {
-    const visible = sessions.filter((s) => archived.has(s.id) === showArchived)
+    const grouped = groupTeamSessions(sessions.filter((s) => archived.has(s.id) === showArchived), chats, allSessions)
+    const visible = grouped.normal
     const ids = new Set(visible.map((s) => s.id))
     const children = new Map<string, Session[]>()
     for (const s of visible) {
@@ -156,8 +165,9 @@ export function AgentsView() {
     }
     const q = query.trim().toLowerCase()
     const roots = visible.filter((s) => (!s.parentID || !ids.has(s.parentID)) && (!q || (s.title ?? "").toLowerCase().includes(q)))
-    return { roots, children }
-  }, [sessions, query, archived, showArchived])
+    const groups = grouped.groups.filter(g => !q || g.title.toLowerCase().includes(q) || g.sessions.some(s => s.title.toLowerCase().includes(q)))
+    return { roots, children, groups }
+  }, [sessions, query, archived, showArchived, chats, allSessions])
 
   return (
     <div className="view agents-view">
@@ -192,7 +202,7 @@ export function AgentsView() {
       {historyLoading && <p role="status" className="team-note">Buscando conversaciones guardadas…</p>}
       {historyError && <p role="alert" className="team-error">{historyError}</p>}
       <div className="session-list">
-        {loaded && tree.roots.length === 0 && (
+        {loaded && tree.roots.length === 0 && tree.groups.length === 0 && (
           <EmptyState icon={showArchived ? "archive" : "comment-discussion"} title={query ? "Sin resultados" : showArchived ? "No hay conversaciones archivadas" : "Todavía no hay sesiones"}>
             {!query && (showArchived ? "Archivá una conversación para guardarla acá con todo su historial." : "Escribile al agente en el panel de la derecha.")}
           </EmptyState>
@@ -213,6 +223,9 @@ export function AgentsView() {
             </div>
           )
         })}
+        {tree.groups.map(group => <TeamSessionHistory key={group.id} group={group}>
+          {group.sessions.map(s => <SessionRow key={s.id} session={s} depth={1} childCount={0} showDirectory={allFolders} />)}
+        </TeamSessionHistory>)}
         {!showArchived && !allFolders && <OtherFeatureSessions />}
       </div>
     </div>
@@ -222,13 +235,14 @@ export function AgentsView() {
 function OtherFeatureSessions() {
   const root = useProject((s) => s.root)
   const all = useAgent((s) => s.allSessions)
+  const chats = useTeams(s => s.chats)
   const statuses = useAgent((s) => s.statuses)
   const permissions = useAgent((s) => s.permissions)
   const questions = useAgent((s) => s.questions)
   const approvals = useApprovals()
   const list = useFeatures((s) => s.list)
   const archived = archivedSessionIds(all)
-  const active = all.filter((s) => {
+  const active = groupTeamSessions(all, chats).normal.filter((s) => {
     if (s.parentID || archived.has(s.id) || sessionInRoot(s, root)) return false
     const busy = statuses[s.id] && statuses[s.id].type !== "idle"
     return busy || sessionWaiting({ allSessions: all, permissions, questions }, s.id, approvals)

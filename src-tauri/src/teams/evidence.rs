@@ -332,11 +332,11 @@ pub fn deliver(run: &mut Run) -> Result<(), String> {
         .filter(|a| a.status != "captured")
         .filter_map(|a| a.reason.clone())
         .chain([
-            "Capturas locales con campos privados ocultos; QA manual pendiente".into(),
+            "Capturas locales con campos privados ocultos; no equivalen a una aprobación personal del usuario".into(),
             "Ediciones externas simultáneas al equipo no pueden atribuirse automáticamente".into(),
         ])
         .collect();
-    let summary = format!("# {}\n\nObjetivo: {}\n\n{}\n\nPendiente de QA manual.\n\n## Evidencia visual\n{} capturas reales verificadas. Consultá manifest.json y los reportes de cada flujo.\n\n## Límites de la evidencia\n{}\n\nLos comandos se registran solo si OpenCode los devolvió como herramientas completadas. Los diffs comparan contenido inicial y final sin modificar archivos ni el index del usuario. En carpetas sin Git se usa una instantánea durable con límites declarados. Los reportes se sanitizan y las credenciales conocidas no se incluyen.\n", run.team.name, run.goal, run.summary,run.observations.iter().filter(|o|o.status=="captured").count(),limitations.join("\n"));
+    let summary = format!("# {}\n\nObjetivo: {}\n\n{}\n\nTrabajo y comprobaciones del equipo completados. Tu visto bueno personal es opcional.\n\n## Evidencia visual\n{} capturas reales verificadas. Consultá manifest.json y los reportes de cada flujo.\n\n## Límites de la evidencia\n{}\n\nLos comandos se registran solo si OpenCode los devolvió como herramientas completadas. Los diffs comparan contenido inicial y final sin modificar archivos ni el index del usuario. En carpetas sin Git se usa una instantánea durable con límites declarados. Los reportes se sanitizan y las credenciales conocidas no se incluyen.\n", run.team.name, run.goal, run.summary,run.observations.iter().filter(|o|o.status=="captured").count(),limitations.join("\n"));
     write(
         run,
         "resumen.md",
@@ -345,7 +345,7 @@ pub fn deliver(run: &mut Run) -> Result<(), String> {
         "Team Lead + observaciones nativas",
         &summary,
     )?;
-    let result = json!({ "runId":run.id, "teamId":run.team.id, "goal":run.goal, "leadStatus":"completed", "manualQaStatus":"pending", "finishedAt":now(), "summary":run.summary, "tasks":{"total":run.tasks.len(),"completed":run.tasks.iter().filter(|t| t.status == "completed").count()},"checks":checks,"limitations":limitations,"observations":run.observations,"artifacts":run.artifacts,"usage":run.session_usage });
+    let result = json!({ "runId":run.id, "teamId":run.team.id, "goal":run.goal, "leadStatus":"completed", "manualQaStatus":"optional", "finishedAt":now(), "summary":run.summary, "tasks":{"total":run.tasks.len(),"completed":run.tasks.iter().filter(|t| t.status == "completed").count()},"checks":checks,"limitations":limitations,"observations":run.observations,"artifacts":run.artifacts,"usage":run.session_usage });
     write(
         run,
         "resultado.json",

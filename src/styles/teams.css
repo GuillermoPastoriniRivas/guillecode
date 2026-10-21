@@ -109,3 +109,11 @@
 .team-model-details dt { color: var(--fg-dim); font-size: 11px; margin-bottom: 3px; }
 .team-model-details dd { margin: 0; overflow-wrap: anywhere; }
 .team-model-details code { display: block; margin-top: 4px; color: var(--fg-dim); }
+.team-session-history { border-bottom: 1px solid var(--border); }
+.team-session-history > summary { display: flex; align-items: center; gap: 7px; padding: 12px 10px; cursor: pointer; list-style: none; }
+.team-session-history > summary::before { content: "▸"; }
+.team-session-history[open] > summary::before { content: "▾"; }
+.team-session-history > summary > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.team-session-history > summary small { color: var(--fg-dim); white-space: nowrap; }
+.team-session-history-lead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; padding: 4px 10px 10px; }
+.team-session-history-lead > span { color: var(--fg-dim); font-size: 12px; }

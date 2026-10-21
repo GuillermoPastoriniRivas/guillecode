@@ -144,7 +144,8 @@ pub(super) fn diagnosis(run: Option<&Run>) -> String {
             lines.push(brief(&errors::message(&json!(error)), 340));
         } else {
             lines.push(match run.status.as_str() {
-            "awaiting_manual_qa" => "La revisión técnica terminó. Falta revisar la entrega en pantalla y dar el visto bueno manual.",
+            "awaiting_manual_qa" => "La revisión técnica terminó. Tu revisión personal es opcional; podés pedir el siguiente cambio.",
+            "completed" => "El equipo terminó el trabajo y sus comprobaciones. No necesitás intervenir para cerrar la entrega. Podés pedir el siguiente cambio.",
             "qa_approved" => "La entrega ya tiene tu aprobación. Podés pedir el siguiente cambio.",
             "paused" => "El equipo está pausado. Las tareas terminadas se conservan.",
             "cancelled" => "La ejecución se canceló. Los cambios ya hechos se conservan.",

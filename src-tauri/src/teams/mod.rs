@@ -663,7 +663,7 @@ fn control(app: &AppHandle, id: &str, action: &str) -> Result<(), String> {
             })?;
             runner::launch(app, id);
         }
-        "approve" if r.status == "awaiting_manual_qa" => {
+        "approve" if matches!(r.status.as_str(), "completed" | "awaiting_manual_qa") => {
             update_run(app, id, |r| {
                 r.status = "qa_approved".into();
                 Ok(())

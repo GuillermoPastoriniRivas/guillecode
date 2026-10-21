@@ -45,6 +45,8 @@ fn native_team_end_to_end() {
                 automatic_team_scenario(&handle, &repo);
                 return;
             }
+            let bundled = catalog();
+            let version = |id: &str| bundled.iter().filter(|s| s.id == id).map(|s| s.version).max().unwrap();
             let mut team = super::domain::tests::team();
             team.project_root = repo.clone();
             team.allowed_repositories = vec![repo.clone()];
@@ -52,11 +54,11 @@ fn native_team_end_to_end() {
             team.members[0].skill_refs = vec![
                 SkillRef {
                     id: "team-lead".into(),
-                    version: 2,
+                    version: version("team-lead"),
                 },
                 SkillRef {
                     id: "comportamientos".into(),
-                    version: 2,
+                    version: version("comportamientos"),
                 },
             ];
             if let Ok(url) = std::env::var("GUILLE_TEAM_TEST_CAPTURE_URL") {
@@ -76,11 +78,11 @@ fn native_team_end_to_end() {
                             "frontend"
                         }
                         .into(),
-                        version: 2,
+                        version: version(if id == "backend" { "backend" } else { "frontend" }),
                     },
                     SkillRef {
                         id: "security".into(),
-                        version: 2,
+                        version: version("security"),
                     },
                 ];
                 employee.tools = ["read", "glob", "grep", "write", "edit", "bash"]
@@ -121,7 +123,14 @@ fn native_team_end_to_end() {
                 assert!(Instant::now() < deadline, "native team timed out: {:?}", r);
                 std::thread::sleep(Duration::from_millis(200));
             };
-            assert_eq!(result.status, "awaiting_manual_qa", "{:?}", result);
+            assert_eq!(result.status, "completed", "{:?}", result);
+            assert!(result.finished_at.is_some());
+            assert!(result.closing_reviews.last().is_some_and(|r| matches!(r.status, ReviewStatus::Approved) && r.criteria_satisfied));
+            let report: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(std::path::Path::new(&result.evidence_dir).join("resultado.json")).unwrap()).unwrap();
+            assert_eq!(report["manualQaStatus"], "optional");
+            let mut completed_store = read(&handle).unwrap();
+            recover(&mut completed_store);
+            assert_eq!(completed_store.chats[0].runs[0].status, "completed", "completed delivery must survive restart without manual approval");
             assert_eq!(
                 result.tasks.len(),
                 2,
@@ -309,7 +318,7 @@ fn native_team_end_to_end() {
             .unwrap();
             control(&handle, &missing_run, "retry").unwrap();
             let recovered = wait_for_run(&missing_run);
-            assert_eq!(recovered.status, "awaiting_manual_qa", "{:?}", recovered);
+            assert_eq!(recovered.status, "completed", "{:?}", recovered);
             assert_eq!(recovered.tasks[0].attempts.len(), 2);
             assert_eq!(recovered.configuration_changes.len(), 1);
             // A corrupt reviewer never yields a successful delivery.
@@ -388,7 +397,7 @@ fn native_team_end_to_end() {
             .unwrap();
             control(&handle, &limited_run, "retry").unwrap();
             let recovered = wait_for_run(&limited_run);
-            assert_eq!(recovered.status, "awaiting_manual_qa");
+            assert_eq!(recovered.status, "completed");
             assert_eq!(
                 recovered
                     .tasks
@@ -460,7 +469,7 @@ fn circular_team_scenario(handle: &tauri::AppHandle, repo: &str) {
         assert!(Instant::now() < deadline, "circular team timed out: {:?}", r);
         std::thread::sleep(Duration::from_millis(100));
     };
-    assert_eq!(result.status, "awaiting_manual_qa", "{:?}", result);
+    assert_eq!(result.status, "completed", "{:?}", result);
     assert!(result.tasks.iter().all(|t| t.status == "completed" && t.attempts.last().unwrap().commands.len() == 1));
     if lead_help {
         let backend = result.tasks.iter().find(|t| t.id == "backend").unwrap();
@@ -547,7 +556,7 @@ fn automatic_team_scenario(handle: &tauri::AppHandle, repo: &str) {
         assert!(Instant::now() < deadline, "automatic team timed out: {:?}", r);
         std::thread::sleep(Duration::from_millis(100));
     };
-    assert_eq!(result.status, "awaiting_manual_qa", "{:?}", result);
+    assert_eq!(result.status, "completed", "{:?}", result);
     assert_eq!(result.team.members.len(), 4);
     assert_eq!(result.team.members.iter().filter(|m| m.role == "Backend").count(), 2);
     assert_eq!(result.tasks.len(), 3);

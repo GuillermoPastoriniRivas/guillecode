@@ -35,6 +35,8 @@ no están en Recientes. Conserva el directorio de cada sesión al abrirla y no m
 borra ni duplica mensajes. Seleccionar desde el historial la misma conversación
 normal que estaba abierta antes del equipo vuelve a mostrarla correctamente.
 
+En el historial y en «Sesiones recientes», cada chat de equipo agrupa sus sesiones de conversación, planificación, trabajadores, reintentos, coordinación y revisión en un bloque plegado por defecto. Se relacionan por IDs persistidos, incluso si se renombraron, y los descendientes heredan el grupo. Las sesiones antiguas sin registro quedan en «Otras sesiones de equipos». Al desplegar el bloque se puede hablar con el Lead o inspeccionar cada sesión. Buscar conserva el grupo plegado y no borra ni archiva las conversaciones normales.
+
 ## Validación
 
 - Pruebas nativas de permisos, observaciones y relación entre sesiones/ventana,

@@ -156,7 +156,7 @@ const mock = createServer(async (request, response) => {
     } else item = message({ action: latestUserPrompt.includes("MENSAJE ACTUAL: Crear dos servicios") ? "work" : "reply", reply: "Elijo los especialistas necesarios y reparto tareas independientes para trabajar en paralelo." })
   } else if (autonomous) {
     if (leadPhase === "plan") item = message({ agents: [{ id: "back-1", role: "Backend" }, { id: "back-2", role: "Backend" }, { id: "front-1", role: "Frontend" }], tasks: ["back-1", "back-2", "front-1"].map(id => ({ id, title: id, objective: `Crear ${id}.txt y comprobarlo`, assignedAgentId: id, repository: repo, dependencies: [], expectedFiles: [`${id}.txt`], writePaths: [`${id}.txt`], acceptanceCriteria: ["Archivo creado y comprobado"] })) })
-    else if (leadPhase) { reviews++; item = message({ status: "approved", summary: "Los tres archivos y sus comprobaciones observadas están correctos.", criteriaSatisfied: true, tasks: [], chatSummary: { done: "Creé dos servicios y la pantalla.", tested: "Las tres comprobaciones pasaron.", pending: "Falta QA manual." } }) }
+    else if (leadPhase) { reviews++; item = message({ status: "approved", summary: "Los tres archivos y sus comprobaciones observadas están correctos.", criteriaSatisfied: true, tasks: [], chatSummary: { done: "Creé dos servicios y la pantalla.", tested: "Las tres comprobaciones pasaron.", pending: "Nada pendiente." } }) }
     else {
       const input = [...body.input].reverse().find(i => i.role === "user")
       const prompt = typeof input?.content === "string" ? input.content : (input?.content ?? []).map(p => p.text ?? "").join("\n")
@@ -329,7 +329,7 @@ try {
   else assert.equal(execFileSync("git", ["-C", repo, "diff", "--cached"], { windowsHide: true }).toString(), indexBefore)
   assert.deepEqual([...models].sort(), ["qa-backend", "qa-frontend", "qa-invalid-review", "qa-lead"])
   assert.equal(reviews, 9, 'parallel reviewers must verify both dispatched tasks, including both invalid verdicts')
-  console.log(`Verified: native planning → distinct worker models → real file writes + commands → Lead correction → immutable evidence → awaiting manual QA; ${noGit ? "folder remained Git-free" : "pre-existing Git index intact"}.`)
+  console.log(`Verified: native planning → distinct worker models → real file writes + commands → Lead correction → immutable evidence → completed without user intervention; ${noGit ? "folder remained Git-free" : "pre-existing Git index intact"}.`)
   }
 } finally {
   if (proxy) { proxy.closeAllConnections(); await new Promise(done => proxy.close(done)) }

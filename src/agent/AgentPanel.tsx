@@ -28,6 +28,8 @@ import { providerErrorMessage } from "../lib/autoretry"
 import { openMenuAt } from "../components/ContextMenu"
 import { newTeamChat, useTeams } from "../state/teams"
 import { TeamChat } from "./TeamChat"
+import { groupTeamSessions } from "../team/session-index"
+import { TeamSessionHistory } from "../team/TeamSessionHistory"
 
 const SUGGESTIONS = [
   { icon: "telescope", title: "Entender el proyecto", text: "Explicame la arquitectura de este proyecto y dónde está cada cosa." },
@@ -49,7 +51,9 @@ export function SessionPane({ sessionId, variant }: { sessionId: string | null; 
   const root = useProject((s) => s.root)
   const busy = status === "busy" || status === "retry"
   const archived = archivedSessionOwner(session, sessions)
-  const recent = useMemo(() => unarchivedSessions(sessions).filter((s) => !s.parentID).slice(0, 6), [sessions])
+  const chats = useTeams(s => s.chats)
+  const history = useMemo(() => groupTeamSessions(unarchivedSessions(sessions), chats, allSessions), [sessions, chats, allSessions])
+  const recent = history.normal.filter(s => !s.parentID).slice(0, 6)
 
   useEffect(() => {
     if (sessionId) void ensureSessionView(sessionId)
@@ -112,7 +116,7 @@ export function SessionPane({ sessionId, variant }: { sessionId: string | null; 
               </button>
             ))}
           </div>
-          {recent.length > 0 && (
+          {(recent.length > 0 || history.groups.length > 0) && (
             <div className="agent-recent">
               <div className="agent-recent-title">Sesiones recientes</div>
               {recent.map((s) => (
@@ -122,6 +126,11 @@ export function SessionPane({ sessionId, variant }: { sessionId: string | null; 
                   <span className="agent-recent-time">{shortAgo(s.time.updated)}</span>
                 </button>
               ))}
+              {history.groups.map(group => <TeamSessionHistory key={group.id} group={group}>
+                {group.sessions.map(s => <button key={s.id} type="button" className="agent-recent-item" onClick={() => selectSession(s.id)}>
+                  <Icon name="hubot" /><span className="agent-recent-name">{s.title}</span>
+                </button>)}
+              </TeamSessionHistory>)}
             </div>
           )}
         </div>

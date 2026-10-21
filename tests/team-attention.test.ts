@@ -84,9 +84,14 @@ test("las dependencias y revisiones no piden ayuda al usuario salvo al fallar la
   run.status = "cancelled"
   assert.equal(memberState(lead, chat, run, teamAttention(chat, run)).label, "Cancelado")
   run.status = "awaiting_manual_qa"
-  assert.equal(memberState(lead, chat, run, teamAttention(chat, run)).label, "Espera tu revisión")
+  assert.equal(memberState(lead, chat, run, teamAttention(chat, run)).label, "Completado")
   run.status = "qa_approved"
   assert.equal(memberState(lead, chat, run, teamAttention(chat, run)).needsHelp, false)
+  run.status = "completed"
+  const finished = memberState(lead, chat, run, teamAttention(chat, run))
+  assert.equal(finished.label, "Completado")
+  assert.equal(finished.needsHelp, false)
+  assert.deepEqual(teamAttention(chat, run), [])
 })
 
 test("un integrante bloqueado se ve aunque el equipo siga trabajando y no tenga error general", () => {

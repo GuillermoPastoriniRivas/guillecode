@@ -13,7 +13,7 @@ export function teamAttention(chat: TeamChatRecord, run: TeamRun | undefined, re
   const addSession = (session: string | null | undefined, name: string, task: string, directory: string, agentId: string = leadId) => {
     if (session) sessions.set(session, { agentId, name, task, directory })
   }
-  if (run && !["cancelled", "cancelling", "awaiting_manual_qa", "qa_approved"].includes(run.status)) {
+  if (run && !["completed", "cancelled", "cancelling", "awaiting_manual_qa", "qa_approved"].includes(run.status)) {
     const root = run.team.allowedRepositories[0] ?? run.team.projectRoot
     addSession(run.planSessionId, lead, "Organizar el equipo", root)
     for (const session of run.closingSessions ?? []) addSession(session, lead, "Revisión final", root)

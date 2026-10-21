@@ -89,7 +89,7 @@ function TeamEditorForm({ id }: { id: string }) {
     finally { setBusy(false) }
   }
   return <div className="team-editor">
-    <header className="team-editor-header"><Icon name="organization" /><div><h2>{draft.id ? draft.name : "Crear equipo IA"}</h2><p>El Lead coordina la ejecución. Vos definís el objetivo y hacés el QA final.</p></div></header>
+    <header className="team-editor-header"><Icon name="organization" /><div><h2>{draft.id ? draft.name : "Crear equipo IA"}</h2><p>Vos definís el objetivo. El Lead coordina el trabajo y las comprobaciones hasta completar la entrega.</p></div></header>
     <div className="team-editor-body">
       <EvidenceSettings team={draft} update={patch} />
       <section className="team-card">
