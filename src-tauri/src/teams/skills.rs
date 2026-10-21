@@ -1,5 +1,6 @@
 use super::domain::*;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -96,16 +97,23 @@ pub fn catalog() -> Vec<Skill> {
         .collect()
 }
 
+fn previous_bundled(skill: &Skill) -> bool {
+    let fingerprints: std::collections::HashMap<String, String> = serde_json::from_str(include_str!("../../../.opencode/skills/bundled-v2-sha256.json")).expect("bundled v2 fingerprints");
+    let digest = serde_json::to_vec(skill).map(|bytes| format!("{:x}", Sha256::digest(bytes))).ok();
+    digest.as_ref().is_some_and(|digest| fingerprints.get(&skill.id) == Some(digest))
+}
+
 pub fn upgrade(store: &mut Store) {
     let legacy = legacy_catalog();
     for skill in catalog() {
         let existing: Vec<_> = store.skills.iter().filter(|s| s.id == skill.id).collect();
         // A customized version is never replaced or hidden by a bundled update.
-        let upgrade_default = existing.len() == 1
-            && legacy.iter().any(|old| {
+        let upgrade_default = existing.iter().max_by_key(|s| s.version).is_some_and(|latest| {
+            previous_bundled(latest) || legacy.iter().any(|old| {
                 old.id == skill.id
-                    && serde_json::to_value(old).ok() == serde_json::to_value(existing[0]).ok()
-            });
+                    && serde_json::to_value(old).ok() == serde_json::to_value(latest).ok()
+            })
+        });
         if existing.is_empty() || upgrade_default {
             store.skills.push(skill);
         }
@@ -182,7 +190,7 @@ mod tests {
         assert!(store
             .skills
             .iter()
-            .any(|s| s.id == "frontend" && s.version == 2));
+            .any(|s| s.id == "frontend" && s.version == 3));
         assert_eq!(store.teams[0].members[0].skill_refs.len(), 2);
         let count = store.skills.len();
         upgrade(&mut store);
@@ -197,5 +205,22 @@ mod tests {
             assert!(!s.verification_guidelines.is_empty());
             assert!(s.instructions.len() > 1000 && s.instructions.len() < 32_000);
         }
+    }
+    #[test]
+    fn bundled_v2_upgrade_preserves_custom_instructions() {
+        let mut old = catalog().into_iter().find(|s| s.id == "frontend").unwrap();
+        old.version = 2;
+        old.instructions = old.instructions.replace("QA manual es opcional y pertenece al usuario. El equipo debe completar las verificaciones de su encargo antes de entregar, sin esperar un visto bueno manual.", "QA manual pertenece al usuario.");
+        assert!(previous_bundled(&old), "fingerprint must match the exact shipped v2 skill");
+        let mut store = Store { schema_version: 2, teams: vec![], skills: legacy_catalog(), chats: vec![] };
+        store.skills.push(old.clone());
+        upgrade(&mut store);
+        assert!(store.skills.iter().any(|s| s.id == "frontend" && s.version == 3));
+        assert_eq!(store.skills.iter().find(|s| s.id == "frontend" && s.version == 2).unwrap().instructions, old.instructions);
+        old.instructions.push_str("\nCustom instruction");
+        assert!(!previous_bundled(&old));
+        store.skills = vec![old];
+        upgrade(&mut store);
+        assert!(!store.skills.iter().any(|s| s.id == "frontend" && s.version == 3));
     }
 }

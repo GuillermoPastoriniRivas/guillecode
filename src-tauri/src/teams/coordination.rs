@@ -144,17 +144,33 @@ pub(super) fn ready(r: &Run) -> Option<String> {
 pub(super) fn check(app: &AppHandle, run_id: &str, request_id: &str) -> Result<(), String> {
     loop {
         match check_once(app, run_id, request_id) {
-            Err(error) if error == CIRCULAR_WAIT => {
+            Err(error) if repairable_decision(&error) => {
                 // This is invalid read-only planning, not a failed worker. Ask
                 // the Lead to repair it, with a persisted bound across restarts.
-                update_run(app, run_id, |r| request_repair(r, request_id))?;
+                update_run(app, run_id, |r| request_repair(r, request_id, &error))?;
             }
             result => return result,
         }
     }
 }
 
-fn request_repair(r: &mut Run, request_id: &str) -> Result<(), String> {
+fn repairable_decision(error: &str) -> bool {
+    error == CIRCULAR_WAIT
+        || [
+            "Respuesta estructurada inválida",
+            "JSON incompleto",
+            "El Lead devolvió una respuesta de coordinación inválida",
+            "El Lead pidió esperar sin una entrega pendiente",
+            "El Lead debe esperar las tareas que acaba de solicitar",
+            "Dependencia inválida",
+            "IDs de tareas duplicados",
+            "Pedido al Lead con una tarea inexistente",
+        ]
+        .iter()
+        .any(|prefix| error.starts_with(prefix))
+}
+
+fn request_repair(r: &mut Run, request_id: &str, reason: &str) -> Result<(), String> {
     let c = r
         .coordination
         .iter_mut()
@@ -166,11 +182,11 @@ fn request_repair(r: &mut Run, request_id: &str) -> Result<(), String> {
         .count()
         >= 2
     {
-        return Err("El Lead no logró separar las dependencias circulares después de dos correcciones. Se conserva el trabajo; preguntale qué contrato o decisión falta para continuar.".into());
+        return Err("El Lead no logró proponer una salida segura después de dos correcciones. Se conserva el trabajo; preguntale qué contrato o decisión falta para continuar.".into());
     }
     c.status = "pending".into();
-    c.summary = "El Lead está corrigiendo una espera circular. Debe separar el contrato de la integración sin reiniciar el trabajo.".into();
-    c.replies.push(json!({"at":now(),"sessionId":c.sessions.last(),"status":"repair_requested","summary":c.summary,"taskIds":c.task_ids}));
+    c.summary = if reason == CIRCULAR_WAIT { "El Lead está corrigiendo una espera circular. Debe separar el contrato de la integración sin reiniciar el trabajo." } else { "El Lead está corrigiendo su respuesta para proponer una solución válida. No necesitás intervenir mientras la revisa." }.into();
+    c.replies.push(json!({"at":now(),"sessionId":c.sessions.last(),"status":"repair_requested","summary":c.summary,"reason":evidence::sanitize(reason),"taskIds":c.task_ids}));
     Ok(())
 }
 
@@ -236,6 +252,7 @@ fn check_once(app: &AppHandle, run_id: &str, request_id: &str) -> Result<(), Str
             .unwrap_or_default()
     );
     let prompt = format!("{}\nDEPENDENCIAS CIRCULARES DETECTADAS (IDs): {}\nSi hay un ciclo o se rechazó tu decisión por crearlo, intervení: acordá un contrato concreto para que un integrante avance en preparación y dejá la integración para después. Podés reanudar otras tareas suspendidas con resumeTasks:[{{taskId:ID,summary:instrucción concreta y contrato para continuar sin esperar al otro}}]. Esto libera únicamente sus esperas de coordinación: conserva sus sesiones, archivos, dependencias del plan y criterios originales. No reanuda tareas activas ni terminadas. Podés crear tareas independientes de contrato con writePaths propios, sin invadir archivos reservados. No afirmes que una dependencia ya está implementada si solo acordaste su contrato. No marques una entrega completa ni elimines criterios para romper un ciclo. Si no hay forma segura sin información del usuario, devolvé blocked y explicá la decisión exacta que falta. Respondé en summary qué separaste y quién puede avanzar; no pidas una microdecisión que puedas resolver con el estado actual.",prompt,serde_json::to_string(&cycles).unwrap_or_default());
+    let prompt = format!("{}\nAUTONOMÍA DEL LEAD: Los bloqueos técnicos, errores de herramientas y comprobaciones fallidas de los especialistas se te derivan a vos, no al usuario. Si kind=technical_blocker, leé sus intentos, comandos, revisiones y archivos actuales. Diagnosticar un fallo es parte de tu tarea: no uses blocked solamente porque algo falló. Devolvé resume con una solución concreta (comando de verificación correcto, corrección acotada, contrato o alternativa dentro del alcance), o wait con tareas de ayuda válidas si falta una entrega. El trabajador continuará su sesión desde la evidencia actual sin repetir escrituras o efectos ya observados. Conservá criterios, rutas y permisos. Nunca afirmes haber ejecutado la corrección desde tu sesión de lectura. No uses bash u otras herramientas para eludir una autorización. blocked se reserva para una decisión imprescindible del usuario, credenciales/acceso, permisos reales, un control de PC apagado o cuando ya no existe una salida segura dentro del alcance; explicá exactamente qué necesitás y por qué no lo puede resolver el equipo.", prompt);
     let previous = if reuse {
         Some(client.get_resilient(&format!("/session/{}/message", session))?)
     } else {
@@ -434,14 +451,25 @@ mod tests {
     #[test]
     fn cycle_correction_budget_survives_restart_and_does_not_loop_forever() {
         let mut r = mutual_wait();
-        request_repair(&mut r, "back-req").unwrap();
+        request_repair(&mut r, "back-req", CIRCULAR_WAIT).unwrap();
         let mut restored: Run = serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
-        request_repair(&mut restored, "back-req").unwrap();
+        request_repair(&mut restored, "back-req", CIRCULAR_WAIT).unwrap();
         let before = serde_json::to_value(&restored).unwrap();
-        assert!(request_repair(&mut restored, "back-req")
+        assert!(request_repair(&mut restored, "back-req", CIRCULAR_WAIT)
             .unwrap_err()
             .contains("después de dos correcciones"));
         assert_eq!(serde_json::to_value(&restored).unwrap(), before);
+    }
+
+    #[test]
+    fn malformed_lead_decisions_are_repaired_without_retrying_account_or_permission_errors() {
+        for error in ["Respuesta estructurada inválida: expected value", "El Lead devolvió una respuesta de coordinación inválida", "El Lead pidió esperar sin una entrega pendiente"] { assert!(repairable_decision(error)); }
+        for error in ["La cuenta alcanzó su límite de uso", "Falta autorización", "Se perdió la conexión con el motor"] { assert!(!repairable_decision(error)); }
+        let mut r = fixture();
+        request_repair(&mut r, "req", "Respuesta estructurada inválida").unwrap();
+        assert_eq!(r.coordination[0].status, "pending");
+        assert!(r.coordination[0].summary.contains("No necesitás intervenir"));
+        assert!(!r.coordination[0].summary.contains("circular"));
     }
 
     #[test]

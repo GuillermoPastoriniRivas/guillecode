@@ -8,7 +8,7 @@ export function memberState(member: Employee, chat: TeamChatRecord, run: TeamRun
   const own = attention.filter(item => item.agentId === member.id)
   const blocked = own.find(item => item.kind !== "waiting")
   if (blocked) return state(blocked.kind === "permission" ? "Espera un permiso" : blocked.kind === "question" ? "Espera tu respuesta" : "Bloqueado", blocked.reason, "blocked", true)
-  if (own.length) return state("En espera", own[0].reason, "waiting")
+  if (own.length) return state(run?.coordination?.some(c => c.fromTaskId === own[0].id && c.kind === "technical_blocker" && ["pending", "checking", "waiting"].includes(c.status)) ? "Esperando al Lead" : "En espera", own[0].reason, "waiting")
   const isLead = member.id === (run?.team.leadAgentId ?? chat.team.leadAgentId)
   if (isLead && (!run || run.id === chat.runs.at(-1)?.id) && chat.messages?.some(m => m.role === "assistant" && m.status === "pending")) {
     return state("Respondiendo", "Está atendiendo tu mensaje.", "working")
@@ -19,10 +19,11 @@ export function memberState(member: Employee, chat: TeamChatRecord, run: TeamRun
   if (isLead) {
     if (run.status === "planning") return state("Planificando", "Está organizando las tareas y eligiendo los especialistas.", "working")
     if (run.status === "delivering") return state("Preparando entrega", "Está guardando los resultados y sus evidencias.", "working")
-    if (run.status === "awaiting_manual_qa") return state("Espera tu revisión", "La entrega está lista. Falta tu revisión manual.", "waiting", true)
+    if (["completed", "awaiting_manual_qa"].includes(run.status)) return state("Espera tu revisión", "Todos terminaron el trabajo y sus pruebas. Podés decir «trabajo completado» o pedir mejoras.", "waiting")
     if (run.status === "qa_approved") return state("Completado", "La entrega fue aprobada.", "done")
-    const coordination = run.coordination?.find(c => c.status === "checking")
+    const coordination = run.coordination?.find(c => c.status === "checking") ?? run.coordination?.find(c => c.kind === "technical_blocker" && c.status === "pending")
     if (coordination?.cycleTaskIds?.length) return state("Destrabando equipo", coordination.summary || "Está separando una espera circular para que los integrantes puedan avanzar.", "working")
+    if (coordination?.kind === "technical_blocker") return state("Resolviendo bloqueos", "Está revisando el problema del agente y preparando instrucciones para continuar.", "working")
     if (coordination) return state("Coordinando", "Está revisando un pedido de otro integrante.", "working")
     if (run.tasks.some(t => t.status === "verifying")) return state("Revisando", "Está comprobando las entregas de los especialistas.", "working")
   }

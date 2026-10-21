@@ -92,7 +92,7 @@ fn restart_phase() {
                     assert!(read(&handle).unwrap().teams.is_empty());
                 }
                 if phase == "reopen" {
-                    assert_eq!(r.status, "awaiting_manual_qa");
+                    assert_eq!(r.status, "completed");
                     assert!(r.notified);
                     if autonomous { assert_eq!(r.chat_summary.as_ref().unwrap().tested, "El efecto ocurrió una sola vez."); }
                     std::fs::write(&signal,serde_json::json!({"status":"reopened","runId":r.id,"dataDir":handle.path().app_data_dir().unwrap()}).to_string()).unwrap();
@@ -145,7 +145,7 @@ fn restart_phase() {
                         !phase.starts_with("prepare"),
                         "process should have been terminated during command: {:?}", r
                     );
-                    assert_eq!(r.status, "awaiting_manual_qa", "{:?}", r);
+                    assert_eq!(r.status, "completed", "{:?}", r);
                     assert_eq!(
                         r.tasks[0].attempts.len(),
                         1,

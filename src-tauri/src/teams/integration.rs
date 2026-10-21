@@ -37,7 +37,7 @@ fn native_team_end_to_end() {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            if std::env::var("GUILLE_TEAM_TEST_CYCLE").as_deref() == Ok("1") {
+            if std::env::var("GUILLE_TEAM_TEST_CYCLE").as_deref() == Ok("1") || std::env::var("GUILLE_TEAM_TEST_HELP").as_deref() == Ok("1") {
                 circular_team_scenario(&handle, &repo);
                 return;
             }
@@ -45,6 +45,8 @@ fn native_team_end_to_end() {
                 automatic_team_scenario(&handle, &repo);
                 return;
             }
+            let bundled = catalog();
+            let version = |id: &str| bundled.iter().filter(|s| s.id == id).map(|s| s.version).max().unwrap();
             let mut team = super::domain::tests::team();
             team.project_root = repo.clone();
             team.allowed_repositories = vec![repo.clone()];
@@ -52,11 +54,11 @@ fn native_team_end_to_end() {
             team.members[0].skill_refs = vec![
                 SkillRef {
                     id: "team-lead".into(),
-                    version: 2,
+                    version: version("team-lead"),
                 },
                 SkillRef {
                     id: "comportamientos".into(),
-                    version: 2,
+                    version: version("comportamientos"),
                 },
             ];
             if let Ok(url) = std::env::var("GUILLE_TEAM_TEST_CAPTURE_URL") {
@@ -76,11 +78,11 @@ fn native_team_end_to_end() {
                             "frontend"
                         }
                         .into(),
-                        version: 2,
+                        version: version(if id == "backend" { "backend" } else { "frontend" }),
                     },
                     SkillRef {
                         id: "security".into(),
-                        version: 2,
+                        version: version("security"),
                     },
                 ];
                 employee.tools = ["read", "glob", "grep", "write", "edit", "bash"]
@@ -121,7 +123,14 @@ fn native_team_end_to_end() {
                 assert!(Instant::now() < deadline, "native team timed out: {:?}", r);
                 std::thread::sleep(Duration::from_millis(200));
             };
-            assert_eq!(result.status, "awaiting_manual_qa", "{:?}", result);
+            assert_eq!(result.status, "completed", "{:?}", result);
+            assert!(result.finished_at.is_some());
+            assert!(result.closing_reviews.last().is_some_and(|r| matches!(r.status, ReviewStatus::Approved) && r.criteria_satisfied));
+            let report: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(std::path::Path::new(&result.evidence_dir).join("resultado.json")).unwrap()).unwrap();
+            assert_eq!(report["manualQaStatus"], "pending");
+            let mut completed_store = read(&handle).unwrap();
+            recover(&mut completed_store);
+            assert_eq!(completed_store.chats[0].runs[0].status, "completed", "completed delivery must survive restart without manual approval");
             assert_eq!(
                 result.tasks.len(),
                 2,
@@ -251,7 +260,22 @@ fn native_team_end_to_end() {
                 "user work\n"
             );
             assert!(read_db(&db(&handle).unwrap()).unwrap().chats[0].runs[0].notified);
-            control(&handle, &run_id, "approve").unwrap();
+            let acceptance = conversation::send(handle.clone(), chat.id.clone(), "trabajo completado".into(), vec![]).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                let saved = read(&handle).unwrap();
+                let saved_chat = saved.chats.iter().find(|c| c.id == chat.id).unwrap();
+                let reply = saved_chat.messages.iter().find(|m| m.id == acceptance).unwrap();
+                if reply.status != "pending" {
+                    assert_eq!(reply.status, "complete");
+                    assert!(reply.text.contains("Registré tu visto bueno"));
+                    assert!(reply.session_id.is_none(), "acceptance must not call inference or launch an agent");
+                    assert_eq!(saved_chat.runs.len(), 1, "acceptance must not create another run");
+                    break;
+                }
+                assert!(Instant::now() < deadline);
+                std::thread::sleep(Duration::from_millis(20));
+            }
             assert_eq!(run(&handle, &run_id).unwrap().status, "qa_approved");
             // Recovery blocks active attempts without sending another prompt.
             let mut durable = read(&handle).unwrap();
@@ -309,7 +333,7 @@ fn native_team_end_to_end() {
             .unwrap();
             control(&handle, &missing_run, "retry").unwrap();
             let recovered = wait_for_run(&missing_run);
-            assert_eq!(recovered.status, "awaiting_manual_qa", "{:?}", recovered);
+            assert_eq!(recovered.status, "completed", "{:?}", recovered);
             assert_eq!(recovered.tasks[0].attempts.len(), 2);
             assert_eq!(recovered.configuration_changes.len(), 1);
             // A corrupt reviewer never yields a successful delivery.
@@ -388,7 +412,7 @@ fn native_team_end_to_end() {
             .unwrap();
             control(&handle, &limited_run, "retry").unwrap();
             let recovered = wait_for_run(&limited_run);
-            assert_eq!(recovered.status, "awaiting_manual_qa");
+            assert_eq!(recovered.status, "completed");
             assert_eq!(
                 recovered
                     .tasks
@@ -432,10 +456,12 @@ fn native_team_end_to_end() {
 }
 
 fn circular_team_scenario(handle: &tauri::AppHandle, repo: &str) {
+    let lead_help = std::env::var("GUILLE_TEAM_TEST_HELP").as_deref() == Ok("1");
     let mut team = super::domain::tests::team();
     team.project_root = repo.into();
     team.allowed_repositories = vec![repo.into()];
     team.max_parallel_tasks = 2;
+    if lead_help { team.max_retries_per_task = 0; }
     team.members[0].model.model_id = "qa-lead".into();
     for role in ["backend", "frontend"] {
         let mut worker = team.members[0].clone();
@@ -458,12 +484,24 @@ fn circular_team_scenario(handle: &tauri::AppHandle, repo: &str) {
         assert!(Instant::now() < deadline, "circular team timed out: {:?}", r);
         std::thread::sleep(Duration::from_millis(100));
     };
-    assert_eq!(result.status, "awaiting_manual_qa", "{:?}", result);
-    assert!(result.tasks.iter().all(|t| t.status == "completed" && t.attempts.len() == 1 && t.attempts[0].commands.len() == 1));
+    assert_eq!(result.status, "completed", "{:?}", result);
+    assert!(result.tasks.iter().all(|t| t.status == "completed" && t.attempts.last().unwrap().commands.len() == 1));
+    if lead_help {
+        let backend = result.tasks.iter().find(|t| t.id == "backend").unwrap();
+        let frontend = result.tasks.iter().find(|t| t.id == "frontend").unwrap();
+        assert_eq!(backend.attempts.len(), 3);
+        assert_eq!(frontend.attempts.len(), 1);
+        let sessions: std::collections::HashSet<_> = backend.attempts.iter().map(|a| a.session_id.as_ref().unwrap()).collect();
+        assert_eq!(sessions.len(), 1, "Lead assistance must continue the same worker session");
+        assert!(matches!(backend.attempts[1].review.as_ref().unwrap().status, ReviewStatus::ChangesRequested));
+        assert!(!backend.attempts[1].review.as_ref().unwrap().criteria_satisfied);
+        assert!(frontend.attempts[0].finished_at.unwrap() <= backend.attempts[2].started_at, "Independent Frontend must finish while Backend is being repaired");
+        assert!(result.coordination.iter().all(|c| c.kind == "technical_blocker"));
+    } else { assert!(result.tasks.iter().all(|t| t.attempts.len() == 1)); }
     assert_eq!(result.coordination.len(), 2);
     assert!(result.coordination.iter().all(|c| c.status == "resolved"));
     assert!(result.coordination.iter().flat_map(|c| &c.replies).any(|reply| reply["status"] == "repair_requested"));
-    assert!(result.configuration_changes.iter().any(|c| c["resumedTaskIds"].as_array().is_some_and(|ids| !ids.is_empty())));
+    if !lead_help { assert!(result.configuration_changes.iter().any(|c| c["resumedTaskIds"].as_array().is_some_and(|ids| !ids.is_empty()))); }
     assert!(super::coordination::circular_tasks(&result).is_empty());
     for role in ["backend", "frontend"] {
         assert_eq!(std::fs::read_to_string(std::path::Path::new(repo).join(format!("{}.txt", role))).unwrap(), "version 2\n");
@@ -477,6 +515,7 @@ fn circular_team_scenario(handle: &tauri::AppHandle, repo: &str) {
         let history = client.get(&format!("/session/{}/message", session)).unwrap();
         let writes = history.as_array().unwrap().iter().flat_map(|m| m["parts"].as_array().into_iter().flatten()).filter(|p| p["tool"] == "write" && p["state"]["status"] == "completed").count();
         assert_eq!(writes, 1, "Continuing the same session must not repeat its file write");
+        assert_eq!(history.as_array().unwrap().iter().flat_map(|m| m["parts"].as_array().into_iter().flatten()).filter(|p| p["tool"] == "bash" && p["state"]["status"] == "completed").count(), 1, "Lead guidance must not replay a completed command");
         assert_eq!(task.acceptance_criteria.len(), 2);
     }
     let persisted = read_db(&db(handle).unwrap()).unwrap();
@@ -532,7 +571,7 @@ fn automatic_team_scenario(handle: &tauri::AppHandle, repo: &str) {
         assert!(Instant::now() < deadline, "automatic team timed out: {:?}", r);
         std::thread::sleep(Duration::from_millis(100));
     };
-    assert_eq!(result.status, "awaiting_manual_qa", "{:?}", result);
+    assert_eq!(result.status, "completed", "{:?}", result);
     assert_eq!(result.team.members.len(), 4);
     assert_eq!(result.team.members.iter().filter(|m| m.role == "Backend").count(), 2);
     assert_eq!(result.tasks.len(), 3);

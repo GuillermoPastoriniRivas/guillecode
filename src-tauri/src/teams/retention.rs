@@ -85,6 +85,8 @@ mod tests {
         assert!(eligible(&r));
         r.status = "awaiting_manual_qa".into();
         assert!(!eligible(&r));
+        r.status = "completed".into();
+        assert!(!eligible(&r));
         let root = std::env::temp_dir().join(format!("teams-retention-{}", id()));
         std::fs::create_dir_all(&root).unwrap();
         r.evidence_dir = std::env::temp_dir().to_string_lossy().into();

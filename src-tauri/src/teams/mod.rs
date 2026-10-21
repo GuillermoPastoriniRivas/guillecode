@@ -1,5 +1,6 @@
 mod capture;
 mod attachments;
+mod autonomy;
 mod capabilities;
 mod coordination;
 mod conversation;
@@ -662,8 +663,9 @@ fn control(app: &AppHandle, id: &str, action: &str) -> Result<(), String> {
             })?;
             runner::launch(app, id);
         }
-        "approve" if r.status == "awaiting_manual_qa" => {
+        "approve" if matches!(r.status.as_str(), "completed" | "awaiting_manual_qa") => {
             update_run(app, id, |r| {
+                if !conversation::review_ready(r) { return Err("El equipo todavía tiene trabajo o comprobaciones pendientes".into()); }
                 r.status = "qa_approved".into();
                 Ok(())
             })?;

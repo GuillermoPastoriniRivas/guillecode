@@ -32,6 +32,21 @@ test("el Lead informa que está separando un ciclo sin pedir ayuda prematurament
   assert.equal(lead.needsHelp, false)
 })
 
+test("un fallo técnico se deriva al Lead y no se presenta como ayuda humana", () => {
+  const { chat, run } = fixture()
+  run.tasks[0].status = "waiting_dependency"
+  run.coordination = [{ id: "help", kind: "technical_blocker", fromTaskId: "frontend", message: "Falta ejecutar una comprobación HTTP válida", taskIds: [], status: "pending", summary: "", createdAt: 2, sessions: [] }]
+  const items = teamAttention(chat, run)
+  assert.equal(items[0].kind, "waiting")
+  assert.match(items[0].reason, /Pidió ayuda al Lead/)
+  assert.equal(memberState(run.team.members[0], chat, run, items).label, "Resolviendo bloqueos")
+  assert.equal(memberState(run.team.members[1], chat, run, items).label, "Esperando al Lead")
+  assert.equal(memberState(run.team.members[1], chat, run, items).needsHelp, false)
+  assert.equal(memberState(run.team.members[2], chat, run, items).label, "Trabajando")
+  run.coordination[0].status = "blocked"; run.coordination[0].summary = "Necesito acceso a la cuenta de prueba"; run.tasks[0].status = "blocked"; run.tasks[0].error = run.coordination[0].summary
+  assert.equal(memberState(run.team.members[1], chat, run, teamAttention(chat, run)).needsHelp, true)
+})
+
 test("cada integrante conserva su estado cuando otro necesita ayuda, incluso con nombres iguales", () => {
   const { chat, run } = fixture()
   const [lead, front, back] = run.team.members
@@ -72,6 +87,11 @@ test("las dependencias y revisiones no piden ayuda al usuario salvo al fallar la
   assert.equal(memberState(lead, chat, run, teamAttention(chat, run)).label, "Espera tu revisión")
   run.status = "qa_approved"
   assert.equal(memberState(lead, chat, run, teamAttention(chat, run)).needsHelp, false)
+  run.status = "completed"
+  const finished = memberState(lead, chat, run, teamAttention(chat, run))
+  assert.equal(finished.label, "Espera tu revisión")
+  assert.equal(finished.needsHelp, false)
+  assert.deepEqual(teamAttention(chat, run), [])
 })
 
 test("un integrante bloqueado se ve aunque el equipo siga trabajando y no tenga error general", () => {

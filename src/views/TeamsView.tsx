@@ -4,7 +4,7 @@ import { openContextMenu } from "../components/ContextMenu"
 import { useProject } from "../state/project"
 import { samePath } from "../lib/paths"
 import { deleteTeam, duplicateTeam, newTeamChat, openTeam, renameChat, selectTeamChat, startTeams, teamCall, useTeams } from "../state/teams"
-import { statusLabel } from "../team/types"
+import { runStatusLabel } from "../team/types"
 
 export function TeamsView() {
   const { teams, chats, loaded, error } = useTeams()
@@ -34,7 +34,7 @@ export function TeamsView() {
       <h3>Historial de Team Chats</h3>
       {chats.filter((c) => root && samePath(c.team.projectRoot, root)).slice().reverse().map((c) => <article className="team-sidebar-card" key={c.id}>
         <button className="team-link" onClick={() => selectTeamChat(c.id)}><Icon name={c.archived ? "archive" : "organization"} /> {c.title}</button>
-        <p>{statusLabel[c.runs.at(-1)?.status ?? ""] ?? "Sin objetivo todavía"}</p>
+        <p>{runStatusLabel(c.runs.at(-1)?.status ?? "") ?? "Sin objetivo todavía"}</p>
         <div className="team-actions"><button className="btn btn-xs" onClick={() => void renameChat(c)}>Renombrar</button><button className="btn btn-xs" onClick={() => void teamCall("team_chats_edit", { id: c.id, title: c.title, archived: !c.archived })}>{c.archived ? "Restaurar" : "Archivar"}</button></div>
       </article>)}
     </div>}

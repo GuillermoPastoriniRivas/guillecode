@@ -15,6 +15,7 @@ const OBSERVE: &[&str] = &[
 ];
 
 fn allowed(name: &str, employee: &Employee, mode: Mode) -> bool {
+    if name == "question" && mode == Mode::Worker { return false; }
     if WEB.contains(&name) { return true; }
     if name.starts_with("browser_") || name.starts_with("desktop_") {
         return mode != Mode::ReadOnly || OBSERVE.contains(&name);
@@ -73,6 +74,8 @@ mod tests {
         assert!(!allowed("bash", &employee, Mode::Conversation));
         assert!(!allowed("edit", &employee, Mode::Conversation));
         assert!(!allowed("edit", &employee, Mode::Worker));
+        let mut questioning = employee.clone(); questioning.tools.push("question".into());
+        assert!(!allowed("question", &questioning, Mode::Worker));
         assert!(allowed("browser_take_snapshot", &employee, Mode::ReadOnly));
         assert!(!allowed("browser_navigate_page", &employee, Mode::ReadOnly));
         assert!(!allowed("desktop_execute", &employee, Mode::ReadOnly));

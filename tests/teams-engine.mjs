@@ -12,6 +12,9 @@ const noGit = process.argv.includes("--no-git")
 const autonomous = process.argv.includes("--auto")
 const transportFaults = process.argv.includes("--transport-faults")
 const circularWait = process.argv.includes("--circular-wait")
+const leadHelp = process.argv.includes("--lead-help")
+assert.ok(!leadHelp || (!autonomous && !circularWait), 'El escenario de ayuda usa dos trabajadores distintos')
+let helpRounds = 0
 assert.ok(!circularWait || !autonomous, 'El escenario circular usa dos modelos de trabajadores distintos')
 const circularPauses = new Set()
 let circularRepairs = 0
@@ -74,7 +77,32 @@ const mock = createServer(async (request, response) => {
   if (autonomous) assert.ok(JSON.stringify(body.input).includes("data:image/png;base64,"), "User image must reach Lead conversation, planning, workers and review as an actual image part")
   let item
   const message = (value) => ({ type: "message", id: `msg-${Date.now()}`, role: "assistant", content: [{ type: "output_text", text: JSON.stringify(value), annotations: [] }], status: "completed" })
-  if (circularWait) {
+  if (leadHelp) {
+    const input = [...body.input].reverse().find(i => i.role === 'user')
+    const prompt = typeof input?.content === 'string' ? input.content : (input?.content ?? []).map(p => p.text ?? '').join('\n')
+    if (leadPhase === 'plan') item = message({tasks:['backend','frontend'].map(role=>({id:role,title:`Crear ${role}`,objective:`Crear ${role}.txt con versión 2`,assignedAgentId:role,repository:repo,dependencies:[],expectedFiles:[`${role}.txt`],writePaths:[`${role}.txt`],acceptanceCriteria:['Archivo con versión 2','Comprobación ejecutada']}))})
+    else if (leadPhase === 'coordination') {
+      coordinationChecks++
+      const request = JSON.parse(prompt.split('PEDIDO: ')[1].split('\nESTADO ACTUAL DEL EQUIPO:')[0])
+      assert.equal(request.kind,'technical_blocker')
+      assert.ok(!body.tools.some(t=>['bash','write','edit','apply_patch'].includes(t.name)), 'Lead diagnosis must remain read-only')
+      if (coordinationChecks === 1) item=message({status:'invalid',summary:''}) // Invalid Lead output is repaired internally, not sent to the user.
+      else { helpRounds++; item=message({status:'resume',summary:`Revisé el fallo. El archivo existe: continuá tu sesión, verificá con el comando ${commands.backend} y declaralo exactamente en checks. No repitas la escritura ni cambies los criterios.`}) }
+    } else if (leadPhase) { reviews++;item=message({status:'approved',summary:'Archivos y comprobaciones observadas correctos.',criteriaSatisfied:true,tasks:[]}) }
+    else {
+      const role=body.model==='qa-backend'?'backend':'frontend'
+      const outputs=body.input.filter(i=>i.type==='function_call_output')
+      if(!outputs.length){parallelWorkers.add(role);const deadline=Date.now()+15000;while(parallelWorkers.size<2&&Date.now()<deadline)await delay(100);assert.equal(parallelWorkers.size,2)}
+      if(role==='backend'&&outputs.length===2&&!latestUserPrompt.includes('COORDINACIÓN ACTUAL DEL LEAD')) item=message({status:'blocked',summary:'No sé qué comprobación HTTP ejecutar; necesito ayuda para verificar el contrato.',checks:[],limitations:['Comprobación pendiente']})
+      else if(outputs.length>=3) item=message({status:'completed',summary:`${role} implementado y comprobado`,checks:[role==='backend'&&helpRounds<2?'node comprobacion-no-observada.js':commands[role]],limitations:[]})
+      else {
+        const name=outputs.length===0?'read':outputs.length===1?'write':'bash'
+        assert.ok(body.tools.some(t=>t.name===name),`Falta herramienta ${name}`)
+        const args=name==='read'?{filePath:join(repo,'user.txt')}:name==='write'?{filePath:join(repo,`${role}.txt`),content:'version 2\n'}:{command:commands[role],description:'Comprobar contrato',timeout:10000}
+        item={type:'function_call',id:`fc-help-${Date.now()}-${role}`,call_id:`call-help-${Date.now()}-${role}`,name,arguments:JSON.stringify(args),status:'completed'}
+      }
+    }
+  } else if (circularWait) {
     const input = [...body.input].reverse().find(i => i.role === 'user')
     const prompt = typeof input?.content === 'string' ? input.content : (input?.content ?? []).map(p => p.text ?? '').join('\n')
     if (leadPhase === 'plan') item = message({ tasks: ['backend','frontend'].map(role => ({ id:role,title:`Crear ${role}`,objective:`Crear ${role}.txt con versión 2`,assignedAgentId:role,repository:repo,dependencies:[],expectedFiles:[`${role}.txt`],writePaths:[`${role}.txt`],acceptanceCriteria:['Archivo con versión 2','Comprobación ejecutada'] })) })
@@ -128,7 +156,7 @@ const mock = createServer(async (request, response) => {
     } else item = message({ action: latestUserPrompt.includes("MENSAJE ACTUAL: Crear dos servicios") ? "work" : "reply", reply: "Elijo los especialistas necesarios y reparto tareas independientes para trabajar en paralelo." })
   } else if (autonomous) {
     if (leadPhase === "plan") item = message({ agents: [{ id: "back-1", role: "Backend" }, { id: "back-2", role: "Backend" }, { id: "front-1", role: "Frontend" }], tasks: ["back-1", "back-2", "front-1"].map(id => ({ id, title: id, objective: `Crear ${id}.txt y comprobarlo`, assignedAgentId: id, repository: repo, dependencies: [], expectedFiles: [`${id}.txt`], writePaths: [`${id}.txt`], acceptanceCriteria: ["Archivo creado y comprobado"] })) })
-    else if (leadPhase) { reviews++; item = message({ status: "approved", summary: "Los tres archivos y sus comprobaciones observadas están correctos.", criteriaSatisfied: true, tasks: [], chatSummary: { done: "Creé dos servicios y la pantalla.", tested: "Las tres comprobaciones pasaron.", pending: "Falta QA manual." } }) }
+    else if (leadPhase) { reviews++; item = message({ status: "approved", summary: "Los tres archivos y sus comprobaciones observadas están correctos.", criteriaSatisfied: true, tasks: [], chatSummary: { done: "Creé dos servicios y la pantalla.", tested: "Las tres comprobaciones pasaron.", pending: "Nada pendiente." } }) }
     else {
       const input = [...body.input].reverse().find(i => i.role === "user")
       const prompt = typeof input?.content === "string" ? input.content : (input?.content ?? []).map(p => p.text ?? "").join("\n")
@@ -157,7 +185,7 @@ const mock = createServer(async (request, response) => {
       const prompt = typeof input?.content === "string" ? input.content : (input?.content ?? []).map((part) => part.text ?? "").join("\n")
       const states = JSON.parse(prompt.split("ESTADO ACTUAL DEL EQUIPO: ")[1].split("\nHISTORIAL DE COORDINACIÓN:")[0])
       const backend = states.find((task) => task.id === "backend")
-      item = message({ status: backend.status === "completed" ? "resume" : "wait", summary: backend.status === "completed" ? "Backend completado y revisado: contrato version 2 disponible en backend.txt; continuá la integración" : `Backend está ${backend.status}; Frontend conserva su trabajo mientras espera el contrato`, waitForTaskIds: backend.status === "completed" ? [] : ["backend"], tasks: [] })
+      item = body.model === 'qa-invalid-review' ? message({status:'blocked',summary:'No pude validar los criterios con este revisor. Hace falta revisar su configuración antes de continuar.'}) : message({ status: backend.status === "completed" ? "resume" : "wait", summary: backend.status === "completed" ? "Backend completado y revisado: contrato version 2 disponible en backend.txt; continuá la integración" : `Backend está ${backend.status}; Frontend conserva su trabajo mientras espera el contrato`, waitForTaskIds: backend.status === "completed" ? [] : ["backend"], tasks: [] })
     } else if (leadPhase === "closeout") {
       item = message({status:"approved",summary:"Objetivo completo y comandos observados verificados",criteriaSatisfied:true,tasks:[]})
     } else if (leadPhase === "review") {
@@ -257,7 +285,7 @@ try {
     await new Promise(done => proxy.listen(0, "127.0.0.1", done))
     testOrigin = `http://127.0.0.1:${proxy.address().port}`
   }
-  const cargo = spawn("cargo", ["test", "--manifest-path", "src-tauri/Cargo.toml", "--release", "--lib", "--features", "desktop-e2e", "teams::integration::native_team_end_to_end", "--", "--ignored", "--nocapture", "--test-threads=1"], { env: { ...process.env, GUILLE_TEAM_TEST_CYCLE: circularWait ? "1" : "0", GUILLE_TEAM_TEST_TRANSPORT: transportFaults ? "1" : "0", GUILLE_TEAM_TEST_AUTO: autonomous?'1':'0', GUILLE_TEAM_TEST_ENGINE: testOrigin, GUILLE_TEAM_TEST_REPO: repo,GUILLE_TEAM_TEST_NO_GIT:noGit?'1':'0',GUILLE_TEAM_TEST_CAPTURE_URL:`http://127.0.0.1:${mock.address().port}/app`,GUILLE_TEAM_TEST_ARTIFACTS:resolve(noGit?'test-results/native-team-evidence-no-git':'test-results/native-team-evidence') }, windowsHide: true, stdio: "inherit" })
+  const cargo = spawn("cargo", ["test", "--manifest-path", "src-tauri/Cargo.toml", "--release", "--lib", "--features", "desktop-e2e", "teams::integration::native_team_end_to_end", "--", "--ignored", "--nocapture", "--test-threads=1"], { env: { ...process.env, GUILLE_TEAM_TEST_CYCLE: circularWait ? "1" : "0", GUILLE_TEAM_TEST_HELP: leadHelp ? "1" : "0", GUILLE_TEAM_TEST_TRANSPORT: transportFaults ? "1" : "0", GUILLE_TEAM_TEST_AUTO: autonomous?'1':'0', GUILLE_TEAM_TEST_ENGINE: testOrigin, GUILLE_TEAM_TEST_REPO: repo,GUILLE_TEAM_TEST_NO_GIT:noGit?'1':'0',GUILLE_TEAM_TEST_CAPTURE_URL:`http://127.0.0.1:${mock.address().port}/app`,GUILLE_TEAM_TEST_ARTIFACTS:resolve(noGit?'test-results/native-team-evidence-no-git':'test-results/native-team-evidence') }, windowsHide: true, stdio: "inherit" })
   const code = await new Promise((done) => cargo.once("exit", done))
   assert.equal(code, 0, `Native runner failed\n${log}`)
   if (transportFaults) {
@@ -267,7 +295,14 @@ try {
     if (autonomous) assert.ok(lostAcknowledgements.has("conversation"))
     console.log("Verified: three failed status reads and lost conversation/Lead/worker acknowledgements recovered without resubmitting any prompt.")
   }
-  if (circularWait) {
+  if (leadHelp) {
+    assert.equal(helpRounds,2)
+    assert.equal(parallelWorkers.size,2)
+    assert.ok(coordinationChecks>=3)
+    for(const role of ['backend','frontend'])assert.equal(await readFile(join(repo,`${role}.txt`),'utf8'),'version 2\n')
+    assert.equal(await readFile(join(repo,'user.txt'),'utf8'),'user work\n')
+    console.log('Verified: blocked worker → automatic Lead diagnosis → malformed Lead decision repaired → failed QA checks corrected → same worker session, no repeated write or command, independent Frontend completes.')
+  } else if (circularWait) {
     assert.equal(circularPauses.size,2)
     assert.equal(parallelWorkers.size,2)
     assert.ok(circularRepairs >= 1)
@@ -294,7 +329,7 @@ try {
   else assert.equal(execFileSync("git", ["-C", repo, "diff", "--cached"], { windowsHide: true }).toString(), indexBefore)
   assert.deepEqual([...models].sort(), ["qa-backend", "qa-frontend", "qa-invalid-review", "qa-lead"])
   assert.equal(reviews, 9, 'parallel reviewers must verify both dispatched tasks, including both invalid verdicts')
-  console.log(`Verified: native planning → distinct worker models → real file writes + commands → Lead correction → immutable evidence → awaiting manual QA; ${noGit ? "folder remained Git-free" : "pre-existing Git index intact"}.`)
+  console.log(`Verified: native planning → distinct worker models → real file writes + commands → Lead correction → immutable evidence → completed without user intervention; ${noGit ? "folder remained Git-free" : "pre-existing Git index intact"}.`)
   }
 } finally {
   if (proxy) { proxy.closeAllConnections(); await new Promise(done => proxy.close(done)) }

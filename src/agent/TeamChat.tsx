@@ -7,7 +7,7 @@ import { openEditor } from "../state/editors"
 import { confirmAction } from "../components/Dialog"
 import { Icon } from "../components/ui"
 import { Markdown } from "./Markdown"
-import { statusLabel, runActive, type TeamRun } from "../team/types"
+import { statusLabel, runStatusLabel, runActive, type TeamRun } from "../team/types"
 import { formatDateTime } from "../lib/time"
 import { EvidenceComparison } from "../team/EvidenceComparison"
 import { RunBudget } from "../team/RunBudget"
@@ -23,8 +23,8 @@ import { memberState } from "../team/member-state"
 
 function RunReply({ run }: { run: TeamRun }) {
   const blockedTask = run.tasks.find(t => ["blocked", "failed", "review_error", "interrupted"].includes(t.status))
-  const pending = run.error || blockedTask ? runProblem(run) : run.status === "awaiting_manual_qa" ? "Falta tu revisión manual de la entrega." : run.status === "qa_approved" ? "Entrega aprobada. Podés enviar el siguiente pedido." : "El equipo todavía está trabajando."
-  const brief = run.chatSummary ? { ...run.chatSummary, pending: run.error || blockedTask || ["awaiting_manual_qa", "qa_approved"].includes(run.status) ? pending : run.chatSummary.pending } : undefined
+  const pending = run.error || blockedTask ? runProblem(run) : ["completed", "awaiting_manual_qa"].includes(run.status) ? "Ahora revisá la entrega. Decime «trabajo completado» para aprobarla, o pedime mejoras y las implementamos." : run.status === "qa_approved" ? "Entrega aprobada. Podés enviar el siguiente pedido." : "El equipo todavía está trabajando."
+  const brief = run.chatSummary ? { ...run.chatSummary, pending: run.error || blockedTask || ["completed", "awaiting_manual_qa", "qa_approved"].includes(run.status) ? pending : run.chatSummary.pending } : undefined
   return <LeadReply brief={brief} fallback={{
     done: run.summary ? firstTeamSentence(run.summary) : run.tasks.length ? `Organicé ${run.tasks.length} tareas; ${run.tasks.filter(t => t.status === "completed").length} están terminadas.` : "Estoy revisando tu pedido y organizando el trabajo.",
     tested: run.closingReviews?.at(-1)?.status === "approved" ? "Revisé las entregas y sus comprobaciones. Podés ver el informe en los detalles." : "Las comprobaciones se registran en Actividad; todavía no hay una revisión final aprobada.",
@@ -42,7 +42,7 @@ const reviewLabels: Record<string, string> = { approved: "Aprobado", changes_req
 function Results({ run, history }: { run: TeamRun; history: TeamRun[] }) {
   const [preview, setPreview] = useState<{ title: string; text: string } | null>(null)
   return <div className="team-results">
-    <h3>{statusLabel[run.status]}</h3>
+    <h3>{runStatusLabel(run.status)}</h3>
     <RunReply run={run} />
     <p className="team-note selectable">{run.evidenceDir}</p>
     <div className="team-actions"><button className="btn btn-sm" onClick={() => void teamCall("team_evidence_open", { runId: run.id })}><Icon name="folder-opened" /> Abrir carpeta</button></div>
@@ -73,7 +73,6 @@ export function TeamChat({ chatId }: { chatId: string }) {
   if (!chat) return <div className="team-note">Cargando conversación de equipo…</div>
   const run = chat.runs.find((r) => r.id === selectedRunId) ?? chat.runs.at(-1)
   const roster = run?.team ?? chat.team
-  const latest = chat.runs.at(-1)
   const runError = run?.error ?? ""
   const automaticPlanRecovery = /plan debe contener entre 1 y 100 tareas|respuesta estructurada inválida/i.test(runError)
   const budgetBlocked = /presupuesto|límite de tokens|duración máxima/i.test(runError)
@@ -85,7 +84,7 @@ export function TeamChat({ chatId }: { chatId: string }) {
     ...requests.questions.map(r => ({ sessionID: r.sessionID, kind: "question" as const })),
   ])
   const attentionText = attentionLabel(attention)
-  const headerStatus = run ? statusLabel[run.status] : attention.length ? "Necesita tu ayuda" : pendingReply ? "El Lead está trabajando" : "Listo para recibir tu objetivo"
+  const headerStatus = run ? runStatusLabel(run.status) : attention.length ? "Necesita tu ayuda" : pendingReply ? "El Lead está trabajando" : "Listo para recibir tu objetivo"
   const otherWork = run?.status === "running" && run.tasks.some(t => ["running", "verifying"].includes(t.status) && !attention.some(i => i.id === t.id || (i.sessionId && [t.attempts.at(-1)?.sessionId, t.attempts.at(-1)?.reviewSessionId].includes(i.sessionId))))
   const act = (action: string) => run && teamCall("team_runs_control", { runId: run.id, action })
   return <section className="team-chat">
@@ -96,9 +95,12 @@ export function TeamChat({ chatId }: { chatId: string }) {
           <button className="btn btn-xs" onClick={() => item.sessionId ? openSession(item.sessionId, item.directory) : setView("Actividad")}>{item.kind === "permission" ? "Ver permiso" : item.kind === "question" ? "Responder al agente" : "Ver actividad"}</button>
           </div><p><span className="team-attention-task">{item.task}: </span>{item.reason}</p>
         </article>)}</div>
-        <p>Podés ayudarlo desde este chat.{otherWork && attention.some(i => i.kind !== "waiting") ? " Las tareas independientes siguen trabajando." : ""}</p>
+        <p>{attention.every(i => i.kind === "waiting") ? "El Lead coordina estas esperas. No necesitás intervenir ahora." : "Podés ayudarlo desde este chat."}{otherWork && attention.some(i => i.kind !== "waiting") ? " Las tareas independientes siguen trabajando." : ""}</p>
       </section>}
-      {roster.autonomous && <details className="team-roster"><summary>Equipo elegido por el Lead</summary><ul aria-label="Estado de los integrantes">{roster.members.map(m => ({ m, current: memberState(m, chat, run, attention) })).sort((a, b) => Number(b.current.needsHelp) - Number(a.current.needsHelp)).map(({ m, current }) => {
+      {roster.autonomous && <details className="team-roster"><summary>Equipo elegido por el Lead</summary><ul aria-label="Estado de los integrantes">{roster.members.map(m => {
+        const current = memberState(m, chat, run, attention)
+        return { m, current, priority: current.needsHelp ? 3 : m.id === roster.leadAgentId ? 2 : current.tone === "waiting" ? 1 : 0 }
+      }).sort((a, b) => b.priority - a.priority).map(({ m, current }) => {
         return <li className="team-member" key={m.id}>
           <div><strong>{m.name}</strong>{m.name.toLowerCase() !== m.role.toLowerCase() && <span> · {m.role}</span>}<span className={`team-member-status ${current.tone}`}>{current.label}</span></div>
           <small className={current.needsHelp ? "team-member-help" : "team-note"}>{current.needsHelp ? "Necesita tu ayuda" : "Sin pedidos de ayuda"}</small>
@@ -106,13 +108,13 @@ export function TeamChat({ chatId }: { chatId: string }) {
         </li>
       })}</ul></details>}</header>
     <nav className="team-chat-nav" aria-label="Vistas del equipo">{["Chat", "Tareas", "Actividad", "Resultados / Comportamientos"].map((v) => <button key={v} className={view === v ? "active" : ""} onClick={() => setView(v)}>{v}</button>)}</nav>
-    {chat.runs.length > 1 && <label className="team-run-select">Entrega / ejecución<select value={run?.id} onChange={(e) => setSelectedRunId(e.target.value)}>{chat.runs.map((r, i) => <option value={r.id} key={r.id}>#{i + 1} · {formatDateTime(r.startedAt)} · {statusLabel[r.status]}</option>)}</select></label>}
+    {chat.runs.length > 1 && <label className="team-run-select">Entrega / ejecución<select value={run?.id} onChange={(e) => setSelectedRunId(e.target.value)}>{chat.runs.map((r, i) => <option value={r.id} key={r.id}>#{i + 1} · {formatDateTime(r.startedAt)} · {runStatusLabel(r.status)}</option>)}</select></label>}
     {run && <div className="team-run-controls">
       {["planning", "running"].includes(run.status) && <button className="btn btn-xs" onClick={() => void act("pause")}>Pausar nuevas tareas</button>}
       {run.status === "paused" && <button className="btn btn-xs" onClick={() => void act("resume")}>Reanudar</button>}
       {["blocked", "failed"].includes(run.status) && <button className="btn btn-xs" onClick={() => void act("retry")}>Continuar lo pendiente</button>}
       {(runActive(run.status) || run.status === "blocked") && run.status !== "cancelling" && <button className="btn btn-xs" onClick={() => void confirmAction("Cancelar ejecución", "Se abortan las sesiones y se conservan los cambios ya aplicados. Revisá Git antes de continuar.", "Cancelar ejecución", true).then((yes) => { if (yes) void act("cancel") })}>Cancelar ejecución</button>}
-      {run.status === "awaiting_manual_qa" && <button className="btn btn-xs" onClick={() => void act("approve")}>Aprobar QA manual</button>}
+      {["completed", "awaiting_manual_qa"].includes(run.status) && <button className="btn btn-xs" onClick={() => void act("approve")}>Trabajo completado</button>}
     </div>}
     {run?.error && <div className="team-error" role="status">{automaticPlanRecovery ? "El Lead devolvió un plan incompleto. GuilleCode lo reparará al continuar." : runProblem(run)}</div>}
     {run && ["blocked", "failed"].includes(run.status) && <p className="team-note">{recoveryHint(run)}</p>}
@@ -120,8 +122,8 @@ export function TeamChat({ chatId }: { chatId: string }) {
       {run?.status === "blocked" && budgetBlocked && <RunBudget key={run.id} run={run} />}
       {run?.status === "blocked" && modelBlocked && <details className="team-card"><summary>Cambiar el modelo que falló</summary><p className="team-note">La configuración original del chat y los intentos anteriores se conservan.</p>{run.team.members.map((a) => <label key={a.id}>{a.name} · {a.role}<select aria-label={`Modelo de ${a.name}`} value={modelKey(a.model)} onChange={(e) => {const m=models.find((v)=>modelKey(v)===e.target.value);if(m)void teamCall("team_runs_model",{runId:run.id,agentId:a.id,model:{providerID:m.providerID,modelID:m.modelID},variant:null})}}><option value={modelKey(a.model)}>{modelKey(a.model)}</option>{models.filter((m)=>modelKey(m)!==modelKey(a.model)).map((m)=><option key={modelKey(m)} value={modelKey(m)}>{m.providerName} · {m.name}</option>)}</select></label>)}</details>}
       {view === "Chat" && <>
-        {!chat.runs.length && <div className="team-chat-welcome"><Icon name="organization" /><h2>{chat.team.autonomous ? "Contame qué querés hacer" : "Un objetivo para todo el equipo"}</h2><p>{chat.team.autonomous ? "Hablás con el Lead. Él decide cuántos especialistas necesita, reparte las tareas y pone a trabajar en paralelo lo que se pueda hacer a la vez." : "El Lead descubre el proyecto, delega y revisa. Vas a recibir una entrega con evidencias y QA manual pendiente."}</p><p className="team-note">Podés preguntar qué pasó o dar indicaciones mientras trabajan. Las consultas de estado usan el registro guardado.</p></div>}
-        {[...chat.runs.map((r, i) => ({ at: r.startedAt, key: r.id, node: <article className="team-chat-message"><small>Objetivo {i + 1} · {formatDateTime(r.startedAt)}</small><p className="selectable">{r.goal}</p><ChatImages images={r.images} /><div className="team-lead-message"><strong>Team Lead · {statusLabel[r.status]}</strong><RunReply run={r} />{r.finishedAt && <button className="btn btn-xs" onClick={() => { setSelectedRunId(r.id); setView("Resultados / Comportamientos") }}>Ver entrega y evidencias</button>}</div></article> })), ...messages.filter(m => m.role !== "user" || !chat.runs.some(r => r.goal === m.text && Math.abs(r.startedAt - m.createdAt) < 30_000)).map(m => ({ at: m.createdAt, key: m.id, node: <article className={`team-chat-message team-conversation ${m.role}`}><small>{m.role === "user" ? "Vos" : "Lead"} · {formatDateTime(m.createdAt)}</small><div className={m.role === "assistant" ? "team-lead-message" : "selectable"}>{m.status === "pending" ? <p role="status">El Lead está trabajando…</p> : <Markdown text={m.text} />}<ChatImages images={m.images} />{m.sessionId && <button className="btn btn-xs" onClick={() => openSession(m.sessionId!, chat.team.projectRoot)}>Ver actividad y permisos del Lead</button>}</div></article> }))].sort((a, b) => a.at - b.at).map(item => <div key={item.key}>{item.node}</div>)}
+        {!chat.runs.length && <div className="team-chat-welcome"><Icon name="organization" /><h2>{chat.team.autonomous ? "Contame qué querés hacer" : "Un objetivo para todo el equipo"}</h2><p>{chat.team.autonomous ? "Hablás con el Lead. Él decide cuántos especialistas necesita, reparte las tareas y pone a trabajar en paralelo lo que se pueda hacer a la vez." : "El Lead descubre el proyecto, delega y revisa. El equipo completa las comprobaciones y entrega el resultado con evidencias; solo te consulta si necesita una decisión o un permiso."}</p><p className="team-note">Podés preguntar qué pasó o dar indicaciones mientras trabajan. Las consultas de estado usan el registro guardado.</p></div>}
+        {[...chat.runs.map((r, i) => ({ at: r.startedAt, key: r.id, node: <article className="team-chat-message"><small>Objetivo {i + 1} · {formatDateTime(r.startedAt)}</small><p className="selectable">{r.goal}</p><ChatImages images={r.images} /><div className="team-lead-message"><strong>Team Lead · {runStatusLabel(r.status)}</strong><RunReply run={r} />{r.finishedAt && <button className="btn btn-xs" onClick={() => { setSelectedRunId(r.id); setView("Resultados / Comportamientos") }}>Ver entrega y evidencias</button>}</div></article> })), ...messages.filter(m => m.role !== "user" || !chat.runs.some(r => r.goal === m.text && Math.abs(r.startedAt - m.createdAt) < 30_000)).map(m => ({ at: m.createdAt, key: m.id, node: <article className={`team-chat-message team-conversation ${m.role}`}><small>{m.role === "user" ? "Vos" : "Lead"} · {formatDateTime(m.createdAt)}</small><div className={m.role === "assistant" ? "team-lead-message" : "selectable"}>{m.status === "pending" ? <p role="status">El Lead está trabajando…</p> : <Markdown text={m.text} />}<ChatImages images={m.images} />{m.sessionId && <button className="btn btn-xs" onClick={() => openSession(m.sessionId!, chat.team.projectRoot)}>Ver actividad y permisos del Lead</button>}</div></article> }))].sort((a, b) => a.at - b.at).map(item => <div key={item.key}>{item.node}</div>)}
         <div ref={bottom} />
       </>}
       {view === "Tareas" && (run ? <div className="team-task-list">{!run.tasks.length && <p className="team-note">El Lead está descubriendo el contexto y preparando un plan validado.</p>}{run.tasks.map((t) => <article className="team-card" key={t.id}><div className="team-section-title"><strong>{t.id} · {t.title}</strong><span className={`team-status ${t.status}`}>{statusLabel[t.status] ?? t.status}</span></div><p>{t.objective}</p><p className="team-note">{run.team.members.find((a) => a.id === t.assignedAgentId)?.name} · {t.attempts.length} intentos · depende de {t.dependencies.join(", ") || "ninguna"}</p><code>{t.repository}</code><p className="team-note">Escritura: {t.writePaths?.join(", ") || "carpeta exclusiva"}</p><ul>{t.acceptanceCriteria.map((c, i) => <li key={i}>{c}</li>)}</ul>{t.error && <p className="team-error">{taskProblem(t)}</p>}{run.status === "blocked" && t.status !== "completed" && <label>Reasignar modelo del responsable<select value={modelKey(run.team.members.find((m) => m.id === t.assignedAgentId)!.model)} onChange={(e) => { const model = models.find((m) => modelKey(m) === e.target.value); const member = run.team.members.find((m) => m.id === t.assignedAgentId); if (model && member) void teamCall("team_tasks_reassign", { runId: run.id, taskId: t.id, employee: { ...member, model: { providerID: model.providerID, modelID: model.modelID }, variant: null } }) }}><option value={modelKey(run.team.members.find((m) => m.id === t.assignedAgentId)!.model)}>Modelo actual</option>{models.map((m) => <option key={modelKey(m)} value={modelKey(m)}>{m.providerName} · {m.name}</option>)}</select></label>}</article>)}</div> : <p className="team-note">Enviá un objetivo para generar el plan.</p>)}
@@ -142,6 +144,6 @@ export function TeamChat({ chatId }: { chatId: string }) {
       {view === "Configuración" && <TeamSettings team={chat.team} run={run} chatId={chat.id} pending={pendingReply} />}
       {view === "Resultados / Comportamientos" && (run ? <Results key={run.id} run={run} history={chat.runs} /> : <p className="team-note">Las evidencias aparecerán al iniciar una ejecución.</p>)}
     </div>
-    {chat.archived ? <p className="team-note">Chat archivado. Restauralo desde Equipos IA para continuar.</p> : <TeamComposer key={chatId} chatId={chatId} label={latest?.status === "awaiting_manual_qa" || latest?.status === "qa_approved" ? "Feedback de QA / siguiente mensaje" : "Mensaje para el equipo"} pending={pendingReply} onSent={() => { setSelectedRunId(null); setView("Chat") }} />}
+    {chat.archived ? <p className="team-note">Chat archivado. Restauralo desde Equipos IA para continuar.</p> : <TeamComposer key={chatId} chatId={chatId} label="Mensaje para el equipo" pending={pendingReply} onSent={() => { setSelectedRunId(null); setView("Chat") }} />}
   </section>
 }
