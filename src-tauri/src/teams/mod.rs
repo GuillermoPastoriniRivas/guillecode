@@ -1,5 +1,6 @@
 mod capture;
 mod attachments;
+mod autonomy;
 mod capabilities;
 mod coordination;
 mod conversation;

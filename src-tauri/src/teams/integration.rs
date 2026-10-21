@@ -37,7 +37,7 @@ fn native_team_end_to_end() {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            if std::env::var("GUILLE_TEAM_TEST_CYCLE").as_deref() == Ok("1") {
+            if std::env::var("GUILLE_TEAM_TEST_CYCLE").as_deref() == Ok("1") || std::env::var("GUILLE_TEAM_TEST_HELP").as_deref() == Ok("1") {
                 circular_team_scenario(&handle, &repo);
                 return;
             }
@@ -432,10 +432,12 @@ fn native_team_end_to_end() {
 }
 
 fn circular_team_scenario(handle: &tauri::AppHandle, repo: &str) {
+    let lead_help = std::env::var("GUILLE_TEAM_TEST_HELP").as_deref() == Ok("1");
     let mut team = super::domain::tests::team();
     team.project_root = repo.into();
     team.allowed_repositories = vec![repo.into()];
     team.max_parallel_tasks = 2;
+    if lead_help { team.max_retries_per_task = 0; }
     team.members[0].model.model_id = "qa-lead".into();
     for role in ["backend", "frontend"] {
         let mut worker = team.members[0].clone();
@@ -459,11 +461,23 @@ fn circular_team_scenario(handle: &tauri::AppHandle, repo: &str) {
         std::thread::sleep(Duration::from_millis(100));
     };
     assert_eq!(result.status, "awaiting_manual_qa", "{:?}", result);
-    assert!(result.tasks.iter().all(|t| t.status == "completed" && t.attempts.len() == 1 && t.attempts[0].commands.len() == 1));
+    assert!(result.tasks.iter().all(|t| t.status == "completed" && t.attempts.last().unwrap().commands.len() == 1));
+    if lead_help {
+        let backend = result.tasks.iter().find(|t| t.id == "backend").unwrap();
+        let frontend = result.tasks.iter().find(|t| t.id == "frontend").unwrap();
+        assert_eq!(backend.attempts.len(), 3);
+        assert_eq!(frontend.attempts.len(), 1);
+        let sessions: std::collections::HashSet<_> = backend.attempts.iter().map(|a| a.session_id.as_ref().unwrap()).collect();
+        assert_eq!(sessions.len(), 1, "Lead assistance must continue the same worker session");
+        assert!(matches!(backend.attempts[1].review.as_ref().unwrap().status, ReviewStatus::ChangesRequested));
+        assert!(!backend.attempts[1].review.as_ref().unwrap().criteria_satisfied);
+        assert!(frontend.attempts[0].finished_at.unwrap() <= backend.attempts[2].started_at, "Independent Frontend must finish while Backend is being repaired");
+        assert!(result.coordination.iter().all(|c| c.kind == "technical_blocker"));
+    } else { assert!(result.tasks.iter().all(|t| t.attempts.len() == 1)); }
     assert_eq!(result.coordination.len(), 2);
     assert!(result.coordination.iter().all(|c| c.status == "resolved"));
     assert!(result.coordination.iter().flat_map(|c| &c.replies).any(|reply| reply["status"] == "repair_requested"));
-    assert!(result.configuration_changes.iter().any(|c| c["resumedTaskIds"].as_array().is_some_and(|ids| !ids.is_empty())));
+    if !lead_help { assert!(result.configuration_changes.iter().any(|c| c["resumedTaskIds"].as_array().is_some_and(|ids| !ids.is_empty()))); }
     assert!(super::coordination::circular_tasks(&result).is_empty());
     for role in ["backend", "frontend"] {
         assert_eq!(std::fs::read_to_string(std::path::Path::new(repo).join(format!("{}.txt", role))).unwrap(), "version 2\n");
@@ -477,6 +491,7 @@ fn circular_team_scenario(handle: &tauri::AppHandle, repo: &str) {
         let history = client.get(&format!("/session/{}/message", session)).unwrap();
         let writes = history.as_array().unwrap().iter().flat_map(|m| m["parts"].as_array().into_iter().flatten()).filter(|p| p["tool"] == "write" && p["state"]["status"] == "completed").count();
         assert_eq!(writes, 1, "Continuing the same session must not repeat its file write");
+        assert_eq!(history.as_array().unwrap().iter().flat_map(|m| m["parts"].as_array().into_iter().flatten()).filter(|p| p["tool"] == "bash" && p["state"]["status"] == "completed").count(), 1, "Lead guidance must not replay a completed command");
         assert_eq!(task.acceptance_criteria.len(), 2);
     }
     let persisted = read_db(&db(handle).unwrap()).unwrap();

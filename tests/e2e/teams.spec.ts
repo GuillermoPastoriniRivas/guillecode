@@ -180,6 +180,16 @@ test("modo equipo abre sin plantilla y muestra integrantes elegidos por el Lead 
   await expect(roster.locator(".team-member").first()).toContainText("Frontend 1")
   await expect(roster.locator(".team-member").filter({ hasText: "Backend 2" })).toContainText("Trabajando")
   await page.screenshot({ path: test.info().outputPath("integrantes-estado-y-ayuda.png") })
+  run.tasks[2].status = "waiting_dependency"; run.tasks[2].error = null
+  run.coordination = [{ id: "help-front", kind: "technical_blocker", fromTaskId: "front-1", message: "Falta configurar la API local", taskIds: [], status: "pending", summary: "El agente pidió ayuda al Lead", createdAt: Date.now(), sessions: [] }]
+  await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
+  await expect(frontend).toContainText("Esperando al Lead")
+  await expect(frontend).toContainText("Sin pedidos de ayuda")
+  await expect(lead).toContainText("Resolviendo bloqueos")
+  await expect(page.getByRole("region", { name: "Bloqueos del equipo" })).toContainText("No necesitás intervenir ahora")
+  await expect(roster.locator(".team-member").filter({ hasText: "Backend 2" })).toContainText("Trabajando")
+  await page.screenshot({ path: test.info().outputPath("agente-pide-ayuda-al-lead.png") })
+  run.coordination[0].status = "resolved"
   run.tasks[2].status = "running"; run.tasks[2].error = null
   await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
   await expect(frontend).toContainText("Trabajando")

@@ -140,6 +140,8 @@ pub struct Review {
 #[serde(rename_all = "camelCase")]
 pub struct Attempt {
     #[serde(default)]
+    pub resume_after_message_ids: Vec<String>,
+    #[serde(default)]
     pub observations: Vec<serde_json::Value>,
     #[serde(default)]
     pub declared_checks: Vec<String>,
@@ -272,6 +274,10 @@ pub struct ChatSummary {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Coordination {
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub attempt_id: Option<String>,
     #[serde(default)]
     pub cycle_task_ids: Vec<String>,
     pub id: String,

@@ -96,9 +96,12 @@ export function TeamChat({ chatId }: { chatId: string }) {
           <button className="btn btn-xs" onClick={() => item.sessionId ? openSession(item.sessionId, item.directory) : setView("Actividad")}>{item.kind === "permission" ? "Ver permiso" : item.kind === "question" ? "Responder al agente" : "Ver actividad"}</button>
           </div><p><span className="team-attention-task">{item.task}: </span>{item.reason}</p>
         </article>)}</div>
-        <p>Podés ayudarlo desde este chat.{otherWork && attention.some(i => i.kind !== "waiting") ? " Las tareas independientes siguen trabajando." : ""}</p>
+        <p>{attention.every(i => i.kind === "waiting") ? "El Lead coordina estas esperas. No necesitás intervenir ahora." : "Podés ayudarlo desde este chat."}{otherWork && attention.some(i => i.kind !== "waiting") ? " Las tareas independientes siguen trabajando." : ""}</p>
       </section>}
-      {roster.autonomous && <details className="team-roster"><summary>Equipo elegido por el Lead</summary><ul aria-label="Estado de los integrantes">{roster.members.map(m => ({ m, current: memberState(m, chat, run, attention) })).sort((a, b) => Number(b.current.needsHelp) - Number(a.current.needsHelp)).map(({ m, current }) => {
+      {roster.autonomous && <details className="team-roster"><summary>Equipo elegido por el Lead</summary><ul aria-label="Estado de los integrantes">{roster.members.map(m => {
+        const current = memberState(m, chat, run, attention)
+        return { m, current, priority: current.needsHelp ? 3 : m.id === roster.leadAgentId ? 2 : current.tone === "waiting" ? 1 : 0 }
+      }).sort((a, b) => b.priority - a.priority).map(({ m, current }) => {
         return <li className="team-member" key={m.id}>
           <div><strong>{m.name}</strong>{m.name.toLowerCase() !== m.role.toLowerCase() && <span> · {m.role}</span>}<span className={`team-member-status ${current.tone}`}>{current.label}</span></div>
           <small className={current.needsHelp ? "team-member-help" : "team-note"}>{current.needsHelp ? "Necesita tu ayuda" : "Sin pedidos de ayuda"}</small>

@@ -878,13 +878,10 @@ fn worker(app: &AppHandle, run_id: &str, task_id: &str) -> Result<(), String> {
         .collect();
     let feedback = t.attempts.iter().rev().skip(1).map(|a| format!("Sesión previa: {}\nResumen: {}\nFeedback: {}\nComandos ya ejecutados (no repetir sin verificar sus efectos): {}",a.session_id.as_deref().unwrap_or("sin sesión"),a.summary,a.review.as_ref().map(|r|r.summary.as_str()).or(a.error.as_deref()).unwrap_or(""),serde_json::to_string(&a.commands).unwrap_or_default())).collect::<Vec<_>>().join("\n\n");
     let prompt = format!("{}\nROL: {} ({})\nINSTRUCCIONES: {}\nSKILLS HABILITADAS:\n{}\nOBJETIVO GENERAL: {}\nTAREA: {}\nCRITERIOS: {}\nCARPETA AUTORIZADA: {}\nARCHIVOS ESPERADOS (respetar la propiedad de escritura): {}\nCONTRATOS/DEPENDENCIAS: {}\nFEEDBACK PREVIO: {}\nNo alteres los cambios preexistentes. Leé archivos antes de escribirlos. Ejecutá el pedido con las herramientas disponibles y verificá el resultado. Para código, corré las pruebas pertinentes con bash; para una tarea puramente de web o interfaz sin archivos esperados, comprobá el estado final con herramientas de observación y dejá checks vacío. No uses herramientas externas para saltar permisos de bash. Si no podés comprobar, devolvé blocked con motivo. Devolvé SOLO JSON: {{\"status\":\"completed|waiting_dependency|blocked|failed\",\"summary\":\"implementación, archivos modificados y resultados\",\"checks\":[\"comando EXACTO realmente ejecutado\"],\"limitations\":[\"limitaciones reales\"]}}", POLICY, a.name, a.role, a.instructions, skills_prompt(&r,&a), r.goal,t.objective,t.acceptance_criteria.join("; "),t.repository,t.expected_files.join(", "),serde_json::to_string(&deps).map_err(|e| e.to_string())?,feedback);
-    let prompt = format!("{}\nESTADO DEL EQUIPO (IDs para pedidos al Lead): {}\nPROPIEDAD DE ESCRITURA: {}\nCOORDINACIÓN CON EL LEAD: {}\nOtros agentes trabajan simultáneamente. Solo escribí en writePaths cuando no esté vacío; no uses bash para modificar archivos ajenos. Podés leer los contratos de otros. Avanzá en todo lo independiente sin esperar a que termine otro agente. Si necesitás algo de otro, devolvé status=waiting_dependency y request={{message:pedido concreto,taskIds:[IDs de tareas relacionadas]}}; no lo trates como fallo. El Lead revisará archivos y el estado real, y continuará ESTA sesión con su respuesta. No inventes contratos como si estuvieran implementados.", prompt, serde_json::to_string(&r.tasks.iter().map(|v| json!({"id":v.id,"title":v.title,"agentId":v.assigned_agent_id,"status":v.status,"writePaths":v.write_paths})).collect::<Vec<_>>()).unwrap_or_default(), serde_json::to_string(&t.write_paths).unwrap_or_default(), serde_json::to_string(&r.coordination).unwrap_or_default());
+    let prompt = format!("{}\nESTADO DEL EQUIPO (IDs para pedidos al Lead): {}\nPROPIEDAD DE ESCRITURA: {}\nCOORDINACIÓN CON EL LEAD: {}\nOtros agentes trabajan simultáneamente. Solo escribí en writePaths cuando no esté vacío; no uses bash para modificar archivos ajenos. Podés leer los contratos de otros. Avanzá en todo lo independiente sin esperar a que termine otro agente. Si necesitás algo de otro, devolvé status=waiting_dependency y request={{message:pedido concreto,taskIds:[IDs de tareas relacionadas]}}; no lo trates como fallo. El Lead revisará archivos y el estado real, y continuará ESTA sesión con su respuesta. No inventes contratos como si estuvieran implementados. Para cualquier duda técnica, comando fallido, prueba faltante o impedimento recuperable, pedí ayuda al Lead con status=waiting_dependency y request.message explicando causa, qué intentaste y qué necesitás; taskIds puede estar vacío. No le pidas al usuario resolver decisiones técnicas ni uses question para eso. Reservá blocked para permisos, credenciales o decisiones externas al alcance. Agotá primero las alternativas seguras dentro de tus herramientas y archivos.", prompt, serde_json::to_string(&r.tasks.iter().map(|v| json!({"id":v.id,"title":v.title,"agentId":v.assigned_agent_id,"status":v.status,"writePaths":v.write_paths})).collect::<Vec<_>>()).unwrap_or_default(), serde_json::to_string(&t.write_paths).unwrap_or_default(), serde_json::to_string(&r.coordination).unwrap_or_default());
     let messages = if recovering {
         let history = client.get_resilient(&format!("/session/{}/message", session))?;
-        if parse_json::<WorkerResult>(&final_text(&history))
-            .map(|r| r.status == "completed")
-            .unwrap_or(false)
-        {
+        if reusable_worker_result(&t, &history) {
             history
         } else {
             let continuation=format!("{}\nLa aplicación se reinició o el Lead resolvió un pedido. Continuá ESTA sesión desde el estado actual y la historia de herramientas. No repitas efectos ya observados. Releé y verificá, completá solo lo pendiente y devolvé el contrato JSON del resultado.\nCOORDINACIÓN ACTUAL DEL LEAD: {}\nContexto: {}\nTelemetría previa: {}",POLICY,serde_json::to_string(&r.coordination).unwrap_or_default(),prompt,evidence::sanitize(&history.to_string()));
@@ -928,6 +925,8 @@ fn worker(app: &AppHandle, run_id: &str, task_id: &str) -> Result<(), String> {
             // Suggested dependencies are a question for the Lead, not a new
             // execution edge. Only its validated decision may establish a wait.
             r.coordination.push(Coordination {
+                kind: if request.task_ids.is_empty() { "technical_blocker".into() } else { String::new() },
+                attempt_id: r.tasks.iter().find(|t| t.id == task_id).and_then(|t| t.attempts.last()).map(|a| a.id.clone()),
                 cycle_task_ids: vec![],
                 id: id(),
                 from_task_id: task_id.into(),
@@ -1054,6 +1053,23 @@ fn worker(app: &AppHandle, run_id: &str, task_id: &str) -> Result<(), String> {
         }
         Ok(())
     })
+}
+
+fn reusable_worker_result(task: &Task, history: &Value) -> bool {
+    if !parse_json::<WorkerResult>(&final_text(history)).is_ok_and(|r| r.status == "completed") { return false; }
+    let boundary = task.attempts.last().map(|a| a.resume_after_message_ids.as_slice()).unwrap_or(&[]);
+    boundary.is_empty() || history.as_array().and_then(|items| items.iter().rev().find(|m| m["info"]["role"] == "assistant"))
+        .and_then(|m| m["info"]["id"].as_str()).is_some_and(|id| !boundary.iter().any(|old| old == id))
+}
+
+fn offer_lead_help(app: &AppHandle, run_id: &str, task_id: &str) -> Result<(), String> {
+    let state = run(app, run_id)?;
+    let Some(task) = state.tasks.iter().find(|t| t.id == task_id && super::autonomy::eligible(&state, t)) else { return Ok(()); };
+    let boundary = task.attempts.last().and_then(|a| a.session_id.as_ref()).and_then(|session| {
+        client(app, &task.repository).and_then(|c| c.get_resilient(&format!("/session/{}/message", session))).ok()
+            .map(|messages| { let mut ids: Vec<_> = assistant_ids(&messages).into_iter().collect(); ids.sort(); ids })
+    });
+    update_run(app, run_id, |r| { super::autonomy::request_help(r, task_id, boundary); Ok(()) })
 }
 
 pub fn reconcile(app: &AppHandle, r: &Run, abort: bool) -> Result<(), String> {
@@ -1413,6 +1429,7 @@ fn schedule(app: &AppHandle, id: &str) -> Result<(), String> {
                     }
                 })?;
             }
+            offer_lead_help(app, id, &task_id)?;
         }
         let r = run(app, id)?;
         if let Err(e) = enforce_limits(&r) {
@@ -1524,6 +1541,7 @@ fn schedule(app: &AppHandle, id: &str) -> Result<(), String> {
                     .unwrap_or(false)
                 {
                     t.attempts.push(Attempt {
+                        resume_after_message_ids: vec![],
                         observations: vec![],
                         declared_checks: vec![],
                         id: super::domain::id(),
@@ -1555,6 +1573,16 @@ fn schedule(app: &AppHandle, id: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn directed_repair_does_not_reuse_the_completed_answer_that_failed_review() {
+        let mut task: Task = serde_json::from_value(json!({"id":"t","title":"API","objective":"API","assignedAgentId":"lead","repository":"D:/repo","dependencies":[],"expectedFiles":[],"acceptanceCriteria":["check"],"attempts":[{"id":"repair","agent":super::super::domain::tests::team().members[0],"sessionId":"worker","startedAt":1,"status":"waiting_dependency","summary":"","commands":[],"recovered":true,"resumeAfterMessageIds":["old"]}]})).unwrap();
+        let response = |id: &str| json!([{"info":{"id":id,"role":"assistant"},"parts":[{"type":"text","text":"{\"status\":\"completed\",\"summary\":\"done\",\"checks\":[],\"limitations\":[]}"}]}]);
+        assert!(!reusable_worker_result(&task, &response("old")));
+        assert!(reusable_worker_result(&task, &response("new")), "A completed repair is reusable after a restart; do not submit it twice");
+        task.attempts[0].resume_after_message_ids.clear();
+        assert!(reusable_worker_result(&task, &response("old")), "Older saved sessions retain normal recovery");
+    }
 
     #[test]
     fn inference_retry_is_bounded_and_never_replays_a_turn_with_tools() {

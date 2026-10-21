@@ -33,7 +33,7 @@ export function teamAttention(chat: TeamChatRecord, run: TeamRun | undefined, re
       } else if (task.status === "waiting_dependency") {
         const dependencies = (coordination?.taskIds ?? []).map(id => run.tasks.find(t => t.id === id)).filter(t => t && t.status !== "completed")
         const names = [...new Set(dependencies.map(t => run.team.members.find(m => m.id === t!.assignedAgentId)?.name ?? t!.title))]
-        const context = names.length ? `Espera una entrega de ${names.join(", ")}.` : coordination?.status === "checking" ? "El Lead está revisando su pedido." : "Espera una respuesta del Lead."
+        const context = coordination?.kind === "technical_blocker" ? "Pidió ayuda al Lead, que está buscando una solución." : names.length ? `Espera una entrega de ${names.join(", ")}.` : coordination?.status === "checking" ? "El Lead está revisando su pedido." : "Espera una respuesta del Lead."
         items.push({ id: task.id, agentId: task.assignedAgentId, name, task: task.title, kind: "waiting", reason: `${context}${coordination?.message ? ` ${readableTeamError(coordination.message)}` : ""}`,
           sessionId: attempt?.sessionId ?? null, directory: task.repository })
       }
