@@ -34,6 +34,7 @@ const nodeCommand = `& '${process.execPath.replaceAll("'", "''")}'`
 const commands = { backend: `${nodeCommand} -e "process.exit(require('fs').existsSync('backend.txt') ? 0 : 1)"`, frontend: `${nodeCommand} -e "process.exit(require('fs').existsSync('frontend.txt') ? 0 : 1)"` }
 let reviews = 0
 let coordinationChecks = 0
+let closeoutChecks = 0
 let desktopCalls = 0
 const parallelWorkers = new Set()
 const models = new Set()
@@ -86,9 +87,15 @@ const mock = createServer(async (request, response) => {
       const request = JSON.parse(prompt.split('PEDIDO: ')[1].split('\nESTADO ACTUAL DEL EQUIPO:')[0])
       assert.equal(request.kind,'technical_blocker')
       assert.ok(!body.tools.some(t=>['bash','write','edit','apply_patch'].includes(t.name)), 'Lead diagnosis must remain read-only')
-      if (coordinationChecks === 1) item=message({status:'invalid',summary:''}) // Invalid Lead output is repaired internally, not sent to the user.
+      if (coordinationChecks <= 3) item=message({status:'invalid',summary:''}) // Exhaust local corrections: a fresh Lead diagnosis must recover without asking the user.
+      else if (coordinationChecks === 4) {
+        assert.ok(request.replies.some(reply=>reply.status==='recovery_requested'))
+        assert.ok(prompt.includes('RECUPERACIÓN AUTOMÁTICA DEL LEAD'))
+        item=message({status:'blocked',summary:'Falló la prueba HTTP. Necesito que el usuario revise el error y decida qué comando ejecutar.'})
+      }
       else { helpRounds++; item=message({status:'resume',summary:`Revisé el fallo. El archivo existe: continuá tu sesión, verificá con el comando ${commands.backend} y declaralo exactamente en checks. No repitas la escritura ni cambies los criterios.`}) }
-    } else if (leadPhase) { reviews++;item=message({status:'approved',summary:'Archivos y comprobaciones observadas correctos.',criteriaSatisfied:true,tasks:[]}) }
+    } else if (leadPhase === 'closeout' && ++closeoutChecks === 1) item=message({status:'review_error',summary:'Necesito que el usuario revise las comprobaciones de integración antes de completar.',criteriaSatisfied:false,tasks:[]})
+    else if (leadPhase) { reviews++;item=message({status:'approved',summary:'Archivos y comprobaciones observadas correctos.',criteriaSatisfied:true,tasks:[]}) }
     else {
       const role=body.model==='qa-backend'?'backend':'frontend'
       const outputs=body.input.filter(i=>i.type==='function_call_output')
@@ -153,8 +160,14 @@ const mock = createServer(async (request, response) => {
     if (latestUserPrompt.includes("MENSAJE ACTUAL: Consultá las herramientas")) {
       if (!body.input.some(i => i.type === "function_call_output")) item = { type: "function_call", id: `fc-pc-${Date.now()}`, call_id: "call-pc", name: "desktop_status", arguments: "{}", status: "completed" }
       else { await delay(1500); item = message({ action: "reply", reply: "El estado de la PC fue observado con la herramienta. Todavía no inicié tareas del proyecto." }) }
-    } else item = message({ action: latestUserPrompt.includes("MENSAJE ACTUAL: Crear dos servicios") ? "work" : "reply", reply: "Elijo los especialistas necesarios y reparto tareas independientes para trabajar en paralelo." })
+    } else if (latestUserPrompt.includes("MENSAJE ACTUAL: Crear dos servicios")) {
+      item = message({ action: "work", questions: ["¿Qué saludo deben mostrar los servicios?", "¿Se permiten dependencias externas?"] })
+    } else item = message({ action: latestUserPrompt.includes("MENSAJE ACTUAL: Usá hola mundo") ? "work" : "reply", reply: "Elijo los especialistas necesarios y reparto tareas independientes para trabajar en paralelo.", questions: [] })
   } else if (autonomous) {
+    if (leadPhase === "plan") {
+      assert.ok(latestUserPrompt.includes("Crear dos servicios Backend y una pantalla Frontend"), "Planning must retain the original request")
+      assert.ok(latestUserPrompt.includes("Usá hola mundo; sin dependencias externas"), "Planning must retain the clarification answers")
+    }
     if (leadPhase === "plan") item = message({ agents: [{ id: "back-1", role: "Backend" }, { id: "back-2", role: "Backend" }, { id: "front-1", role: "Frontend" }], tasks: ["back-1", "back-2", "front-1"].map(id => ({ id, title: id, objective: `Crear ${id}.txt y comprobarlo`, assignedAgentId: id, repository: repo, dependencies: [], expectedFiles: [`${id}.txt`], writePaths: [`${id}.txt`], acceptanceCriteria: ["Archivo creado y comprobado"] })) })
     else if (leadPhase) { reviews++; item = message({ status: "approved", summary: "Los tres archivos y sus comprobaciones observadas están correctos.", criteriaSatisfied: true, tasks: [], chatSummary: { done: "Creé dos servicios y la pantalla.", tested: "Las tres comprobaciones pasaron.", pending: "Nada pendiente." } }) }
     else {
@@ -298,7 +311,8 @@ try {
   if (leadHelp) {
     assert.equal(helpRounds,2)
     assert.equal(parallelWorkers.size,2)
-    assert.ok(coordinationChecks>=3)
+    assert.ok(coordinationChecks>=4)
+    assert.ok(closeoutChecks>=2,'El Lead debe corregir un cierre técnico incompleto sin pedir QA al usuario')
     for(const role of ['backend','frontend'])assert.equal(await readFile(join(repo,`${role}.txt`),'utf8'),'version 2\n')
     assert.equal(await readFile(join(repo,'user.txt'),'utf8'),'user work\n')
     console.log('Verified: blocked worker → automatic Lead diagnosis → malformed Lead decision repaired → failed QA checks corrected → same worker session, no repeated write or command, independent Frontend completes.')
@@ -306,7 +320,7 @@ try {
     assert.equal(circularPauses.size,2)
     assert.equal(parallelWorkers.size,2)
     assert.ok(circularRepairs >= 1)
-    assert.ok(coordinationChecks >= 4)
+    assert.ok(coordinationChecks >= 6)
     assert.equal(reviews,3)
     for(const role of ['backend','frontend']) assert.equal(await readFile(join(repo,`${role}.txt`),'utf8'),'version 2\n')
     assert.equal(await readFile(join(repo,'user.txt'),'utf8'),'user work\n')

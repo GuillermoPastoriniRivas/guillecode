@@ -346,6 +346,10 @@ pub struct Chat {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatMessage {
+    // The first user message of an unresolved preflight conversation. Optional
+    // so existing histories load unchanged and survive application restarts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clarification_start: Option<String>,
     #[serde(default)]
     pub images: Vec<ChatImage>,
     pub id: String,

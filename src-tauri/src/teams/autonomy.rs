@@ -2,10 +2,11 @@ use super::domain::*;
 use serde_json::json;
 
 const MAX_HELP_REQUESTS: usize = 3;
+const MAX_TOTAL_HELP_REQUESTS: usize = 9;
 
 // Technical diagnosis belongs to the Lead. Authorization, account access and
 // user controls are never resolved by silently granting or bypassing them.
-fn requires_user(reason: &str) -> bool {
+pub(super) fn requires_user(reason: &str) -> bool {
     let text = reason.to_lowercase();
     [
         "usage_limit",
@@ -72,14 +73,17 @@ pub(super) fn request_help(r: &mut Run, task_id: &str, boundary: Option<Vec<Stri
     if !eligible(r, task) {
         return false;
     }
-    let count = r
+    let reason = task.error.clone().unwrap_or_else(|| "La tarea se detuvo sin explicar una causa. Revisá su actividad y proponé una salida concreta.".into());
+    let requests: Vec<_> = r
         .coordination
         .iter()
         .filter(|c| c.from_task_id == task_id && c.kind == "technical_blocker")
-        .count();
-    if count >= MAX_HELP_REQUESTS {
+        .collect();
+    let count = requests.iter().filter(|c| c.message.trim() == reason.trim()).count();
+    if count >= MAX_HELP_REQUESTS || requests.len() >= MAX_TOTAL_HELP_REQUESTS {
+        let limit = if count >= MAX_HELP_REQUESTS { "El Lead revisó este mismo bloqueo tres veces y sigue sin resolverlo" } else { "El Lead agotó nueve intervenciones de recuperación en esta tarea" };
         let task = r.tasks.iter_mut().find(|t| t.id == task_id).unwrap();
-        task.error = Some(format!("El Lead intentó resolver este problema tres veces sin lograrlo. Hace falta tu ayuda para decidir otra salida. Último problema: {}", task.error.as_deref().unwrap_or("No quedó una causa registrada")));
+        task.error = Some(format!("{limit}. El trabajo se conserva. Último problema: {}", task.error.as_deref().unwrap_or("No quedó una causa registrada")));
         return false;
     }
     let previous = task.attempts.last().cloned();
@@ -88,7 +92,6 @@ pub(super) fn request_help(r: &mut Run, task_id: &str, boundary: Option<Vec<Stri
     {
         return false; // No confirmed history: keep the failure visible, never replay blindly.
     }
-    let reason = task.error.clone().unwrap_or_else(|| "La tarea se detuvo sin explicar una causa. Revisá su actividad y proponé una salida concreta.".into());
     let task = r.tasks.iter_mut().find(|t| t.id == task_id).unwrap();
     let attempt_id = if let Some(previous) = previous.filter(|a| a.session_id.is_some()) {
         let attempt = Attempt {
@@ -194,6 +197,7 @@ mod tests {
     fn assistance_is_bounded_across_restart_and_human_decisions_stay_visible() {
         let mut r = fixture();
         for _ in 0..MAX_HELP_REQUESTS {
+            r.tasks[0].error = Some("Falla la prueba HTTP".into());
             assert!(request_help(&mut r, "back", Some(vec!["old".into()])));
             r.coordination.last_mut().unwrap().status = "resolved".into();
             r.tasks[0].status = "blocked".into();
@@ -208,5 +212,20 @@ mod tests {
         r.tasks[0].attempts.last_mut().unwrap().finished_at = Some(now());
         r.coordination[0].status = "blocked".into();
         assert!(!request_help(&mut r, "back", Some(vec!["old".into()])));
+    }
+
+    #[test]
+    fn different_technical_problems_have_their_own_repair_budget() {
+        let mut r = fixture();
+        for index in 0..MAX_TOTAL_HELP_REQUESTS {
+            r.tasks[0].error = Some(format!("Falla técnica distinta {index}"));
+            assert!(request_help(&mut r, "back", Some(vec![format!("message-{index}")])));
+            r.coordination.last_mut().unwrap().status = "resolved".into();
+            r.tasks[0].status = "blocked".into();
+            r.tasks[0].attempts.last_mut().unwrap().finished_at = Some(now());
+            r = serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
+        }
+        r.tasks[0].error = Some("Otro problema distinto".into());
+        assert!(!request_help(&mut r, "back", Some(vec!["last".into()])));
     }
 }

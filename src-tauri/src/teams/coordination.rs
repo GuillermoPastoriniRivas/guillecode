@@ -17,6 +17,14 @@ struct Decision {
     tasks: Vec<Task>,
     #[serde(default)]
     resume_tasks: Vec<ResumeTask>,
+    #[serde(default)]
+    user_request: Option<UserRequest>,
+}
+
+#[derive(Deserialize)]
+struct UserRequest {
+    kind: String,
+    question: String,
 }
 
 #[derive(Deserialize)]
@@ -27,6 +35,7 @@ struct ResumeTask {
 }
 
 const CIRCULAR_WAIT: &str = "El pedido crea una espera circular entre agentes; el Lead debe separar el contrato de la integración";
+const TECHNICAL_ESCALATION: &str = "El Lead derivó un problema técnico al usuario sin una decisión imprescindible. Diagnosticá la causa y proponé resume o tareas de ayuda con wait; una prueba fallida o faltante la resuelve el equipo";
 
 // Pending requests are suggestions, not scheduler edges, but must be included
 // when diagnosing a mutual wait before the Lead installs its next decision.
@@ -155,7 +164,7 @@ pub(super) fn check(app: &AppHandle, run_id: &str, request_id: &str) -> Result<(
 }
 
 fn repairable_decision(error: &str) -> bool {
-    error == CIRCULAR_WAIT
+    error == CIRCULAR_WAIT || error == TECHNICAL_ESCALATION
         || [
             "Respuesta estructurada inválida",
             "JSON incompleto",
@@ -178,16 +187,39 @@ fn request_repair(r: &mut Run, request_id: &str, reason: &str) -> Result<(), Str
         .ok_or("Pedido inexistente")?;
     if c.replies
         .iter()
+        .rev()
+        .take_while(|reply| reply["status"] != "recovery_requested")
         .filter(|reply| reply["status"] == "repair_requested")
         .count()
         >= 2
     {
-        return Err("El Lead no logró proponer una salida segura después de dos correcciones. Se conserva el trabajo; preguntale qué contrato o decisión falta para continuar.".into());
+        return Err("El Lead no logró proponer una salida segura después de dos correcciones.".into());
     }
     c.status = "pending".into();
     c.summary = if reason == CIRCULAR_WAIT { "El Lead está corrigiendo una espera circular. Debe separar el contrato de la integración sin reiniciar el trabajo." } else { "El Lead está corrigiendo su respuesta para proponer una solución válida. No necesitás intervenir mientras la revisa." }.into();
     c.replies.push(json!({"at":now(),"sessionId":c.sessions.last(),"status":"repair_requested","summary":c.summary,"reason":evidence::sanitize(reason),"taskIds":c.task_ids}));
     Ok(())
+}
+
+// The coordinator has no file-writing tools. Once its session is confirmed
+// stopped, a fresh diagnostic turn is safe; the worker itself is not replayed.
+// Persist the recovery budget so a restart cannot create an infinite loop.
+pub(super) fn recover_after_failure(r: &mut Run, request_id: &str, error: &str, stopped: bool) -> bool {
+    if !stopped || r.status != "running" || super::autonomy::requires_user(error) { return false; }
+    let Some(c) = r.coordination.iter().find(|c| c.id == request_id) else { return false; };
+    let recoveries = c.replies.iter().filter(|reply| reply["status"] == "recovery_requested").count();
+    if recoveries >= 2 || c.sessions.len() >= 16 || ["resolved", "cancelled", "blocked"].contains(&c.status.as_str()) { return false; }
+    let Some(task) = r.tasks.iter_mut().find(|t| t.id == c.from_task_id) else { return false; };
+    if !["waiting_dependency", "blocked"].contains(&task.status.as_str()) { return false; }
+    task.status = "waiting_dependency".into();
+    task.error = None;
+    let task_id = task.id.clone();
+    let c = r.coordination.iter_mut().find(|c| c.id == request_id).unwrap();
+    c.status = "pending".into();
+    c.summary = "El Lead está buscando otra forma de desbloquear al agente. El resto del equipo puede seguir; no necesitás reintentar.".into();
+    c.replies.push(json!({"status":"recovery_requested","at":now(),"sessionId":c.sessions.last(),"summary":c.summary,"taskIds":c.task_ids,"reason":evidence::sanitize(error),"attempt":recoveries+1}));
+    r.configuration_changes.push(json!({"kind":"automaticCoordinatorRecovery","at":now(),"requestId":request_id,"taskId":task_id,"attempt":recoveries+1}));
+    true
 }
 
 fn check_once(app: &AppHandle, run_id: &str, request_id: &str) -> Result<(), String> {
@@ -242,7 +274,7 @@ fn check_once(app: &AppHandle, run_id: &str, request_id: &str) -> Result<(), Str
         }
         Ok(())
     })?;
-    let prompt = format!("Sos el Lead de coordinación, con herramientas SOLO de lectura. Un agente necesita algo de otro. Revisá los archivos actuales y los estados reales de todas las tareas. Los demás siguen trabajando: no los reinicies ni cambies archivos. Respondé resume solo si el solicitante ya puede continuar con un contrato concreto; wait si falta una entrega, indicando IDs reales; blocked si falta información del usuario o hay un fallo. Si falta trabajo no asignado, creá tareas nuevas para el responsable con writePaths propios; no alteres tareas en ejecución. Separá preparación/contrato de integración; evitá esperas circulares.\nPEDIDO: {}\nESTADO ACTUAL DEL EQUIPO: {}\nHISTORIAL DE COORDINACIÓN: {}\nSKILLS DEL LEAD:\n{}\nRespondé SOLO JSON: {{\"status\":\"resume|wait|blocked\",\"summary\":\"estado comprobado, contrato y respuesta concreta al agente\",\"waitForTaskIds\":[],\"tasks\":[],\"resumeTasks\":[]}}. Las tareas nuevas usan el contrato del plan: id,title,objective,assignedAgentId,repository,dependencies,expectedFiles,writePaths,acceptanceCriteria.",serde_json::to_string(request).unwrap_or_default(),serde_json::to_string(&r.tasks).unwrap_or_default(),serde_json::to_string(&r.coordination).unwrap_or_default(),runner::skills_prompt(&r,&employee));
+    let prompt = format!("Sos el Lead de coordinación, con herramientas SOLO de lectura. Un agente necesita algo de otro. Revisá los archivos actuales y los estados reales de todas las tareas. Los demás siguen trabajando: no los reinicies ni cambies archivos. Respondé resume solo si el solicitante ya puede continuar con un contrato concreto; wait si falta una entrega, indicando IDs reales; blocked únicamente ante una decisión imprescindible del usuario o un acceso que realmente no puede resolver el equipo. Un fallo técnico o una prueba faltante requieren diagnóstico y corrección del equipo. Si falta trabajo no asignado, creá tareas nuevas para el responsable con writePaths propios; no alteres tareas en ejecución. Separá preparación/contrato de integración; evitá esperas circulares.\nPEDIDO: {}\nESTADO ACTUAL DEL EQUIPO: {}\nHISTORIAL DE COORDINACIÓN: {}\nSKILLS DEL LEAD:\n{}\nRespondé SOLO JSON: {{\"status\":\"resume|wait|blocked\",\"summary\":\"estado comprobado, contrato y respuesta concreta al agente\",\"waitForTaskIds\":[],\"tasks\":[],\"resumeTasks\":[]}}. Las tareas nuevas usan el contrato del plan: id,title,objective,assignedAgentId,repository,dependencies,expectedFiles,writePaths,acceptanceCriteria.",serde_json::to_string(request).unwrap_or_default(),serde_json::to_string(&r.tasks).unwrap_or_default(),serde_json::to_string(&r.coordination).unwrap_or_default(),runner::skills_prompt(&r,&employee));
     let prompt = format!(
         "{}{}\nINTEGRANTES ACTUALES: {}\nCATÁLOGO DE SKILLS: {}",
         prompt,
@@ -253,6 +285,11 @@ fn check_once(app: &AppHandle, run_id: &str, request_id: &str) -> Result<(), Str
     );
     let prompt = format!("{}\nDEPENDENCIAS CIRCULARES DETECTADAS (IDs): {}\nSi hay un ciclo o se rechazó tu decisión por crearlo, intervení: acordá un contrato concreto para que un integrante avance en preparación y dejá la integración para después. Podés reanudar otras tareas suspendidas con resumeTasks:[{{taskId:ID,summary:instrucción concreta y contrato para continuar sin esperar al otro}}]. Esto libera únicamente sus esperas de coordinación: conserva sus sesiones, archivos, dependencias del plan y criterios originales. No reanuda tareas activas ni terminadas. Podés crear tareas independientes de contrato con writePaths propios, sin invadir archivos reservados. No afirmes que una dependencia ya está implementada si solo acordaste su contrato. No marques una entrega completa ni elimines criterios para romper un ciclo. Si no hay forma segura sin información del usuario, devolvé blocked y explicá la decisión exacta que falta. Respondé en summary qué separaste y quién puede avanzar; no pidas una microdecisión que puedas resolver con el estado actual.",prompt,serde_json::to_string(&cycles).unwrap_or_default());
     let prompt = format!("{}\nAUTONOMÍA DEL LEAD: Los bloqueos técnicos, errores de herramientas y comprobaciones fallidas de los especialistas se te derivan a vos, no al usuario. Si kind=technical_blocker, leé sus intentos, comandos, revisiones y archivos actuales. Diagnosticar un fallo es parte de tu tarea: no uses blocked solamente porque algo falló. Devolvé resume con una solución concreta (comando de verificación correcto, corrección acotada, contrato o alternativa dentro del alcance), o wait con tareas de ayuda válidas si falta una entrega. El trabajador continuará su sesión desde la evidencia actual sin repetir escrituras o efectos ya observados. Conservá criterios, rutas y permisos. Nunca afirmes haber ejecutado la corrección desde tu sesión de lectura. No uses bash u otras herramientas para eludir una autorización. blocked se reserva para una decisión imprescindible del usuario, credenciales/acceso, permisos reales, un control de PC apagado o cuando ya no existe una salida segura dentro del alcance; explicá exactamente qué necesitás y por qué no lo puede resolver el equipo.", prompt);
+    let prompt = format!("{}\nLas preguntas de alcance deben reunirse antes de trabajar. Resolvé las decisiones técnicas y los detalles no especificados con una opción razonable dentro del pedido; registrá las suposiciones y seguí. Si aparece una decisión imprescindible imprevista que solo el usuario puede tomar y no existe alternativa segura, explicá por qué no pudo preverse al principio y, si devolvés blocked, incluí userRequest={{kind:decision,question:pregunta concreta imprescindible}}. No uses esa salida para pedirle ejecutar pruebas, revisar errores, elegir comandos o coordinar agentes: eso es tu trabajo. Para permisos o acceso de cuenta indicá la causa real. Si ya hubo intentos fallidos, cambiá la estrategia o asigná una tarea de diagnóstico/verificación a un especialista con los permisos existentes; no repitas sin cambios la misma instrucción.", prompt);
+    let recoveries = request.replies.iter().filter(|reply| reply["status"] == "recovery_requested").count();
+    let prompt = if recoveries == 0 { prompt } else {
+        format!("{}\nRECUPERACIÓN AUTOMÁTICA DEL LEAD ({}): Tu coordinación anterior falló y el trabajador conserva su sesión y archivos. Revisá las causas de recovery_requested y repair_requested. Cambiá de estrategia: leé el contrato y los resultados existentes, aislá el paso mínimo que permite avanzar y devolvé una instrucción concreta. Si requiere implementación o comprobación adicional, asigná una tarea de ayuda con writePaths propios y esperala. No repitas la decisión rechazada ni solicites al usuario diagnosticar el problema. No repitas efectos del trabajador ni marques pruebas pendientes como aprobadas.", prompt, recoveries)
+    };
     let previous = if reuse {
         Some(client.get_resilient(&format!("/session/{}/message", session))?)
     } else {
@@ -290,6 +327,18 @@ fn apply_decision(r: &mut Run, request_id: &str, mut decision: Decision) -> Resu
         return Err("El Lead devolvió una respuesta de coordinación inválida".into());
     }
     decision.summary = evidence::sanitize(&decision.summary);
+    if decision.status == "blocked" && !super::autonomy::requires_user(&decision.summary)
+        && !decision.user_request.as_ref().is_some_and(|request| request.kind == "decision" && request.question.trim().len() >= 10)
+    {
+        return Err(TECHNICAL_ESCALATION.into());
+    }
+    if decision.status == "blocked" {
+        if let Some(request) = &decision.user_request {
+            if !request.question.trim().is_empty() {
+                decision.summary = format!("{}\nNecesito que decidas: {}", decision.summary, evidence::sanitize(&request.question));
+            }
+        }
+    }
     super::staffing::validate_assignments(&decision.agents, &decision.tasks)?;
     let from = r
         .coordination
@@ -470,6 +519,75 @@ mod tests {
         assert_eq!(r.coordination[0].status, "pending");
         assert!(r.coordination[0].summary.contains("No necesitás intervenir"));
         assert!(!r.coordination[0].summary.contains("circular"));
+    }
+
+    #[test]
+    fn exhausted_coordination_recovers_without_replaying_the_worker() {
+        let mut r = fixture();
+        let original_tasks = serde_json::to_value(&r.tasks).unwrap();
+        request_repair(&mut r, "req", TECHNICAL_ESCALATION).unwrap();
+        request_repair(&mut r, "req", TECHNICAL_ESCALATION).unwrap();
+        let error = request_repair(&mut r, "req", TECHNICAL_ESCALATION).unwrap_err();
+        assert!(recover_after_failure(&mut r, "req", &error, true));
+        let mut restored: Run = serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
+        assert_eq!(ready(&restored).as_deref(), Some("req"));
+        assert_eq!(serde_json::to_value(&restored.tasks).unwrap(), original_tasks);
+        assert_eq!(restored.coordination[0].replies.last().unwrap()["status"], "recovery_requested");
+        assert!(restored.coordination[0].summary.contains("no necesitás reintentar"));
+        request_repair(&mut restored, "req", TECHNICAL_ESCALATION).unwrap();
+        request_repair(&mut restored, "req", TECHNICAL_ESCALATION).unwrap();
+        assert!(request_repair(&mut restored, "req", TECHNICAL_ESCALATION).is_err());
+        assert!(recover_after_failure(&mut restored, "req", &error, true));
+        let mut restored: Run = serde_json::from_str(&serde_json::to_string(&restored).unwrap()).unwrap();
+        let before = serde_json::to_value(&restored).unwrap();
+        assert!(!recover_after_failure(&mut restored, "req", &error, true));
+        assert_eq!(serde_json::to_value(&restored).unwrap(), before);
+    }
+
+    #[test]
+    fn coordinator_recovery_preserves_real_user_gates_and_uncertain_sessions() {
+        for reason in ["La cuenta alcanzó su límite de uso", "Falta autorización", "El control de PC está apagado"] {
+            let mut r = fixture();
+            let before = serde_json::to_value(&r).unwrap();
+            assert!(!recover_after_failure(&mut r, "req", reason, true));
+            assert_eq!(serde_json::to_value(&r).unwrap(), before);
+        }
+        let mut r = fixture();
+        assert!(!recover_after_failure(&mut r,"req","Respuesta estructurada inválida",false));
+        r.coordination[0].status = "blocked".into();
+        assert!(!recover_after_failure(&mut r,"req","Decisión externa imprescindible",true));
+        r.coordination[0].status = "checking".into();
+        r.status = "cancelling".into();
+        assert!(!recover_after_failure(&mut r,"req","Respuesta estructurada inválida",true));
+    }
+
+    #[test]
+    fn technical_block_is_repaired_by_the_lead_instead_of_becoming_a_user_request() {
+        let mut r = fixture();
+        let before = serde_json::to_value(&r).unwrap();
+        let decision: Decision = serde_json::from_value(json!({"status":"blocked","summary":"Falla una prueba de la API; que el usuario la revise."})).unwrap();
+        assert_eq!(apply_decision(&mut r,"req",decision).unwrap_err(),TECHNICAL_ESCALATION);
+        assert_eq!(serde_json::to_value(&r).unwrap(),before);
+        assert!(repairable_decision(TECHNICAL_ESCALATION));
+        request_repair(&mut r,"req",TECHNICAL_ESCALATION).unwrap();
+        assert_eq!(r.coordination[0].status,"pending");
+        assert_eq!(r.tasks[1].status,"waiting_dependency");
+        let repaired: Decision = serde_json::from_value(json!({"status":"resume","summary":"El contrato está en api/schema.json. Completá la comprobación con ese contrato, sin repetir la escritura."})).unwrap();
+        apply_decision(&mut r,"req",repaired).unwrap();
+        assert_eq!(r.tasks[1].status,"pending");
+        assert_eq!(r.coordination[0].status,"resolved");
+    }
+
+    #[test]
+    fn real_account_blocks_and_explicit_user_decisions_remain_visible() {
+        let mut r = fixture();
+        let decision: Decision = serde_json::from_value(json!({"status":"blocked","summary":"La cuenta alcanzó su límite de uso."})).unwrap();
+        apply_decision(&mut r,"req",decision).unwrap();
+        assert_eq!(r.tasks[1].status,"blocked");
+        let mut r = fixture();
+        let decision: Decision = serde_json::from_value(json!({"status":"blocked","summary":"Falta una decisión comercial imprescindible.","userRequest":{"kind":"decision","question":"¿Cuál es la regla de cobro acordada con el cliente?"}})).unwrap();
+        apply_decision(&mut r,"req",decision).unwrap();
+        assert!(r.tasks[1].error.as_deref().unwrap().contains("¿Cuál es la regla de cobro"));
     }
 
     #[test]

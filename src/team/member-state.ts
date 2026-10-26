@@ -4,6 +4,11 @@ import type { TeamAttention } from "./attention.ts"
 type MemberState = { label: string; detail: string; needsHelp: boolean; tone: "idle" | "working" | "waiting" | "blocked" | "done" }
 const state = (label: string, detail: string, tone: MemberState["tone"] = "idle", needsHelp = false): MemberState => ({ label, detail, tone, needsHelp })
 
+export function leadRecovery(run: TeamRun | undefined) {
+  return run?.status === "running" ? run.coordination?.find(c => ["pending", "checking"].includes(c.status)
+    && (c.kind === "technical_blocker" || c.replies?.some(reply => reply.status === "recovery_requested"))) : undefined
+}
+
 export function memberState(member: Employee, chat: TeamChatRecord, run: TeamRun | undefined, attention: TeamAttention[]): MemberState {
   const own = attention.filter(item => item.agentId === member.id)
   const blocked = own.find(item => item.kind !== "waiting")
@@ -21,9 +26,9 @@ export function memberState(member: Employee, chat: TeamChatRecord, run: TeamRun
     if (run.status === "delivering") return state("Preparando entrega", "Está guardando los resultados y sus evidencias.", "working")
     if (["completed", "awaiting_manual_qa"].includes(run.status)) return state("Espera tu revisión", "Todos terminaron el trabajo y sus pruebas. Podés decir «trabajo completado» o pedir mejoras.", "waiting")
     if (run.status === "qa_approved") return state("Completado", "La entrega fue aprobada.", "done")
-    const coordination = run.coordination?.find(c => c.status === "checking") ?? run.coordination?.find(c => c.kind === "technical_blocker" && c.status === "pending")
+    const coordination = leadRecovery(run) ?? run.coordination?.find(c => c.status === "checking")
     if (coordination?.cycleTaskIds?.length) return state("Destrabando equipo", coordination.summary || "Está separando una espera circular para que los integrantes puedan avanzar.", "working")
-    if (coordination?.kind === "technical_blocker") return state("Resolviendo bloqueos", "Está revisando el problema del agente y preparando instrucciones para continuar.", "working")
+    if (coordination && leadRecovery(run) === coordination) return state("Resolviendo bloqueos", coordination.summary || "Está revisando el problema del agente y preparando instrucciones para continuar.", "working")
     if (coordination) return state("Coordinando", "Está revisando un pedido de otro integrante.", "working")
     if (run.tasks.some(t => t.status === "verifying")) return state("Revisando", "Está comprobando las entregas de los especialistas.", "working")
   }

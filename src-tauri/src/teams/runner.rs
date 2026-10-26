@@ -758,7 +758,7 @@ fn plan(app: &AppHandle, id: &str) -> Result<(), String> {
         r.plan_session_id = Some(session.clone());
         Ok(())
     })?;
-    let prompt = format!("{}\n\nActuás como Team Lead. Descubrí convenciones y archivos. Proponé tareas completas asignadas a IDs del equipo según skills y carga; en modo automático podés proponer nuevos especialistas con agents. No modifiques archivos. Cada tarea trabaja en UNA carpeta autorizada; Git puede existir o no y nunca debe inicializarse por este requisito. Frontend, Backend y QA deben avanzar simultáneamente en archivos propios incluso dentro de la misma carpeta. Definí writePaths con archivos relativos o directorios terminados en /; son los únicos lugares que ese agente puede escribir. Repartí archivos compartidos a un único responsable. No agregues dependencias entre Frontend y Backend solo por consumir una API: acordá el contrato en los objetivos y dejá la integración final como tarea dependiente. Usá dependencies solo cuando no existe ningún trabajo útil antes de la entrega. Una tarea sin writePaths reserva toda la carpeta y se ejecuta sola. QA puede preparar pruebas en paralelo y ejecutar la integración al terminar ambos. Si falta QA, asigná comprobaciones a otro miembro o a vos. Los cambios de código requieren comprobaciones pertinentes con bash. Las tareas puramente de web o interfaz pueden tener expectedFiles vacío y se verifican con observaciones reales del navegador o escritorio; no les inventes archivos ni comandos de prueba. No pidas aprobación de microtareas.\nOBJETIVO: {}\nEQUIPO: {}\nSKILLS DEL LEAD:\n{}\nBASELINE: {}\nRespondé SOLO JSON válido: {{\"tasks\":[{{\"id\":\"T1\",\"title\":\"…\",\"objective\":\"…\",\"assignedAgentId\":\"ID existente\",\"repository\":\"ruta autorizada exacta\",\"dependencies\":[],\"expectedFiles\":[\"ruta relativa\"],\"writePaths\":[\"ruta relativa o directorio/\"],\"acceptanceCriteria\":[\"comportamiento comprobable y pruebas pertinentes\"]}}]}}", POLICY, r.goal, serde_json::to_string(&r.team).map_err(|e| e.to_string())?, skills_prompt(&r, &a), evidence::sanitize(&serde_json::to_string(&r.baseline).map_err(|e| e.to_string())?));
+    let prompt = format!("{}\n\nActuás como Team Lead. Descubrí convenciones y archivos. Proponé tareas completas asignadas a IDs del equipo según skills y carga; en modo automático podés proponer nuevos especialistas con agents. No modifiques archivos. Cada tarea trabaja en UNA carpeta autorizada; Git puede existir o no y nunca debe inicializarse por este requisito. Frontend, Backend y QA deben avanzar simultáneamente en archivos propios incluso dentro de la misma carpeta. Definí writePaths con archivos relativos o directorios terminados en /; son los únicos lugares que ese agente puede escribir. Repartí archivos compartidos a un único responsable. No agregues dependencias entre Frontend y Backend solo por consumir una API: acordá el contrato en los objetivos y dejá la integración final como tarea dependiente. Usá dependencies solo cuando no existe ningún trabajo útil antes de la entrega. Una tarea sin writePaths reserva toda la carpeta y se ejecuta sola. QA puede preparar pruebas en paralelo y ejecutar la integración al terminar ambos. Si falta QA, asigná comprobaciones a otro miembro o a vos. Los cambios de código requieren comprobaciones pertinentes con bash. Las tareas puramente de web o interfaz pueden tener expectedFiles vacío y se verifican con observaciones reales del navegador o escritorio; no les inventes archivos ni comandos de prueba. No pidas aprobación de microtareas. Las preguntas imprescindibles de alcance se reúnen en el chat antes de iniciar. Durante el trabajo, resolvé las decisiones técnicas con opciones razonables y explicitá las suposiciones en la entrega. Los especialistas piden ayuda al Lead, no al usuario. No solicites QA manual ni detengas tareas por pruebas o errores que el equipo pueda resolver. Solo un permiso/acceso real o una decisión imprescindible imprevista sin alternativa segura justifica consultar antes del final; explicá por qué no se pudo prever al principio.\nOBJETIVO: {}\nEQUIPO: {}\nSKILLS DEL LEAD:\n{}\nBASELINE: {}\nRespondé SOLO JSON válido: {{\"tasks\":[{{\"id\":\"T1\",\"title\":\"…\",\"objective\":\"…\",\"assignedAgentId\":\"ID existente\",\"repository\":\"ruta autorizada exacta\",\"dependencies\":[],\"expectedFiles\":[\"ruta relativa\"],\"writePaths\":[\"ruta relativa o directorio/\"],\"acceptanceCriteria\":[\"comportamiento comprobable y pruebas pertinentes\"]}}]}}", POLICY, r.goal, serde_json::to_string(&r.team).map_err(|e| e.to_string())?, skills_prompt(&r, &a), evidence::sanitize(&serde_json::to_string(&r.baseline).map_err(|e| e.to_string())?));
     let prompt=format!("{}\nSi el proyecto tiene UI web y no hay flujos configurados en el equipo, agregá evidenceTargets al JSON del plan: [{{\"id\":\"flujo-estable\",\"name\":\"Flujo\",\"url\":\"http://localhost:PUERTO/ruta-local-descubierta\",\"width\":1280,\"height\":800,\"maskSelectors\":[],\"actions\":[],\"required\":false}}]. Solo URLs locales observadas en la configuración del repo; no inventes una URL ni levantes servicios desde esta sesión de lectura. Los pasos admiten {{kind:click|fill|wait,selector:selectorCSS,value:opcional}}; no incluyas secretos. El runner captura antes de cualquier escritura y después del trabajo. Si no hay UI, evidenceTargets vacío.",prompt);
     let prompt = format!(
         "{}{}\nCATÁLOGO DE SKILLS: {}",
@@ -1204,6 +1204,12 @@ pub fn reconcile(app: &AppHandle, r: &Run, abort: bool) -> Result<(), String> {
     })
 }
 
+fn needs_closeout_repair(verdict: &Closeout) -> bool {
+    verdict.tasks.is_empty()
+        && !(matches!(verdict.review.status, ReviewStatus::Approved) && verdict.review.criteria_satisfied)
+        && !super::autonomy::requires_user(&verdict.review.summary)
+}
+
 fn closeout(app: &AppHandle, id: &str) -> Result<bool, String> {
     let r = run(app, id)?;
     let a = lead(&r)?;
@@ -1233,6 +1239,17 @@ fn closeout(app: &AppHandle, id: &str) -> Result<bool, String> {
     let prompt = format!("{}{}", prompt, super::staffing::prompt(&r.team));
     let response = execute(app, id, &client, &session, &a, &prompt, true)?;
     let mut verdict: Closeout = parse_json(&final_text(&response))?;
+    for attempt in 0..2 {
+        if !needs_closeout_repair(&verdict) { break; }
+        let reason = evidence::sanitize(&verdict.review.summary);
+        update_run(app, id, |r| {
+            r.configuration_changes.push(json!({"kind":"automaticCloseoutRepair","at":now(),"sessionId":session,"attempt":attempt+1,"reason":reason}));
+            Ok(())
+        })?;
+        let correction = format!("{}\nTu cierre anterior no confirma la entrega y no asigna tareas para resolver lo que falta. Eso es trabajo del equipo, no QA manual del usuario. Revisá el estado y devolvé approved solo si todo está comprobado; si falta algo, devolvé changes_requested con tareas concretas y válidas para implementarlo/verificarlo. No pidas al usuario ejecutar pruebas o corregir errores técnicos. Conservá criterios, permisos, archivos y resultados previos.\nCIERRE A CORREGIR: {}", prompt, reason);
+        let response = execute(app, id, &client, &session, &a, &correction, true)?;
+        verdict = parse_json(&final_text(&response))?;
+    }
     verdict.review.summary = evidence::sanitize(&verdict.review.summary);
     if verdict.review.summary.trim().is_empty() {
         return Err("review_error: el cierre no tiene un veredicto explicativo".into());
@@ -1376,6 +1393,9 @@ fn schedule(app: &AppHandle, id: &str) -> Result<(), String> {
                     })
                     .unwrap_or(true);
                 update_run(app, id, |r| {
+                    if super::coordination::recover_after_failure(r, &request_id, &error, stopped) {
+                        return Ok(());
+                    }
                     let c = r
                         .coordination
                         .iter_mut()
@@ -1583,6 +1603,18 @@ fn schedule(app: &AppHandle, id: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn technical_closeout_must_assign_repairs_instead_of_asking_for_manual_qa() {
+        for status in ["review_error", "changes_requested", "approved"] {
+            let verdict: Closeout = serde_json::from_value(json!({"status":status,"criteriaSatisfied":false,"summary":"Falta probar la integración; que el usuario la revise.","tasks":[]})).unwrap();
+            assert!(needs_closeout_repair(&verdict));
+        }
+        let approved: Closeout = serde_json::from_value(json!({"status":"approved","criteriaSatisfied":true,"summary":"Integración comprobada","tasks":[]})).unwrap();
+        assert!(!needs_closeout_repair(&approved));
+        let access: Closeout = serde_json::from_value(json!({"status":"review_error","criteriaSatisfied":false,"summary":"La cuenta alcanzó su límite de uso","tasks":[]})).unwrap();
+        assert!(!needs_closeout_repair(&access));
+    }
 
     #[test]
     fn abandoned_intermediate_answers_do_not_wait_for_the_full_session_timeout() {

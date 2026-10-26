@@ -262,7 +262,7 @@ fn native_team_end_to_end() {
             assert!(read_db(&db(&handle).unwrap()).unwrap().chats[0].runs[0].notified);
             update(&handle, |store| {
                 let saved = store.chats.iter_mut().find(|c| c.id == chat.id).unwrap();
-                saved.messages.push(ChatMessage { id: "pending-status-test".into(), role: "assistant".into(), text: String::new(), created_at: now(), status: "pending".into(), run_id: Some(run_id.clone()), session_id: Some("lead-status-observation".into()), images: vec![] });
+                saved.messages.push(ChatMessage { clarification_start: None, id: "pending-status-test".into(), role: "assistant".into(), text: String::new(), created_at: now(), status: "pending".into(), run_id: Some(run_id.clone()), session_id: Some("lead-status-observation".into()), images: vec![] });
                 Ok(())
             }).unwrap();
             let query = conversation::send(handle.clone(), chat.id.clone(), "¿Quién está bloqueado y qué falló?".into(), vec![]).unwrap();
@@ -511,6 +511,8 @@ fn circular_team_scenario(handle: &tauri::AppHandle, repo: &str) {
         assert!(!backend.attempts[1].review.as_ref().unwrap().criteria_satisfied);
         assert!(frontend.attempts[0].finished_at.unwrap() <= backend.attempts[2].started_at, "Independent Frontend must finish while Backend is being repaired");
         assert!(result.coordination.iter().all(|c| c.kind == "technical_blocker"));
+        assert!(result.configuration_changes.iter().any(|c| c["kind"] == "automaticCloseoutRepair"), "A technical closeout cannot be delegated to the user");
+        assert!(result.configuration_changes.iter().any(|c| c["kind"] == "automaticCoordinatorRecovery"), "The Lead must recover its own exhausted corrections without blocking the team");
     } else { assert!(result.tasks.iter().all(|t| t.attempts.len() == 1)); }
     assert_eq!(result.coordination.len(), 2);
     assert!(result.coordination.iter().all(|c| c.status == "resolved"));
@@ -569,7 +571,14 @@ fn automatic_team_scenario(handle: &tauri::AppHandle, repo: &str) {
     let history = runner::test_client(handle, repo).unwrap().get(&format!("/session/{}/message", observed.session_id.unwrap())).unwrap();
     assert!(history.as_array().unwrap().iter().flat_map(|m| m["parts"].as_array().into_iter().flatten()).any(|p| p["tool"] == "desktop_status" && p["state"]["status"] == "completed"));
     let request = team_chat_send(handle.clone(), chat.id.clone(), "Crear dos servicios Backend y una pantalla Frontend, repartidos por el Lead".into(), None).unwrap();
-    wait_reply(&request);
+    let clarification = wait_reply(&request);
+    assert!(clarification.text.contains("Antes de empezar") && clarification.text.contains("saludo") && clarification.text.contains("dependencias"));
+    assert!(clarification.clarification_start.is_some());
+    assert!(read(handle).unwrap().chats[0].runs.is_empty(), "unanswered questions must not start workers, even with action=work");
+    let saved = read_db(&db(handle).unwrap()).unwrap();
+    assert_eq!(saved.chats[0].messages.last().unwrap().clarification_start, clarification.clarification_start);
+    let answer = team_chat_send(handle.clone(), chat.id.clone(), "Usá hola mundo; sin dependencias externas".into(), None).unwrap();
+    wait_reply(&answer);
     let id = read(handle).unwrap().chats[0].runs[0].id.clone();
     let status_reply = team_chat_send(handle.clone(), chat.id.clone(), "¿Cómo va el estado?".into(), None).unwrap();
     let message = wait_reply(&status_reply);
@@ -610,12 +619,12 @@ fn automatic_team_scenario(handle: &tauri::AppHandle, repo: &str) {
     assert!(team_image_read(handle.clone(), persisted.chats[0].runs[0].images[0].id.clone()).is_err());
     std::fs::write(&image_path, original_image).unwrap();
     assert_eq!(persisted.chats[0].runs.len(), 1, "conversation must not duplicate runs");
-    assert_eq!(persisted.chats[0].messages.len(), 8);
+    assert_eq!(persisted.chats[0].messages.len(), 10);
     let mut interrupted = persisted.clone();
-    interrupted.chats[0].messages[7].status = "pending".into();
+    interrupted.chats[0].messages[9].status = "pending".into();
     recover(&mut interrupted);
-    assert_eq!(interrupted.chats[0].messages[7].status, "interrupted");
-    assert!(interrupted.chats[0].messages[7].text.contains("no se repitió"));
+    assert_eq!(interrupted.chats[0].messages[9].status, "interrupted");
+    assert!(interrupted.chats[0].messages[9].text.contains("no se repitió"));
     assert_eq!(interrupted.chats[0].runs.len(), 1);
     if std::env::var("GUILLE_TEAM_TEST_TRANSPORT").as_deref() == Ok("1") {
         // A real blocked task must not prevent a later independent task from
