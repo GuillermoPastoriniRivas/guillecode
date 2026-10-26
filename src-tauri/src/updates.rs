@@ -50,6 +50,7 @@ struct Progress {
 pub struct UpdatePolicy {
     edition: &'static str,
     requires_source_integration: bool,
+    local_build: Option<String>,
 }
 
 const LOCAL_UPDATE_REASON: &str = "Esta edición incluye Equipos IA y cambios locales. Para conservarlos, integrá la actualización en el código de esta rama, verificá y compilá un instalador combinado. El instalador público reemplazaría esta edición.";
@@ -82,6 +83,10 @@ pub fn update_policy(app: AppHandle) -> UpdatePolicy {
     UpdatePolicy {
         edition: "Equipos IA",
         requires_source_integration: requires_integration(&app),
+        local_build: app.config().plugins.0
+            .get("guillecodeBuild")
+            .and_then(|value| value["revision"].as_str())
+            .map(str::to_owned),
     }
 }
 
