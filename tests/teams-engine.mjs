@@ -156,8 +156,14 @@ const mock = createServer(async (request, response) => {
     if (latestUserPrompt.includes("MENSAJE ACTUAL: Consultá las herramientas")) {
       if (!body.input.some(i => i.type === "function_call_output")) item = { type: "function_call", id: `fc-pc-${Date.now()}`, call_id: "call-pc", name: "desktop_status", arguments: "{}", status: "completed" }
       else { await delay(1500); item = message({ action: "reply", reply: "El estado de la PC fue observado con la herramienta. Todavía no inicié tareas del proyecto." }) }
-    } else item = message({ action: latestUserPrompt.includes("MENSAJE ACTUAL: Crear dos servicios") ? "work" : "reply", reply: "Elijo los especialistas necesarios y reparto tareas independientes para trabajar en paralelo." })
+    } else if (latestUserPrompt.includes("MENSAJE ACTUAL: Crear dos servicios")) {
+      item = message({ action: "work", questions: ["¿Qué saludo deben mostrar los servicios?", "¿Se permiten dependencias externas?"] })
+    } else item = message({ action: latestUserPrompt.includes("MENSAJE ACTUAL: Usá hola mundo") ? "work" : "reply", reply: "Elijo los especialistas necesarios y reparto tareas independientes para trabajar en paralelo.", questions: [] })
   } else if (autonomous) {
+    if (leadPhase === "plan") {
+      assert.ok(latestUserPrompt.includes("Crear dos servicios Backend y una pantalla Frontend"), "Planning must retain the original request")
+      assert.ok(latestUserPrompt.includes("Usá hola mundo; sin dependencias externas"), "Planning must retain the clarification answers")
+    }
     if (leadPhase === "plan") item = message({ agents: [{ id: "back-1", role: "Backend" }, { id: "back-2", role: "Backend" }, { id: "front-1", role: "Frontend" }], tasks: ["back-1", "back-2", "front-1"].map(id => ({ id, title: id, objective: `Crear ${id}.txt y comprobarlo`, assignedAgentId: id, repository: repo, dependencies: [], expectedFiles: [`${id}.txt`], writePaths: [`${id}.txt`], acceptanceCriteria: ["Archivo creado y comprobado"] })) })
     else if (leadPhase) { reviews++; item = message({ status: "approved", summary: "Los tres archivos y sus comprobaciones observadas están correctos.", criteriaSatisfied: true, tasks: [], chatSummary: { done: "Creé dos servicios y la pantalla.", tested: "Las tres comprobaciones pasaron.", pending: "Nada pendiente." } }) }
     else {
