@@ -47,9 +47,35 @@ export function problemHelp(item: TeamAttention): { text: string; model?: boolea
   if (item.kind === "permission") return { text: "Abrí el permiso de este agente y revisá la acción que pide autorizar. El equipo espera esa decisión." }
   if (item.kind === "question") return { text: "Abrí la pregunta de este agente y respondela. Esa respuesta le permite continuar." }
   if (item.kind === "waiting") return { text: "Esta espera la coordina el Lead. Consultá su estado; no hace falta repetir la tarea de este integrante." }
-  if (/límite de uso|límite de la cuenta|saldo|facturación|cuota/.test(reason)) return { text: "Esperá a que se renueve el límite o elegí un modelo con acceso disponible en Configuración. Después continuá lo pendiente; reintentar por sí solo no cambia el límite.", model: true }
+  if (/saldo|facturación|requisito de pago/.test(reason)) return { text: "Revisá el saldo o la facturación de esa cuenta, o elegí otro modelo con acceso disponible. Después continuá lo pendiente; reintentar por sí solo no resuelve el requisito de pago.", model: true }
+  if (/límite de uso|límite de la cuenta|cuota/.test(reason)) return { text: "Esperá a que se renueve el límite o elegí un modelo con acceso disponible en Configuración. Después continuá lo pendiente; reintentar por sí solo no cambia el límite.", model: true }
   if (/cuenta|modelo.*(disponible|restringido)|reconect|variante/.test(reason)) return { text: "Revisá la conexión de esa cuenta o cambiá el modelo en Configuración. Después continuá lo pendiente.", model: true }
   if (/permiso|autorización|control.*apagado|ventana.*(navegador|elegida)/.test(reason)) return { text: "Revisá en Actividad qué acceso falta y habilitá solo lo que corresponda al pedido. Después pedile al Lead que continúe." }
   if (/conexión|inactiva|no respondió|motor|tiempo|minutos/.test(reason)) return { text: "Revisá la última actividad de esa sesión y la conexión del motor. Al continuar, el equipo comprobará lo ya ejecutado antes de retomar; tus cambios se conservan." }
   return { text: "Preguntale al Lead por este bloqueo o dale el dato que falta. Podés continuar lo pendiente para que revise el estado guardado y retome las tareas sin empezar de cero." }
+}
+
+export function problemBrief(item: TeamAttention, run?: TeamRun) {
+  const short = (text: string, limit: number) => {
+    const flat = text.replace(/\s+/g, " ").trim().replace(/[.!]$/, "")
+    return flat.length <= limit ? flat : `${flat.slice(0, limit - 1).replace(/\s+\S*$/, "")}…`
+  }
+  const tasks = run?.tasks.filter(t => t.assignedAgentId === item.agentId) ?? []
+  const work = tasks.length ? tasks.slice(0, 2).map(t => short(t.title, 48)).join("; ") + (tasks.length > 2 ? ` y ${tasks.length - 2} más` : "")
+    : run?.team?.leadAgentId === item.agentId && item.id.startsWith("coordination-") ? "Coordinar el equipo" : short(item.task, 90)
+  const help = problemHelp(item)
+  const reason = readableTeamError(item.reason)
+  const payment = /saldo|facturación|requisito de pago/i.test(reason)
+  const quota = /límite de uso|límite de la cuenta|cuota/i.test(reason)
+  const because = payment ? "La cuenta necesita saldo o revisar su facturación" : quota ? "La cuenta llegó a su límite de uso" : short(firstTeamSentence(reason), 125)
+  const next = item.kind === "permission" ? "Revisá el permiso que te pedí."
+    : item.kind === "question" ? "Respondé la pregunta de mi sesión."
+    : item.kind === "waiting" ? "El Lead está a cargo de coordinar esta espera."
+    : payment ? "Revisá el saldo o elegí otro modelo con acceso."
+    : quota ? "Cambiá el modelo o esperá a que se renueve el límite."
+    : help.model ? "Revisá la cuenta o elegí otro modelo."
+    : /conexión/.test(reason) ? "Revisá la conexión y pedime que continúe."
+    : /prueba|verificación|comprobación/.test(reason) ? "Pedime que repita la prueba pendiente."
+    : "Preguntame qué falta o pedime que continúe."
+  return { work, blocked: short(item.task, 80), because, next }
 }
