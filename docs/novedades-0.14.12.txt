@@ -1,0 +1,5 @@
+Equipos IA: cuando el Lead se frena, el encabezado explica quién necesita ayuda con un resumen breve de tres líneas: qué tareas tenía, qué lo frena y qué hace falta para seguir. Los detalles quedan plegados y se pueden abrir en un diagnóstico ampliado, útil cuando el panel de chat es angosto. Las esperas coordinadas por el Lead quedan plegadas detrás del problema principal, las tareas independientes siguen avanzando y los errores de cuenta o proveedor se explican en lenguaje claro.
+
+Mientras el Lead responde podés preguntar «qué falló», «quién está bloqueado» o «cómo va»: la consulta se responde desde el registro guardado, sin interrumpir su sesión ni duplicar trabajo. Si el motor deja una respuesta intermedia inactiva durante 90 segundos sin resultado final, se informa conservando la sesión y sus efectos; ejecutar una herramienta o esperar un permiso reinicia ese reloj.
+
+Las compilaciones locales pueden mostrar su revisión aparte de la versión oficial en Actualizaciones, y `app.exe --build-info` informa la identidad embebida sin abrir ventanas ni modificar el perfil. El origen de las actualizaciones sigue siendo exclusivamente este repositorio.
