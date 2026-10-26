@@ -61,7 +61,9 @@ async function setup(page: Page) {
       })
       const run = chat.runs.at(-1)
       chat.messages.push({ id: `u-${chat.messages.length}`, role: "user", text, images, status: "complete", createdAt: Date.now(), runId: run?.id ?? null, sessionId: null })
-      if (text.trim().toLowerCase() === "trabajo completado" && run && ["completed", "awaiting_manual_qa"].includes(run.status)) {
+      if ((chat.messages??[]).some(m => m.status === "pending") && /quién.*bloqueado|qué falló|cómo va/i.test(text)) {
+        chat.messages.push({ id: `status-${chat.messages.length}`, role: "assistant", text: "El Lead sigue atendiendo tu pedido; esta consulta no interrumpe su sesión.", status: "complete", createdAt: Date.now(), runId: run?.id ?? null, sessionId: null })
+      } else if (text.trim().toLowerCase() === "trabajo completado" && run && ["completed", "awaiting_manual_qa"].includes(run.status)) {
         run.status = "qa_approved"
         chat.messages.push({ id: `a-${chat.messages.length}`, role: "assistant", text: "Registré tu visto bueno: trabajo completado. La entrega y sus evidencias quedan guardadas.", status: "complete", createdAt: Date.now(), runId: run.id, sessionId: null })
       } else if (/qué falló|cómo va/i.test(text)) {
@@ -300,9 +302,9 @@ test("el equipo abre como chat, envía con Enter y oculta controles técnicos ir
   run.error = "El plan debe contener entre 1 y 100 tareas"
   run.sessionUsage = { plan: { tokens: 100, costUsd: 0 } }
   await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
-  await expect(page.getByRole("status")).toContainText("lo reparará al continuar")
-  await expect(page.getByRole("button", { name: "Continuar lo pendiente" })).toBeVisible()
-  await expect(page.getByText("Podés preguntarle al Lead qué falló", { exact: false })).toBeVisible()
+  await expect(page.getByRole("region", { name: "Bloqueos del equipo" })).toContainText("plan de trabajo válido")
+  await expect(page.getByRole("region", { name: "Bloqueos del equipo" }).getByRole("button", { name: "Continuar lo pendiente" })).toBeVisible()
+  await expect(page.getByRole("button", { name: "Preguntarle al Lead qué pasó", exact: true })).toBeVisible()
   await expect(page.getByText("Ajustar límites de esta ejecución")).toHaveCount(0)
   await expect(page.getByText("Cambiar el modelo que falló")).toHaveCount(0)
   await expect(page.getByText("Uso de esta ejecución")).toHaveCount(0)
@@ -324,21 +326,21 @@ test("los errores guardados del proveedor son legibles en chat, tareas y activid
     await expect(page.locator(".team-chat")).toContainText("alcanzó su límite de uso")
     await expect(page.locator(".team-chat")).not.toContainText("responseHeaders")
     await expect(page.locator(".team-chat")).not.toContainText("PRIVATE-")
-    const banner = await page.locator(".team-chat > .team-error").boundingBox()
-    expect(banner!.height).toBeLessThan(160)
+    const banner = await page.locator(".team-chat-header").boundingBox()
+    expect(banner!.height).toBeLessThan(200)
   }
   await page.getByRole("button", { name: "Chat", exact: true }).click()
-  await expect(page.getByText("Reintentar no restablece el saldo", { exact: false })).toBeVisible()
-  await expect(page.getByRole("button", { name: "Continuar lo pendiente" })).toBeVisible()
+  await expect(page.getByRole("region", { name: "Bloqueos del equipo" }).getByText("reintentar por sí solo no cambia", { exact: false })).toBeVisible()
+  await expect(page.getByRole("region", { name: "Bloqueos del equipo" }).getByRole("button", { name: "Continuar lo pendiente" })).toBeVisible()
   await expect(page.getByText("Ajustar límites de esta ejecución")).toHaveCount(0)
   run.tasks = []
   run.error = "fatal: not a git repository (or any of the parent directories): .git"
   await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
-  await expect(page.locator(".team-chat > .team-error")).toContainText("Eso no impide trabajar en esa carpeta")
-  await expect(page.locator(".team-chat > .team-error")).not.toContainText("fatal:")
+  await expect(page.locator(".team-attention")).toContainText("Eso no impide trabajar en esa carpeta")
+  await expect(page.locator(".team-attention")).not.toContainText("fatal:")
   run.error = "Falta una comprobación satisfactoria observada para cada comando declarado."
   await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
-  await expect(page.locator(".team-chat > .team-error")).toContainText("El agente dio pruebas por aprobadas, pero falta el registro")
+  await expect(page.locator(".team-attention")).toContainText("El agente dio pruebas por aprobadas, pero falta el registro")
   await page.screenshot({ path: test.info().outputPath("error-proveedor-legible.png") })
 })
 
@@ -423,8 +425,8 @@ test("se conversa con el Lead durante bloqueos y trabajo sin duplicar las tareas
   const member = run.team.members[1]
   run.tasks = [{ id: "front", title: "Página de saludo", objective: "Página", assignedAgentId: member.id, repository: run.team.projectRoot, dependencies: [], expectedFiles: [], acceptanceCriteria: [], status: "blocked", error: run.error, attempts: [{ id: "a", agent: member, sessionId: null, reviewSessionId: null, startedAt: Date.now(), finishedAt: null, status: "blocked", summary: "", error: null, review: null, commands: [{ command: "node --check app.js", exitCode: 0, output: "" }], declaredChecks: ["node test-http.js"] }] }]
   await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
-  await expect(page.locator(".team-chat > .team-error")).toContainText("Página de saludo")
-  await expect(page.locator(".team-chat > .team-error")).toContainText("Falta registrar el resultado")
+  await expect(page.locator(".team-attention")).toContainText("Página de saludo")
+  await expect(page.locator(".team-attention")).toContainText("Falta registrar el resultado")
   await composer.fill("¿Qué falló?")
   await expect(page.getByRole("button", { name: "Enviar", exact: true })).toBeEnabled()
   await composer.press("Enter")
@@ -458,14 +460,16 @@ test("el encabezado avisa quién está bloqueado aunque los otros sigan trabajan
   run.chatSummary = { done: "Organicé las dos tareas.", tested: "Todavía no finalizamos las pruebas.", pending: "Nada pendiente." }
   await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
   const header = page.locator(".team-chat-header")
-  const notice = header.getByRole("region", { name: "Bloqueos del equipo" })
+  const notice = page.getByRole("region", { name: "Bloqueos del equipo" })
   await expect(header).toContainText("Trabajando · 1 bloqueo")
-  await expect(notice).toContainText(`Bloqueado · ${front.name}`)
+  await expect(notice.locator(".team-problem-heading")).toContainText(front.name)
   await expect(notice).toContainText("No se pudo conectar con la API local")
   await expect(notice).toContainText("Las tareas independientes siguen trabajando")
   await expect(page.locator(".team-chat-message .team-lead-message")).not.toContainText("Nada pendiente")
   for (const view of ["Actividad", "Tareas", "Chat"]) {
     await page.getByRole("button", { name: view, exact: true }).click()
+    await expect(header.locator(".team-attention-summary")).toBeInViewport()
+    await header.locator(".team-attention-summary").click()
     await expect(notice).toBeInViewport()
   }
   await page.screenshot({ path: test.info().outputPath("lead-avisa-bloqueo-con-otros-trabajando.png") })
@@ -485,7 +489,8 @@ test("el encabezado distingue una espera entre agentes de un permiso y permite a
   run.coordination = [{ id: "request", fromTaskId: front.id, message: "Necesito el contrato de la API.", taskIds: [back.id], status: "waiting", summary: "", createdAt: Date.now(), sessions: ["coordination"] }]
   await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
   const notice = page.getByRole("region", { name: "Bloqueos del equipo" })
-  await expect(notice).toContainText(`En espera · ${front.name}`)
+  await expect(notice.locator(".team-problem-heading")).toContainText(front.name)
+  await expect(notice.locator(".team-problem-heading")).toContainText("En espera")
   await expect(notice).toContainText(`Espera una entrega de ${back.name}`)
   await expect(notice).not.toContainText("Bloqueado")
   await page.evaluate(async (sessionID) => {
@@ -493,7 +498,7 @@ test("el encabezado distingue una espera entre agentes de un permiso y permite a
     const request = { id: "permission", sessionID, permission: "bash", patterns: [], metadata: {}, always: [] }
     useAgent.setState({ permissions: [request, { ...request, id: "foreign", sessionID: "otro-chat" }] })
   }, `session-${front.id}`)
-  await expect(notice).toContainText(`Bloqueado · ${front.name}`)
+  await expect(notice.locator(".team-problem-heading")).toContainText(front.name)
   await expect(notice).toContainText("Espera tu autorización")
   await expect(notice.locator("article")).toHaveCount(1)
   await notice.screenshot({ path: test.info().outputPath("lead-identifica-permiso-pendiente.png") })
@@ -585,7 +590,7 @@ test("se puede cambiar el modelo del Lead tras un rechazo sin recrear el chat", 
   chat.messages = [{ id: "failed", role: "assistant", text: "Ese modelo gratuito de OpenCode Zen está restringido a la aplicación OpenCode. Elegí otro modelo en Configuración.", status: "error", createdAt: Date.now(), sessionId: "failed-lead", runId: null }]
   await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
   await expect(page.locator(".team-chat-header")).toContainText("Necesita tu ayuda · 1 bloqueo")
-  await expect(page.locator(".team-chat-header")).toContainText("Bloqueado · Lead")
+  await expect(page.locator(".team-chat-header .team-attention-summary")).toContainText("Lead")
   await page.getByRole("button", { name: "Configuración del equipo", exact: true }).click()
   await page.getByLabel("Modelo de Team Lead para nuevos mensajes", { exact: true }).selectOption("openai/worker")
   await expect(page.getByLabel("Modelo de Team Lead para nuevos mensajes", { exact: true })).toHaveValue("openai/worker")
@@ -723,4 +728,54 @@ test("QA manual viene después del trabajo: mejoras crean otra entrega y trabajo
   expect(second.status).toBe("qa_approved")
   expect(first.status).toBe("completed")
   expect(calls.filter(c => c.command === "team_chat_send")).toHaveLength(3)
+})
+
+
+test("un Lead bloqueado explica causa y ayuda sin comprimir el chat, y acepta consultas durante su pedido", async ({ page }) => {
+  const { store, calls } = await setup(page)
+  await createTeam(page)
+  const composer = page.getByLabel("Mensaje para el equipo", { exact: true })
+  await composer.fill("Crear frontend y backend")
+  await composer.press("Enter")
+  const chat = store.chats[0], run = chat.runs[0]
+  const worker = run.team.members.find(m => m.role === "Frontend")!
+  run.status = "blocked"
+  run.tasks = [{id:"front",title:"Conectar el formulario con la API",objective:"Integrar",assignedAgentId:worker.id,repository:run.team.projectRoot,dependencies:[],expectedFiles:[],acceptanceCriteria:[],status:"blocked",error:"La cuenta o el proveedor alcanzó su límite de uso.",attempts:[{id:"attempt",agent:worker,sessionId:"front-session",reviewSessionId:null,startedAt:Date.now(),finishedAt:Date.now(),status:"blocked",summary:"UI guardada",error:null,review:null,commands:[]}]}]
+  run.coordination = [{id:"help",kind:"technical_blocker",fromTaskId:"front",message:"Necesito el contrato",taskIds:[],status:"blocked",summary:"La cuenta o el proveedor alcanzó su límite de uso.",createdAt:Date.now(),sessions:["coordination-lead"]}]
+  chat.messages = [{id:"busy-lead",role:"assistant",text:"",createdAt:Date.now(),status:"pending",runId:run.id,sessionId:"lead-conversation"}]
+  await page.evaluate(async () => {const {refreshTeams}=await import(/* @vite-ignore */ "/src/state/teams.ts");await refreshTeams()})
+  await page.setViewportSize({width:1000,height:650})
+  const header = page.locator(".team-chat-header"), notice = page.getByRole("region",{name:"Bloqueos del equipo"})
+  await expect(header.locator(".team-attention-summary")).toContainText("Lead")
+  await header.locator(".team-attention-summary").click()
+  const blocked = notice.locator(".team-problem-card.blocked")
+  await expect(blocked.locator(".team-problem-heading")).toContainText("Lead")
+  await expect(blocked.locator(".team-problem-heading")).toBeInViewport()
+  await expect(blocked).toContainText("Qué pasó")
+  await expect(blocked).toContainText("alcanzó su límite de uso")
+  await expect(blocked).toContainText("Qué podés hacer")
+  await expect(blocked).toContainText("reintentar por sí solo no cambia el límite")
+  await expect(notice.locator(".team-waiting-details")).not.toHaveAttribute("open","")
+  await expect(page.locator(".team-chat-body")).toHaveJSProperty("scrollWidth", await page.locator(".team-chat-body").evaluate(el=>el.clientWidth))
+  const dimensions = await page.locator(".team-chat").evaluate(el=>({header:el.querySelector(".team-chat-header")!.getBoundingClientRect().height,body:el.querySelector(".team-chat-body")!.getBoundingClientRect().height,composer:el.querySelector("textarea")!.getBoundingClientRect().height}))
+  expect(dimensions.header).toBeLessThan(190)
+  expect(dimensions.body).toBeGreaterThan(120)
+  expect(dimensions.composer).toBeGreaterThan(55)
+  await page.screenshot({path:test.info().outputPath("lead-bloqueado-causa-y-ayuda.png")})
+  await blocked.getByText("Qué podés hacer",{exact:true}).scrollIntoViewIfNeeded()
+  await page.screenshot({path:test.info().outputPath("lead-bloqueado-como-ayudar.png")})
+  await notice.getByRole("button",{name:"Ampliar diagnóstico",exact:true}).click()
+  const diagnosis = page.getByRole("dialog",{name:"Diagnóstico del equipo"})
+  await expect(diagnosis).toBeVisible()
+  await expect(diagnosis.locator(".team-problem-card.blocked").getByText("Qué pasó",{exact:true})).toBeInViewport()
+  await expect(diagnosis.locator(".team-problem-card.blocked").getByText("Qué podés hacer",{exact:true})).toBeInViewport()
+  await page.screenshot({path:test.info().outputPath("lead-diagnostico-ampliado.png")})
+  await diagnosis.getByRole("button",{name:"Preguntarle al Lead qué pasó",exact:true}).click()
+  await expect(composer).toHaveValue("¿Quién está bloqueado, por qué y qué ayuda necesitás de mí?")
+  await expect(page.getByRole("button",{name:"Enviar",exact:true})).toBeEnabled()
+  await composer.press("Enter")
+  await expect(page.getByText("El Lead sigue atendiendo tu pedido; esta consulta no interrumpe su sesión.",{exact:true})).toBeVisible()
+  expect(chat.messages.find(m=>m.id==="busy-lead")!.status).toBe("pending")
+  expect(chat.runs).toHaveLength(1)
+  expect(calls.filter(c=>c.command==="team_chat_send")).toHaveLength(2)
 })

@@ -84,6 +84,10 @@ fn status_question(text: &str) -> bool {
             "como va",
             "que hiciste",
             "que probaste",
+            "quien esta bloqueado",
+            "quien se trabo",
+            "que lo frena",
+            "que necesitas de mi",
         ]
         .iter()
         .any(|s| text.contains(s))
@@ -110,13 +114,23 @@ pub(super) fn diagnosis(run: Option<&Run>) -> String {
         })
         .take(3)
         .collect();
+    let coordination = run.coordination.iter().rev().find(|c| c.status == "blocked" || c.status == "checking" && matches!(run.status.as_str(), "blocked" | "failed"));
+    if let Some(request) = coordination {
+        let task = run.tasks.iter().find(|t| t.id == request.from_task_id);
+        let worker = task.and_then(|t| run.team.members.iter().find(|m| m.id == t.assigned_agent_id)).map(|m| m.name.as_str()).unwrap_or("un integrante");
+        lines.push(format!("El Lead se frenó mientras intentaba ayudar a {}. Ese integrante espera sus instrucciones; su trabajo se conserva.", worker));
+        lines.push(format!("Qué pasó: {}", brief(&errors::message(&json!(request.summary)), 340)));
+        lines.push(help_hint(&request.summary).into());
+    }
     for task in &blocked {
+        if coordination.is_some_and(|c| c.from_task_id == task.id) { continue; }
         let last = task.attempts.last();
+        let responsible = if last.and_then(|a| a.review.as_ref()).is_some_and(|r| matches!(r.status, ReviewStatus::ReviewError)) { &run.team.lead_agent_id } else { &task.assigned_agent_id };
         let name = run
             .team
             .members
             .iter()
-            .find(|a| a.id == task.assigned_agent_id)
+            .find(|a| &a.id == responsible)
             .map(|a| a.name.as_str())
             .unwrap_or("Un integrante");
         lines.push(format!(
@@ -181,14 +195,26 @@ pub(super) fn diagnosis(run: Option<&Run>) -> String {
             "paused" => "El equipo está pausado. Las tareas terminadas se conservan.",
             "cancelled" => "La ejecución se canceló. Los cambios ya hechos se conservan.",
             "planning" => "El Lead está organizando las tareas y eligiendo los especialistas.",
+            "blocked" | "failed" => "El equipo se detuvo. No quedó una causa confirmada en el registro; abrí la última actividad del Lead antes de reintentar.",
             _ => "El equipo sigue trabajando; todavía no terminó la revisión final.",
         }.into());
         }
     }
     if matches!(run.status.as_str(), "blocked" | "failed") {
-        lines.push("Podés pedirme «corregilo y reintentá». Se revisará lo pendiente sin repetir las tareas terminadas.".into());
+        if coordination.is_none() { lines.push(help_hint(run.error.as_deref().unwrap_or("")).into()); }
     }
     lines.join("\n\n")
+}
+
+fn help_hint(error: &str) -> &'static str {
+    let error = errors::message(&json!(error)).to_lowercase();
+    if ["límite de uso", "límite de la cuenta", "saldo", "facturación"].iter().any(|s| error.contains(s)) {
+        "Cómo ayudar: esperá a que se renueve el límite o cambiá el modelo en Configuración; después continuá lo pendiente. Reintentar no renueva el límite de la cuenta."
+    } else if ["cuenta", "modelo", "variante"].iter().any(|s| error.contains(s)) {
+        "Cómo ayudar: revisá la conexión de la cuenta o elegí otro modelo habilitado en Configuración; después continuá lo pendiente."
+    } else {
+        "Cómo ayudar: abrí la última actividad del responsable para revisar el paso que se frenó. Podés darme el dato que falte o decir «corregilo y reintentá»; revisaré el estado guardado antes de retomar y conservaré las tareas terminadas."
+    }
 }
 
 pub(super) fn send(
@@ -216,8 +242,15 @@ pub(super) fn send(
     if snapshot.archived {
         return Err("Restaurá este chat para conversar".into());
     }
+    if inputs.is_empty() && status_question(&text) && snapshot.messages.iter().any(|m| m.status == "pending") {
+        return update(&app, |s| {
+            let chat = s.chats.iter_mut().find(|c| c.id == chat_id).ok_or("Chat inexistente")?;
+            if chat.archived { return Err("Restaurá este chat para conversar".into()); }
+            Ok(saved_status_reply(chat, &text))
+        });
+    }
     if snapshot.messages.iter().any(|m| m.status == "pending") {
-        return Err("El Lead está respondiendo tu mensaje anterior".into());
+        return Err("El Lead está atendiendo tu pedido anterior. Podés preguntarle «cómo va», «quién está bloqueado» o «qué falló» mientras trabaja. Las instrucciones nuevas se envían cuando termine de responder.".into());
     }
     let images = super::attachments::save(&app, &inputs)?;
     let reply_id = id();
@@ -301,6 +334,19 @@ pub(super) fn send(
         });
     });
     Ok(result)
+}
+
+fn saved_status_reply(chat: &mut Chat, text: &str) -> String {
+    let reply_id = id();
+    let pending = chat.messages.iter().any(|m| m.status == "pending");
+    let mut answer = if pending && chat.runs.is_empty() { "El Lead está analizando tu pedido. Todavía no creó tareas ni puso especialistas a trabajar.".into() } else { diagnosis(chat.runs.last()) };
+    if pending {
+        answer.push_str("\n\nEl Lead sigue atendiendo tu mensaje anterior. Esta consulta usa el registro guardado y no interrumpe su sesión. Si no aparece una causa registrada, abrí su actividad para ver el último paso observado.");
+    }
+    for (role, content, message_id) in [("user", text.to_string(), id()), ("assistant", answer, reply_id.clone())] {
+        chat.messages.push(ChatMessage { id: message_id, role: role.into(), text: content, created_at: now(), status: "complete".into(), run_id: chat.runs.last().map(|r| r.id.clone()), session_id: None, images: vec![] });
+    }
+    reply_id
 }
 
 #[derive(Deserialize)]
@@ -458,6 +504,7 @@ fn respond(
             Err(error) => return Err(error),
         };
         let start = Instant::now();
+        let mut idle_since = None;
         while start.elapsed() < Duration::from_secs(15 * 60) {
             std::thread::sleep(Duration::from_secs(1));
             let pending = read(app)?.chats.iter().find(|c| c.id == chat_id)
@@ -465,6 +512,16 @@ fn respond(
             if !pending { return Err("Pedido detenido".into()); }
             let history = client.get_resilient(&format!("/session/{}/message", session))?;
             let last = runner::new_assistant(&history, &previous);
+            let states = client.get_resilient("/session/status")?;
+            if !states.is_object() { return Err("No se pudo comprobar el estado del Lead; su sesión se conserva en Actividad.".into()); }
+            let busy = !states[&session].is_null() && states[&session]["type"] != "idle";
+            let permissions = client.get_resilient("/permission")?;
+            let awaiting = permissions.as_array().is_some_and(|items| items.iter().any(|p| p["sessionID"] == session));
+            if busy || awaiting { runner::idle_response_expired(&mut idle_since, true); continue; }
+            let idle_expired = runner::idle_response_expired(&mut idle_since, false);
+            if idle_expired && last.is_none_or(|last| !last["info"]["error"].is_object() && !(last["info"]["time"]["completed"].as_i64().is_some() && ["stop", "end_turn"].contains(&last["info"]["finish"].as_str().unwrap_or("")))) {
+                return Err("El motor dejó al Lead inactivo sin una respuesta final. Revisá su última actividad; la sesión y los cambios se conservan. Podés preguntarme quién está bloqueado o qué falló sin iniciar trabajo nuevo.".into());
+            }
             if acknowledgement_lost && last.is_none() && start.elapsed() > Duration::from_secs(90) {
                 return Err("Se cortó la conexión al enviar tu mensaje y no llegó una respuesta nueva. No lo reenvié para evitar repetir acciones; su sesión se conserva en Actividad.".into());
             }
@@ -480,6 +537,7 @@ fn respond(
                             .and_then(|c| c.messages.iter().find(|m| m.id == reply_id)).is_some_and(|m| m.status == "pending");
                         if !pending { return Err("Pedido detenido".into()); }
                         previous = runner::assistant_ids(&history);
+                        idle_since = None;
                         acknowledgement_lost = match client.post(&format!("/session/{}/prompt_async", session), body.clone()) {
                             Ok(_) => false,
                             Err(error) if crate::oc::transient_read_error(&error) => true,
@@ -569,6 +627,24 @@ fn work(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn local_status_queries_leave_the_pending_lead_and_work_untouched() {
+        let team = super::super::domain::tests::team();
+        let mut chat: Chat = serde_json::from_value(json!({"id":"c","title":"c","team":team,"skills":[],"archived":false,"createdAt":0,"runs":[],"messages":[{"id":"pending","role":"assistant","text":"","createdAt":1,"status":"pending","runId":null,"sessionId":"busy-lead"}]})).unwrap();
+        let question = "¿Quién está bloqueado, por qué y qué ayuda necesitás de mí?";
+        assert!(status_question(question));
+        assert!(!status_question("qué falló y arreglalo"));
+        let reply_id = saved_status_reply(&mut chat, question);
+        assert_eq!(chat.messages[0].status, "pending");
+        assert_eq!(chat.messages[0].session_id.as_deref(), Some("busy-lead"));
+        let reply = chat.messages.iter().find(|m| m.id == reply_id).unwrap();
+        assert_eq!(reply.status, "complete");
+        assert!(reply.session_id.is_none());
+        assert!(reply.text.contains("analizando tu pedido"));
+        assert!(reply.text.contains("no interrumpe su sesión"));
+        assert!(chat.runs.is_empty());
+        assert_eq!(chat.messages.len(), 3);
+    }
     #[test]
     fn status_questions_do_not_route_work_or_need_an_account() {
         for q in [

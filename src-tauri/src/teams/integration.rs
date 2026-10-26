@@ -260,6 +260,20 @@ fn native_team_end_to_end() {
                 "user work\n"
             );
             assert!(read_db(&db(&handle).unwrap()).unwrap().chats[0].runs[0].notified);
+            update(&handle, |store| {
+                let saved = store.chats.iter_mut().find(|c| c.id == chat.id).unwrap();
+                saved.messages.push(ChatMessage { id: "pending-status-test".into(), role: "assistant".into(), text: String::new(), created_at: now(), status: "pending".into(), run_id: Some(run_id.clone()), session_id: Some("lead-status-observation".into()), images: vec![] });
+                Ok(())
+            }).unwrap();
+            let query = conversation::send(handle.clone(), chat.id.clone(), "¿Quién está bloqueado y qué falló?".into(), vec![]).unwrap();
+            let saved = read(&handle).unwrap();
+            let saved_chat = saved.chats.iter().find(|c| c.id == chat.id).unwrap();
+            let reply = saved_chat.messages.iter().find(|m| m.id == query).unwrap();
+            assert_eq!(reply.status, "complete", "status must be answered even with a pending Lead message");
+            assert!(reply.session_id.is_none(), "a saved-status query must never call inference");
+            assert_eq!(saved_chat.messages.iter().find(|m| m.id == "pending-status-test").unwrap().status, "pending");
+            assert_eq!(saved_chat.runs.len(), 1);
+            update(&handle, |store| { store.chats.iter_mut().find(|c| c.id == chat.id).unwrap().messages.iter_mut().find(|m| m.id == "pending-status-test").unwrap().status = "cancelled".into(); Ok(()) }).unwrap();
             let acceptance = conversation::send(handle.clone(), chat.id.clone(), "trabajo completado".into(), vec![]).unwrap();
             let deadline = Instant::now() + Duration::from_secs(10);
             loop {
