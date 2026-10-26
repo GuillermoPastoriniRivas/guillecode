@@ -34,6 +34,7 @@ const nodeCommand = `& '${process.execPath.replaceAll("'", "''")}'`
 const commands = { backend: `${nodeCommand} -e "process.exit(require('fs').existsSync('backend.txt') ? 0 : 1)"`, frontend: `${nodeCommand} -e "process.exit(require('fs').existsSync('frontend.txt') ? 0 : 1)"` }
 let reviews = 0
 let coordinationChecks = 0
+let closeoutChecks = 0
 let desktopCalls = 0
 const parallelWorkers = new Set()
 const models = new Set()
@@ -87,8 +88,10 @@ const mock = createServer(async (request, response) => {
       assert.equal(request.kind,'technical_blocker')
       assert.ok(!body.tools.some(t=>['bash','write','edit','apply_patch'].includes(t.name)), 'Lead diagnosis must remain read-only')
       if (coordinationChecks === 1) item=message({status:'invalid',summary:''}) // Invalid Lead output is repaired internally, not sent to the user.
+      else if (coordinationChecks === 2) item=message({status:'blocked',summary:'Falló la prueba HTTP. Necesito que el usuario revise el error y decida qué comando ejecutar.'}) // A routine technical failure must also be returned to the Lead for repair.
       else { helpRounds++; item=message({status:'resume',summary:`Revisé el fallo. El archivo existe: continuá tu sesión, verificá con el comando ${commands.backend} y declaralo exactamente en checks. No repitas la escritura ni cambies los criterios.`}) }
-    } else if (leadPhase) { reviews++;item=message({status:'approved',summary:'Archivos y comprobaciones observadas correctos.',criteriaSatisfied:true,tasks:[]}) }
+    } else if (leadPhase === 'closeout' && ++closeoutChecks === 1) item=message({status:'review_error',summary:'Necesito que el usuario revise las comprobaciones de integración antes de completar.',criteriaSatisfied:false,tasks:[]})
+    else if (leadPhase) { reviews++;item=message({status:'approved',summary:'Archivos y comprobaciones observadas correctos.',criteriaSatisfied:true,tasks:[]}) }
     else {
       const role=body.model==='qa-backend'?'backend':'frontend'
       const outputs=body.input.filter(i=>i.type==='function_call_output')
@@ -298,7 +301,8 @@ try {
   if (leadHelp) {
     assert.equal(helpRounds,2)
     assert.equal(parallelWorkers.size,2)
-    assert.ok(coordinationChecks>=3)
+    assert.ok(coordinationChecks>=4)
+    assert.ok(closeoutChecks>=2,'El Lead debe corregir un cierre técnico incompleto sin pedir QA al usuario')
     for(const role of ['backend','frontend'])assert.equal(await readFile(join(repo,`${role}.txt`),'utf8'),'version 2\n')
     assert.equal(await readFile(join(repo,'user.txt'),'utf8'),'user work\n')
     console.log('Verified: blocked worker → automatic Lead diagnosis → malformed Lead decision repaired → failed QA checks corrected → same worker session, no repeated write or command, independent Frontend completes.')

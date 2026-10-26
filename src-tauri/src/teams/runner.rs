@@ -1204,6 +1204,12 @@ pub fn reconcile(app: &AppHandle, r: &Run, abort: bool) -> Result<(), String> {
     })
 }
 
+fn needs_closeout_repair(verdict: &Closeout) -> bool {
+    verdict.tasks.is_empty()
+        && !(matches!(verdict.review.status, ReviewStatus::Approved) && verdict.review.criteria_satisfied)
+        && !super::autonomy::requires_user(&verdict.review.summary)
+}
+
 fn closeout(app: &AppHandle, id: &str) -> Result<bool, String> {
     let r = run(app, id)?;
     let a = lead(&r)?;
@@ -1233,6 +1239,17 @@ fn closeout(app: &AppHandle, id: &str) -> Result<bool, String> {
     let prompt = format!("{}{}", prompt, super::staffing::prompt(&r.team));
     let response = execute(app, id, &client, &session, &a, &prompt, true)?;
     let mut verdict: Closeout = parse_json(&final_text(&response))?;
+    for attempt in 0..2 {
+        if !needs_closeout_repair(&verdict) { break; }
+        let reason = evidence::sanitize(&verdict.review.summary);
+        update_run(app, id, |r| {
+            r.configuration_changes.push(json!({"kind":"automaticCloseoutRepair","at":now(),"sessionId":session,"attempt":attempt+1,"reason":reason}));
+            Ok(())
+        })?;
+        let correction = format!("{}\nTu cierre anterior no confirma la entrega y no asigna tareas para resolver lo que falta. Eso es trabajo del equipo, no QA manual del usuario. Revisá el estado y devolvé approved solo si todo está comprobado; si falta algo, devolvé changes_requested con tareas concretas y válidas para implementarlo/verificarlo. No pidas al usuario ejecutar pruebas o corregir errores técnicos. Conservá criterios, permisos, archivos y resultados previos.\nCIERRE A CORREGIR: {}", prompt, reason);
+        let response = execute(app, id, &client, &session, &a, &correction, true)?;
+        verdict = parse_json(&final_text(&response))?;
+    }
     verdict.review.summary = evidence::sanitize(&verdict.review.summary);
     if verdict.review.summary.trim().is_empty() {
         return Err("review_error: el cierre no tiene un veredicto explicativo".into());
@@ -1583,6 +1600,18 @@ fn schedule(app: &AppHandle, id: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn technical_closeout_must_assign_repairs_instead_of_asking_for_manual_qa() {
+        for status in ["review_error", "changes_requested", "approved"] {
+            let verdict: Closeout = serde_json::from_value(json!({"status":status,"criteriaSatisfied":false,"summary":"Falta probar la integración; que el usuario la revise.","tasks":[]})).unwrap();
+            assert!(needs_closeout_repair(&verdict));
+        }
+        let approved: Closeout = serde_json::from_value(json!({"status":"approved","criteriaSatisfied":true,"summary":"Integración comprobada","tasks":[]})).unwrap();
+        assert!(!needs_closeout_repair(&approved));
+        let access: Closeout = serde_json::from_value(json!({"status":"review_error","criteriaSatisfied":false,"summary":"La cuenta alcanzó su límite de uso","tasks":[]})).unwrap();
+        assert!(!needs_closeout_repair(&access));
+    }
 
     #[test]
     fn abandoned_intermediate_answers_do_not_wait_for_the_full_session_timeout() {
