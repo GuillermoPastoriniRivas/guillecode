@@ -522,6 +522,35 @@ test("el encabezado distingue una espera entre agentes de un permiso y permite a
 })
 
 
+test("la recuperación automática del Lead no pide ayuda ni reintento al usuario", async ({ page }) => {
+  const { store, calls } = await setup(page)
+  await createTeam(page)
+  await page.getByLabel("Mensaje para el equipo").fill("Integrar la pantalla y la API")
+  await page.getByRole("button", { name: "Enviar", exact: true }).click()
+  const run = store.chats[0].runs[0], front = run.team.members.find(m => m.role === "Frontend")!
+  run.status = "blocked"
+  run.error = "El Lead no logró proponer una salida segura después de dos correcciones."
+  run.tasks = [{id:front.id,title:"Integrar la pantalla",objective:"Saludo",assignedAgentId:front.id,repository:run.team.projectRoot,dependencies:[],expectedFiles:[],acceptanceCriteria:[],status:"blocked",error:run.error,attempts:[]}]
+  run.coordination = [{id:"request",kind:"technical_blocker",fromTaskId:front.id,message:"Falta comprobar el contrato de la API",taskIds:[],status:"blocked",summary:run.error,createdAt:Date.now(),sessions:["lead-failed"]}]
+  const refresh = () => page.evaluate(async () => { const {refreshTeams}=await import(/* @vite-ignore */ "/src/state/teams.ts");await refreshTeams() })
+  await refresh()
+  await expect(page.locator(".team-chat-header")).toContainText("Necesita atención")
+  await page.locator(".team-chat").screenshot({path:test.info().outputPath("lead-antes-recuperacion.png")})
+  run.status = "running"; run.error = null; run.tasks[0].status = "waiting_dependency"; run.tasks[0].error = null
+  run.coordination[0].status = "pending"
+  run.coordination[0].summary = "El Lead está buscando otra forma de desbloquear al agente."
+  run.coordination[0].replies = [{at:Date.now(),sessionId:"lead-failed",status:"recovery_requested",summary:run.coordination[0].summary,taskIds:[]}]
+  await refresh()
+  const header = page.locator(".team-chat-header")
+  await expect(header).toContainText("El Lead está resolviendo un bloqueo")
+  await expect(header).not.toContainText("Necesita tu ayuda")
+  await expect(header.getByRole("button",{name:/Ver cómo sigue el equipo/})).toBeVisible()
+  await expect(page.getByRole("button",{name:"Reconciliar y reintentar",exact:true})).toHaveCount(0)
+  await expect(page.getByRole("region",{name:"Bloqueos del equipo"})).toContainText("No necesitás intervenir ahora")
+  await page.locator(".team-chat").screenshot({path:test.info().outputPath("lead-recuperacion-automatica.png")})
+  expect(calls.filter(c=>c.command==="team_runs_control")).toHaveLength(0)
+})
+
 test("imágenes: adjuntar, quitar, enviar y recuperar del historial", async ({ page }) => {
   const { store, calls } = await setup(page)
   await createTeam(page)

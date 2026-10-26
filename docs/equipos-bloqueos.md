@@ -18,6 +18,14 @@ Antes de comenzar, el Lead reúne las preguntas imprescindibles sobre el resulta
 
 Durante la ejecución los especialistas piden ayuda al Lead y el equipo sigue hasta implementar y comprobar la entrega. Las instrucciones de planificación y coordinación reservan las consultas intermedias para un permiso/acceso real o una decisión imprescindible imprevista sin alternativa segura, explicando por qué no se pudo prever al principio. Esto no elimina los permisos del motor ni garantiza que un proveedor externo esté disponible. El usuario revisa al final y puede aprobar con «trabajo completado» o pedir mejoras.
 
+Si falla la coordinación del propio Lead, el scheduler confirma primero la detención de esa sesión de lectura y vuelve a poner el pedido en revisión automática. El Lead recibe la causa y debe cambiar de estrategia: aislar el paso mínimo, revisar el contrato o delegar una tarea de ayuda. El especialista conserva su sesión, archivos, criterios e intentos; no vuelve a ejecutar sus efectos por este fallo. El encabezado indica que el Lead está buscando otra salida, sin pedir «Reconciliar y reintentar» durante esa recuperación. Hay hasta dos recuperaciones de coordinación por pedido, además de las correcciones locales de respuesta y con el límite total de sesiones existente; el presupuesto se conserva al reiniciar. Una sesión cuya detención no pudo confirmarse, un permiso o acceso real y una decisión externa explícita no se reanudan a ciegas.
+
+La prueba nativa fuerza tres respuestas inválidas seguidas del Lead, agota las correcciones locales y verifica la recuperación automática, la continuación del mismo trabajador y la finalización del Frontend independiente. La prueba de interfaz reproduce el fallo registrado y su paso a recuperación sin acciones del usuario. Estas capturas corresponden a datos controlados de esa prueba:
+
+![Fallo de coordinación registrado antes de recuperar](evidencias/lead-antes-recuperacion.png)
+
+![Lead recuperando al agente sin pedir ayuda al usuario](evidencias/lead-recuperacion-automatica.png)
+
 Si el motor deja una respuesta intermedia inactiva durante 90 segundos sin resultado final, se informa el problema conservando la sesión y sus efectos. Estar ejecutando una herramienta o esperando un permiso restablece ese reloj: no se deduce un bloqueo por el solo paso del tiempo mientras el motor declara trabajo activo. El cierre sigue requiriendo todas las comprobaciones y el QA manual del usuario después de la entrega técnica.
 
 La validación incluye pruebas de atribución del bloqueo y recomendaciones, consultas locales durante un mensaje pendiente, disposición del panel a 1000 × 650, diagnóstico ampliado, recuperación de la misma sesión y conservación de los efectos tras reiniciar. Las pruebas nativas usan OpenCode y Tauri reales con inferencia determinista local; no prueban disponibilidad de cuentas de producción.

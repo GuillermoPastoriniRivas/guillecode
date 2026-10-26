@@ -187,16 +187,39 @@ fn request_repair(r: &mut Run, request_id: &str, reason: &str) -> Result<(), Str
         .ok_or("Pedido inexistente")?;
     if c.replies
         .iter()
+        .rev()
+        .take_while(|reply| reply["status"] != "recovery_requested")
         .filter(|reply| reply["status"] == "repair_requested")
         .count()
         >= 2
     {
-        return Err("El Lead no logró proponer una salida segura después de dos correcciones. Se conserva el trabajo; preguntale qué contrato o decisión falta para continuar.".into());
+        return Err("El Lead no logró proponer una salida segura después de dos correcciones.".into());
     }
     c.status = "pending".into();
     c.summary = if reason == CIRCULAR_WAIT { "El Lead está corrigiendo una espera circular. Debe separar el contrato de la integración sin reiniciar el trabajo." } else { "El Lead está corrigiendo su respuesta para proponer una solución válida. No necesitás intervenir mientras la revisa." }.into();
     c.replies.push(json!({"at":now(),"sessionId":c.sessions.last(),"status":"repair_requested","summary":c.summary,"reason":evidence::sanitize(reason),"taskIds":c.task_ids}));
     Ok(())
+}
+
+// The coordinator has no file-writing tools. Once its session is confirmed
+// stopped, a fresh diagnostic turn is safe; the worker itself is not replayed.
+// Persist the recovery budget so a restart cannot create an infinite loop.
+pub(super) fn recover_after_failure(r: &mut Run, request_id: &str, error: &str, stopped: bool) -> bool {
+    if !stopped || r.status != "running" || super::autonomy::requires_user(error) { return false; }
+    let Some(c) = r.coordination.iter().find(|c| c.id == request_id) else { return false; };
+    let recoveries = c.replies.iter().filter(|reply| reply["status"] == "recovery_requested").count();
+    if recoveries >= 2 || c.sessions.len() >= 16 || ["resolved", "cancelled", "blocked"].contains(&c.status.as_str()) { return false; }
+    let Some(task) = r.tasks.iter_mut().find(|t| t.id == c.from_task_id) else { return false; };
+    if !["waiting_dependency", "blocked"].contains(&task.status.as_str()) { return false; }
+    task.status = "waiting_dependency".into();
+    task.error = None;
+    let task_id = task.id.clone();
+    let c = r.coordination.iter_mut().find(|c| c.id == request_id).unwrap();
+    c.status = "pending".into();
+    c.summary = "El Lead está buscando otra forma de desbloquear al agente. El resto del equipo puede seguir; no necesitás reintentar.".into();
+    c.replies.push(json!({"status":"recovery_requested","at":now(),"sessionId":c.sessions.last(),"summary":c.summary,"taskIds":c.task_ids,"reason":evidence::sanitize(error),"attempt":recoveries+1}));
+    r.configuration_changes.push(json!({"kind":"automaticCoordinatorRecovery","at":now(),"requestId":request_id,"taskId":task_id,"attempt":recoveries+1}));
+    true
 }
 
 fn check_once(app: &AppHandle, run_id: &str, request_id: &str) -> Result<(), String> {
@@ -263,6 +286,10 @@ fn check_once(app: &AppHandle, run_id: &str, request_id: &str) -> Result<(), Str
     let prompt = format!("{}\nDEPENDENCIAS CIRCULARES DETECTADAS (IDs): {}\nSi hay un ciclo o se rechazó tu decisión por crearlo, intervení: acordá un contrato concreto para que un integrante avance en preparación y dejá la integración para después. Podés reanudar otras tareas suspendidas con resumeTasks:[{{taskId:ID,summary:instrucción concreta y contrato para continuar sin esperar al otro}}]. Esto libera únicamente sus esperas de coordinación: conserva sus sesiones, archivos, dependencias del plan y criterios originales. No reanuda tareas activas ni terminadas. Podés crear tareas independientes de contrato con writePaths propios, sin invadir archivos reservados. No afirmes que una dependencia ya está implementada si solo acordaste su contrato. No marques una entrega completa ni elimines criterios para romper un ciclo. Si no hay forma segura sin información del usuario, devolvé blocked y explicá la decisión exacta que falta. Respondé en summary qué separaste y quién puede avanzar; no pidas una microdecisión que puedas resolver con el estado actual.",prompt,serde_json::to_string(&cycles).unwrap_or_default());
     let prompt = format!("{}\nAUTONOMÍA DEL LEAD: Los bloqueos técnicos, errores de herramientas y comprobaciones fallidas de los especialistas se te derivan a vos, no al usuario. Si kind=technical_blocker, leé sus intentos, comandos, revisiones y archivos actuales. Diagnosticar un fallo es parte de tu tarea: no uses blocked solamente porque algo falló. Devolvé resume con una solución concreta (comando de verificación correcto, corrección acotada, contrato o alternativa dentro del alcance), o wait con tareas de ayuda válidas si falta una entrega. El trabajador continuará su sesión desde la evidencia actual sin repetir escrituras o efectos ya observados. Conservá criterios, rutas y permisos. Nunca afirmes haber ejecutado la corrección desde tu sesión de lectura. No uses bash u otras herramientas para eludir una autorización. blocked se reserva para una decisión imprescindible del usuario, credenciales/acceso, permisos reales, un control de PC apagado o cuando ya no existe una salida segura dentro del alcance; explicá exactamente qué necesitás y por qué no lo puede resolver el equipo.", prompt);
     let prompt = format!("{}\nLas preguntas de alcance deben reunirse antes de trabajar. Resolvé las decisiones técnicas y los detalles no especificados con una opción razonable dentro del pedido; registrá las suposiciones y seguí. Si aparece una decisión imprescindible imprevista que solo el usuario puede tomar y no existe alternativa segura, explicá por qué no pudo preverse al principio y, si devolvés blocked, incluí userRequest={{kind:decision,question:pregunta concreta imprescindible}}. No uses esa salida para pedirle ejecutar pruebas, revisar errores, elegir comandos o coordinar agentes: eso es tu trabajo. Para permisos o acceso de cuenta indicá la causa real. Si ya hubo intentos fallidos, cambiá la estrategia o asigná una tarea de diagnóstico/verificación a un especialista con los permisos existentes; no repitas sin cambios la misma instrucción.", prompt);
+    let recoveries = request.replies.iter().filter(|reply| reply["status"] == "recovery_requested").count();
+    let prompt = if recoveries == 0 { prompt } else {
+        format!("{}\nRECUPERACIÓN AUTOMÁTICA DEL LEAD ({}): Tu coordinación anterior falló y el trabajador conserva su sesión y archivos. Revisá las causas de recovery_requested y repair_requested. Cambiá de estrategia: leé el contrato y los resultados existentes, aislá el paso mínimo que permite avanzar y devolvé una instrucción concreta. Si requiere implementación o comprobación adicional, asigná una tarea de ayuda con writePaths propios y esperala. No repitas la decisión rechazada ni solicites al usuario diagnosticar el problema. No repitas efectos del trabajador ni marques pruebas pendientes como aprobadas.", prompt, recoveries)
+    };
     let previous = if reuse {
         Some(client.get_resilient(&format!("/session/{}/message", session))?)
     } else {
@@ -492,6 +519,46 @@ mod tests {
         assert_eq!(r.coordination[0].status, "pending");
         assert!(r.coordination[0].summary.contains("No necesitás intervenir"));
         assert!(!r.coordination[0].summary.contains("circular"));
+    }
+
+    #[test]
+    fn exhausted_coordination_recovers_without_replaying_the_worker() {
+        let mut r = fixture();
+        let original_tasks = serde_json::to_value(&r.tasks).unwrap();
+        request_repair(&mut r, "req", TECHNICAL_ESCALATION).unwrap();
+        request_repair(&mut r, "req", TECHNICAL_ESCALATION).unwrap();
+        let error = request_repair(&mut r, "req", TECHNICAL_ESCALATION).unwrap_err();
+        assert!(recover_after_failure(&mut r, "req", &error, true));
+        let mut restored: Run = serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
+        assert_eq!(ready(&restored).as_deref(), Some("req"));
+        assert_eq!(serde_json::to_value(&restored.tasks).unwrap(), original_tasks);
+        assert_eq!(restored.coordination[0].replies.last().unwrap()["status"], "recovery_requested");
+        assert!(restored.coordination[0].summary.contains("no necesitás reintentar"));
+        request_repair(&mut restored, "req", TECHNICAL_ESCALATION).unwrap();
+        request_repair(&mut restored, "req", TECHNICAL_ESCALATION).unwrap();
+        assert!(request_repair(&mut restored, "req", TECHNICAL_ESCALATION).is_err());
+        assert!(recover_after_failure(&mut restored, "req", &error, true));
+        let mut restored: Run = serde_json::from_str(&serde_json::to_string(&restored).unwrap()).unwrap();
+        let before = serde_json::to_value(&restored).unwrap();
+        assert!(!recover_after_failure(&mut restored, "req", &error, true));
+        assert_eq!(serde_json::to_value(&restored).unwrap(), before);
+    }
+
+    #[test]
+    fn coordinator_recovery_preserves_real_user_gates_and_uncertain_sessions() {
+        for reason in ["La cuenta alcanzó su límite de uso", "Falta autorización", "El control de PC está apagado"] {
+            let mut r = fixture();
+            let before = serde_json::to_value(&r).unwrap();
+            assert!(!recover_after_failure(&mut r, "req", reason, true));
+            assert_eq!(serde_json::to_value(&r).unwrap(), before);
+        }
+        let mut r = fixture();
+        assert!(!recover_after_failure(&mut r,"req","Respuesta estructurada inválida",false));
+        r.coordination[0].status = "blocked".into();
+        assert!(!recover_after_failure(&mut r,"req","Decisión externa imprescindible",true));
+        r.coordination[0].status = "checking".into();
+        r.status = "cancelling".into();
+        assert!(!recover_after_failure(&mut r,"req","Respuesta estructurada inválida",true));
     }
 
     #[test]

@@ -512,6 +512,7 @@ fn circular_team_scenario(handle: &tauri::AppHandle, repo: &str) {
         assert!(frontend.attempts[0].finished_at.unwrap() <= backend.attempts[2].started_at, "Independent Frontend must finish while Backend is being repaired");
         assert!(result.coordination.iter().all(|c| c.kind == "technical_blocker"));
         assert!(result.configuration_changes.iter().any(|c| c["kind"] == "automaticCloseoutRepair"), "A technical closeout cannot be delegated to the user");
+        assert!(result.configuration_changes.iter().any(|c| c["kind"] == "automaticCoordinatorRecovery"), "The Lead must recover its own exhausted corrections without blocking the team");
     } else { assert!(result.tasks.iter().all(|t| t.attempts.len() == 1)); }
     assert_eq!(result.coordination.len(), 2);
     assert!(result.coordination.iter().all(|c| c.status == "resolved"));

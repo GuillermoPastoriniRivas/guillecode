@@ -19,7 +19,7 @@ import { ChatImages } from "../team/ChatImages"
 import { TeamComposer, type TeamComposerHandle } from "../team/TeamComposer"
 import { TeamSettings } from "../team/TeamSettings"
 import { attentionLabel, teamAttention } from "../team/attention"
-import { memberState } from "../team/member-state"
+import { leadRecovery, memberState } from "../team/member-state"
 import { TeamProblems } from "../team/TeamProblems"
 
 function RunReply({ run }: { run: TeamRun }) {
@@ -90,15 +90,16 @@ export function TeamChat({ chatId }: { chatId: string }) {
     ...requests.questions.map(r => ({ sessionID: r.sessionID, kind: "question" as const, detail: r.questions[0]?.question?.slice(0, 240) })),
   ])
   const attentionText = attentionLabel(attention)
-  const headerStatus = run ? runStatusLabel(run.status) : attention.length ? "Necesita tu ayuda" : pendingReply ? "El Lead está trabajando" : "Listo para recibir tu objetivo"
+  const needsUserHelp = attention.some(item => item.kind !== "waiting")
+  const headerStatus = !needsUserHelp && leadRecovery(run) ? "El Lead está resolviendo un bloqueo" : run ? runStatusLabel(run.status) : attention.length ? "Necesita tu ayuda" : pendingReply ? "El Lead está trabajando" : "Listo para recibir tu objetivo"
   const act = (action: string) => run && teamCall("team_runs_control", { runId: run.id, action })
   return <section className="team-chat">
     <header className="team-chat-header"><div className="team-section-title"><strong><Icon name="organization" /> {chat.title}</strong><button className="btn btn-xs" type="button" aria-label="Configuración del equipo" aria-pressed={view === "Configuración"} onClick={() => setView(view === "Configuración" ? "Chat" : "Configuración")}><Icon name="settings-gear" /> Configuración</button></div><p>{roster.members.length} integrantes · {headerStatus}{attentionText && <span className="team-attention-badge" aria-live="polite"> · {attentionText}</span>}</p>
-      {attention.length > 0 && <button className="team-attention-summary" onClick={() => { followLatest.current = false; problems.current?.scrollIntoView({ block: "start" }) }}><Icon name="warning" /><span>{attention.filter(i => i.kind !== "waiting").map(i => i.name).filter((name, i, names) => names.indexOf(name) === i).join(", ") || "Integrantes en espera"}</span><strong>Ver qué pasó y cómo ayudar</strong></button>}
+      {attention.length > 0 && <button className="team-attention-summary" onClick={() => { followLatest.current = false; problems.current?.scrollIntoView({ block: "start" }) }}><Icon name="warning" /><span>{attention.filter(i => i.kind !== "waiting").map(i => i.name).filter((name, i, names) => names.indexOf(name) === i).join(", ") || "Integrantes en espera"}</span><strong>{needsUserHelp ? "Ver qué pasó y cómo ayudar" : "Ver cómo sigue el equipo"}</strong></button>}
     </header>
     <nav className="team-chat-nav" aria-label="Vistas del equipo">{["Chat", "Tareas", "Actividad", "Resultados / Comportamientos"].map((v) => <button key={v} className={view === v ? "active" : ""} onClick={() => setView(v)}>{v}</button>)}</nav>
     <div className="team-chat-body" ref={body} onScroll={() => { const el = body.current; if (el) followLatest.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80 }}>
-      {attention.length > 0 && <div ref={problems}><TeamProblems items={attention} run={run} pending={pendingReply} onInspect={item => item.sessionId ? openSession(item.sessionId, item.directory) : setView("Actividad")} onSettings={() => { if (modelSettings.current) { modelSettings.current.open = true; modelSettings.current.scrollIntoView({ block: "start" }) } else setView("Configuración") }} onAsk={() => { setView("Chat"); composer.current?.write("¿Quién está bloqueado, por qué y qué ayuda necesitás de mí?") }} onContinue={() => void act("retry")} /></div>}
+      {attention.length > 0 && <div ref={problems}><TeamProblems items={attention} run={run} pending={pendingReply} onInspect={item => item.sessionId ? openSession(item.sessionId, item.directory) : setView("Actividad")} onSettings={() => { if (modelSettings.current) { modelSettings.current.open = true; modelSettings.current.scrollIntoView({ block: "start" }) } else setView("Configuración") }} onAsk={() => { setView("Chat"); composer.current?.write(needsUserHelp ? "¿Quién está bloqueado, por qué y qué ayuda necesitás de mí?" : "¿Cómo va el estado y qué está resolviendo el Lead?") }} onContinue={() => void act("retry")} /></div>}
     {chat.runs.length > 1 && <label className="team-run-select">Entrega / ejecución<select value={run?.id} onChange={(e) => setSelectedRunId(e.target.value)}>{chat.runs.map((r, i) => <option value={r.id} key={r.id}>#{i + 1} · {formatDateTime(r.startedAt)} · {runStatusLabel(r.status)}</option>)}</select></label>}
     {run && <div className="team-run-controls">
       {["planning", "running"].includes(run.status) && <button className="btn btn-xs" onClick={() => void act("pause")}>Pausar nuevas tareas</button>}

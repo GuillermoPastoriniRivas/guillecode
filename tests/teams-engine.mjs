@@ -87,8 +87,12 @@ const mock = createServer(async (request, response) => {
       const request = JSON.parse(prompt.split('PEDIDO: ')[1].split('\nESTADO ACTUAL DEL EQUIPO:')[0])
       assert.equal(request.kind,'technical_blocker')
       assert.ok(!body.tools.some(t=>['bash','write','edit','apply_patch'].includes(t.name)), 'Lead diagnosis must remain read-only')
-      if (coordinationChecks === 1) item=message({status:'invalid',summary:''}) // Invalid Lead output is repaired internally, not sent to the user.
-      else if (coordinationChecks === 2) item=message({status:'blocked',summary:'Falló la prueba HTTP. Necesito que el usuario revise el error y decida qué comando ejecutar.'}) // A routine technical failure must also be returned to the Lead for repair.
+      if (coordinationChecks <= 3) item=message({status:'invalid',summary:''}) // Exhaust local corrections: a fresh Lead diagnosis must recover without asking the user.
+      else if (coordinationChecks === 4) {
+        assert.ok(request.replies.some(reply=>reply.status==='recovery_requested'))
+        assert.ok(prompt.includes('RECUPERACIÓN AUTOMÁTICA DEL LEAD'))
+        item=message({status:'blocked',summary:'Falló la prueba HTTP. Necesito que el usuario revise el error y decida qué comando ejecutar.'})
+      }
       else { helpRounds++; item=message({status:'resume',summary:`Revisé el fallo. El archivo existe: continuá tu sesión, verificá con el comando ${commands.backend} y declaralo exactamente en checks. No repitas la escritura ni cambies los criterios.`}) }
     } else if (leadPhase === 'closeout' && ++closeoutChecks === 1) item=message({status:'review_error',summary:'Necesito que el usuario revise las comprobaciones de integración antes de completar.',criteriaSatisfied:false,tasks:[]})
     else if (leadPhase) { reviews++;item=message({status:'approved',summary:'Archivos y comprobaciones observadas correctos.',criteriaSatisfied:true,tasks:[]}) }
@@ -316,7 +320,7 @@ try {
     assert.equal(circularPauses.size,2)
     assert.equal(parallelWorkers.size,2)
     assert.ok(circularRepairs >= 1)
-    assert.ok(coordinationChecks >= 4)
+    assert.ok(coordinationChecks >= 6)
     assert.equal(reviews,3)
     for(const role of ['backend','frontend']) assert.equal(await readFile(join(repo,`${role}.txt`),'utf8'),'version 2\n')
     assert.equal(await readFile(join(repo,'user.txt'),'utf8'),'user work\n')

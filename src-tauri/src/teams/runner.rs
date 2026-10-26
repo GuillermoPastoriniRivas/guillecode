@@ -1393,6 +1393,9 @@ fn schedule(app: &AppHandle, id: &str) -> Result<(), String> {
                     })
                     .unwrap_or(true);
                 update_run(app, id, |r| {
+                    if super::coordination::recover_after_failure(r, &request_id, &error, stopped) {
+                        return Ok(());
+                    }
                     let c = r
                         .coordination
                         .iter_mut()

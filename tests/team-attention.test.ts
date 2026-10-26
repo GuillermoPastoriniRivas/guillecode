@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { attentionLabel, teamAttention } from "../src/team/attention.ts"
-import { memberState } from "../src/team/member-state.ts"
+import { leadRecovery, memberState } from "../src/team/member-state.ts"
 import type { TeamChatRecord, TeamRun } from "../src/team/types.ts"
 
 function fixture() {
@@ -11,6 +11,21 @@ function fixture() {
   const chat: TeamChatRecord = { id: "chat", title: "Equipo", team, skills: [], archived: false, createdAt: 1, messages: [], runs: [run] }
   return { chat, run }
 }
+
+test("la recuperación del Lead se muestra trabajando y no pide ayuda humana", () => {
+  const { chat, run } = fixture()
+  run.tasks[0].status = "waiting_dependency"
+  run.coordination = [{id:"recover",fromTaskId:run.tasks[0].id,message:"Falta el contrato",taskIds:[],status:"pending",summary:"El Lead está buscando otra forma de desbloquear al agente.",createdAt:1,sessions:["lead-session"],replies:[{at:2,sessionId:"lead-session",status:"recovery_requested",summary:"Nueva estrategia",taskIds:[]}]}]
+  const items = teamAttention(chat, run)
+  assert.equal(leadRecovery(run)?.id, "recover")
+  assert.ok(items.every(item => item.kind === "waiting"))
+  const lead = memberState(run.team.members[0],chat,run,items)
+  assert.equal(lead.label,"Resolviendo bloqueos")
+  assert.equal(lead.needsHelp,false)
+  assert.match(lead.detail,/buscando otra forma/)
+  run.coordination[0].status = "resolved"
+  assert.equal(leadRecovery(run),undefined)
+})
 
 test("la lista distingue al Lead listo, respondiendo y planificando", () => {
   const { chat, run } = fixture()
