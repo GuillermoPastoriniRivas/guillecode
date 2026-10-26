@@ -308,6 +308,19 @@ fn shutdown(app: &tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let context = tauri::generate_context!();
+    // Read the same embedded configuration used by the running app, without
+    // opening windows, starting the engine or touching the user's profile.
+    if std::env::args().any(|arg| arg == "--build-info") {
+        let config = context.config();
+        println!("{}", serde_json::json!({
+            "version": config.version,
+            "identifier": config.identifier,
+            "localBuild": config.plugins.0.get("guillecodeBuild")
+                .and_then(|value| value["revision"].as_str()),
+        }));
+        return;
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| hub::show_main(app)))
         .plugin(tauri_plugin_autostart::init(
@@ -525,7 +538,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building tauri application")
         .run(|app, event| {
             match event {

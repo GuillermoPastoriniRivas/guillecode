@@ -27,12 +27,12 @@
 .team-link { display: inline-flex; gap: 6px; align-items: center; background: none; border: none; text-align: left; color: var(--accent-strong); cursor: pointer; }
 .team-error { color: var(--warn); background: rgba(227,179,65,.07); border: 1px solid rgba(227,179,65,.2); border-radius: var(--radius); padding: 10px; font-size: 12px; overflow-wrap: anywhere; }
 .team-chat { display: flex; flex-direction: column; min-height: 0; flex: 1; overflow: hidden; }
-.team-chat-header { padding: 14px 16px 10px; }
+.team-chat-header { padding: 14px 16px 10px; flex-shrink: 0; border-bottom: 1px solid var(--border); }
 .team-chat-header p { color: var(--fg-dim); font-size: 12px; margin-top: 4px; }
 .team-attention-badge { color: var(--warn); font-weight: 600; }
-.team-attention { margin-top: 10px; padding: 8px; border: 1px solid rgba(227,179,65,.35); border-radius: var(--radius); background: rgba(227,179,65,.07); font-size: 12px; }
+.team-attention { margin-bottom: 20px; padding: 16px; border: 1px solid rgba(227,179,65,.35); border-radius: var(--radius-lg); background: rgba(227,179,65,.05); font-size: 13px; line-height: 1.65; overflow-wrap: anywhere; }
 .team-attention-agent { display: flex; gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap; color: var(--warn); }
-.team-attention-list { display: grid; gap: 8px; max-height: min(24vh, 200px); overflow-y: auto; }
+.team-attention-list { display: grid; gap: 16px; }
 .team-attention-list article + article { padding-top: 8px; border-top: 1px solid var(--border); }
 .team-chat .team-roster ul { list-style: none; padding: 0; margin-top: 8px; max-height: min(28vh, 220px); overflow: auto; }
 .team-member { padding: 7px 0; border-top: 1px solid var(--border); }
@@ -52,7 +52,7 @@
 .team-chat-welcome > .codicon { color: var(--accent); font-size: 38px; }
 .team-chat-welcome h2 { font-size: 18px; margin: 12px 0; }
 .team-chat-welcome p { margin: 10px 0; }
-.team-composer { padding: 12px 16px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+.team-composer { flex-shrink: 0; max-height: 45%; overflow-y: auto; padding: 12px 16px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
 .team-composer button { align-self: flex-end; }
 .team-run-controls { display: flex; flex-wrap: wrap; gap: 5px; padding: 8px 12px; }
 .team-run-select { padding: 8px 16px; }
@@ -117,3 +117,37 @@
 .team-session-history > summary small { color: var(--fg-dim); white-space: nowrap; }
 .team-session-history-lead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; padding: 4px 10px 10px; }
 .team-session-history-lead > span { color: var(--fg-dim); font-size: 12px; }
+
+.team-attention-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; width: 100%; margin-top: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-raised); color: var(--warn); text-align: left; cursor: pointer; font-size: 12px; }
+.team-attention-summary strong { color: var(--fg); font-weight: 500; }
+.team-attention h3 { font-size: 15px; margin-bottom: 14px; }
+.team-problem-intro { color: var(--fg-dim); margin: 6px 0 16px; }
+.team-problem-card { min-width: 0; padding: 14px; background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius); }
+.team-problem-heading { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14px; }
+.team-problem-heading > span { color: var(--warn); font-size: 12px; }
+.team-problem-task { color: var(--fg-dim); margin: 6px 0 14px; }
+.team-problem-card dl { display: grid; gap: 14px; margin: 0; }
+.team-problem-card dt { font-weight: 600; margin-bottom: 4px; }
+.team-problem-card dd { margin: 0; white-space: pre-wrap; }
+.team-problem-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.team-problem-actions button { min-height: 32px; white-space: normal; text-align: left; }
+.team-waiting-details { margin: 16px 0; }
+.team-waiting-details summary { cursor: pointer; margin-bottom: 12px; }
+.team-waiting-details .team-problem-card + .team-problem-card { margin-top: 12px; }
+.team-chat-body > .team-roster { margin: 0 0 18px; }
+.team-chat-body > .team-roster ul { max-height: none; overflow: visible; list-style: none; padding: 0; }
+.team-chat-body .team-member p { line-height: 1.6; overflow-wrap: anywhere; margin-top: 6px; }
+
+.team-composer textarea { min-height: 80px; flex-shrink: 0; line-height: 1.6; }
+.team-composer-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-shrink: 0; }
+.team-composer-actions { flex-shrink: 0; }
+.team-problems-title { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+.team-problems-title h3 { margin-bottom: 0; }
+.team-problem-dialog { width: min(760px, calc(100vw - 40px)); max-height: calc(100vh - 40px); margin: auto; padding: 24px; border: 1px solid var(--border-strong); border-radius: var(--radius-lg); color: var(--fg); background: var(--bg-raised); overflow: auto; line-height: 1.65; font-size: 14px; }
+.team-problem-dialog::backdrop { background: rgba(0,0,0,.65); }
+.team-problem-dialog h2 { font-size: 18px; }
+.team-problem-brief { margin-top: 12px; display: grid; gap: 8px; }
+.team-problem-brief p { margin: 0; }
+.team-problem-details { margin-top: 12px; }
+.team-problem-details summary { cursor: pointer; color: var(--fg-dim); }
+.team-problem-details[open] summary { margin-bottom: 12px; }

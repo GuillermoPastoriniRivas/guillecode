@@ -55,6 +55,13 @@ pub fn unsettled(r: &Run) -> bool {
         })
 }
 
+// A completed tool call is not a final answer. If the engine leaves that
+// intermediate message idle, surface the stoppage instead of waiting 45 min.
+pub(super) fn idle_response_expired(since: &mut Option<Instant>, active: bool) -> bool {
+    if active { *since = None; return false; }
+    since.get_or_insert_with(Instant::now).elapsed() > Duration::from_secs(90)
+}
+
 fn task_unsettled(task: &Task) -> bool {
     task.attempts.iter().any(|a| a.finished_at.is_none() && (a.session_id.is_some() || a.review_session_id.is_some()))
 }
@@ -378,6 +385,7 @@ pub(super) fn execute(
     };
     let start = Instant::now();
     let mut waiting = false;
+    let mut idle_since = None;
     loop {
         std::thread::sleep(Duration::from_secs(2));
         let state = run(app, run_id)?;
@@ -427,6 +435,7 @@ pub(super) fn execute(
             })?;
         }
         if busy || awaiting {
+            idle_response_expired(&mut idle_since, true);
             continue;
         }
         let messages = live_messages;
@@ -440,6 +449,7 @@ pub(super) fn execute(
                     enforce_limits(&state)?;
                     if state.status == "cancelling" { continue; }
                     previous = assistant_ids(&messages);
+                    idle_since = None;
                     send_error = match client.post(&format!("/session/{}/prompt_async", session), body.clone()) {
                         Ok(_) => None,
                         Err(error) if crate::oc::transient_read_error(&error) => Some(error),
@@ -465,10 +475,10 @@ pub(super) fn execute(
                 return Err("El modelo agotó el contexto sin finalizar la tarea".into());
             }
         }
-        if start.elapsed() > Duration::from_secs(90) && last.is_none() {
+        if idle_response_expired(&mut idle_since, false) {
             return Err(if send_error.is_some() {
                 "Se cortó la conexión al enviar el pedido y no llegó una respuesta nueva. No reenviamos el pedido para evitar repetir acciones. Los cambios y la sesión se conservan; podés consultar al Lead qué pasó y reanudar desde el estado actual."
-            } else { "La sesión quedó inactiva sin respuesta final" }.into());
+            } else { "El motor dejó la sesión inactiva sin una respuesta final. Abrí la última actividad del agente para revisar dónde se frenó; los cambios y la sesión se conservan." }.into());
         }
     }
 }
@@ -1574,6 +1584,15 @@ fn schedule(app: &AppHandle, id: &str) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn abandoned_intermediate_answers_do_not_wait_for_the_full_session_timeout() {
+        let mut idle = Some(Instant::now() - Duration::from_secs(91));
+        assert!(idle_response_expired(&mut idle, false));
+        assert!(!idle_response_expired(&mut idle, true), "busy sessions and permission waits reset the idle timer");
+        assert!(idle.is_none());
+        assert!(!idle_response_expired(&mut idle, false));
+        assert!(idle.is_some());
+    }
     #[test]
     fn directed_repair_does_not_reuse_the_completed_answer_that_failed_review() {
         let mut task: Task = serde_json::from_value(json!({"id":"t","title":"API","objective":"API","assignedAgentId":"lead","repository":"D:/repo","dependencies":[],"expectedFiles":[],"acceptanceCriteria":["check"],"attempts":[{"id":"repair","agent":super::super::domain::tests::team().members[0],"sessionId":"worker","startedAt":1,"status":"waiting_dependency","summary":"","commands":[],"recovered":true,"resumeAfterMessageIds":["old"]}]})).unwrap();

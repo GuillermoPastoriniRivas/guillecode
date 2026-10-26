@@ -1,4 +1,4 @@
-import { useRef, useState } from "react"
+import { useImperativeHandle, useRef, useState, type Ref } from "react"
 import { Icon } from "../components/ui"
 import { teamCall } from "../state/teams"
 import { openImage } from "../state/lightbox"
@@ -6,7 +6,9 @@ import { IMAGE_TYPES, readTeamImages } from "./ChatImages"
 import type { TeamImageInput } from "./types"
 import { BrowserWorkspace } from "../agent/BrowserWorkspace"
 
-export function TeamComposer({ chatId, label, pending, onSent }: { chatId: string; label: string; pending: boolean; onSent: () => void }) {
+export type TeamComposerHandle = { write: (text: string) => void }
+
+export function TeamComposer({ chatId, label, pending, onSent, ref }: { ref?: Ref<TeamComposerHandle>; chatId: string; label: string; pending: boolean; onSent: () => void }) {
   const [text, setText] = useState("")
   const [images, setImages] = useState<TeamImageInput[]>([])
   const [sending, setSending] = useState(false)
@@ -15,7 +17,9 @@ export function TeamComposer({ chatId, label, pending, onSent }: { chatId: strin
   const fileInput = useRef<HTMLInputElement>(null)
   const adding = useRef(false)
   const submitting = useRef(false)
-  const locked = sending || pending || loading
+  const textarea = useRef<HTMLTextAreaElement>(null)
+  useImperativeHandle(ref, () => ({ write(value) { setText(value); textarea.current?.focus() } }))
+  const locked = sending || loading
   const addImages = async (files: File[]) => {
     if (locked || adding.current || !files.length) return
     adding.current = true; setLoading(true); setError("")
@@ -40,15 +44,14 @@ export function TeamComposer({ chatId, label, pending, onSent }: { chatId: strin
   return <form className="team-composer" onSubmit={e => { e.preventDefault(); void submit() }}
     onDragOver={e => { if (e.dataTransfer.types.includes("Files")) e.preventDefault() }}
     onDrop={e => { if (e.dataTransfer.files.length) { e.preventDefault(); void addImages(Array.from(e.dataTransfer.files)) } }}>
-    <label htmlFor={`team-goal-${chatId}`}>{label}</label>
+    <div className="team-composer-heading"><label htmlFor={`team-goal-${chatId}`}>{label}</label>{pending && <button className="btn btn-xs" type="button" aria-label="Detener pedido del Lead" title="Detener pedido del Lead" onClick={() => void teamCall("team_chat_cancel", { chatId })}>Detener</button>}</div>
     {images.length > 0 && <div className="team-chat-images team-image-drafts">{images.map((image, i) => <figure key={i}><button type="button" onClick={() => openImage(image.url, image.filename)} title={`Ampliar ${image.filename}`}><img src={image.url} alt={image.filename} /></button><figcaption>{image.filename}</figcaption><button type="button" className="btn btn-xs" disabled={locked} aria-label={`Quitar ${image.filename}`} onClick={() => setImages(previous => previous.filter((_, index) => index !== i))}><Icon name="close" /></button></figure>)}</div>}
-    <textarea id={`team-goal-${chatId}`} rows={3} value={text} onChange={e => setText(e.target.value)} placeholder="Hablá con el Lead: pedí un cambio o preguntá qué falló…"
+    <textarea ref={textarea} id={`team-goal-${chatId}`} rows={3} value={text} onChange={e => setText(e.target.value)} placeholder={pending ? "Podés preguntar quién está bloqueado o qué falló mientras el Lead trabaja…" : "Hablá con el Lead: pedí un cambio o preguntá qué falló…"}
       onPaste={e => { const files = Array.from(e.clipboardData.items).filter(item => item.type.startsWith("image/")).map(item => item.getAsFile()).filter((file): file is File => !!file); if (files.length) { e.preventDefault(); void addImages(files) } }}
       onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void submit() } }} />
     <input ref={fileInput} type="file" accept={IMAGE_TYPES} multiple hidden aria-label="Imágenes para el equipo" onChange={e => { if (e.target.files) void addImages(Array.from(e.target.files)); e.target.value = "" }} />
     {error && <p className="team-error" role="alert">{error}</p>}
     <BrowserWorkspace sessionId={`team:${chatId}`} shared />
-    {pending && <button className="btn btn-sm" type="button" onClick={() => void teamCall("team_chat_cancel", { chatId })}>Detener pedido del Lead</button>}
     <div className="team-composer-actions"><button className="btn btn-sm" type="button" disabled={locked} onClick={() => fileInput.current?.click()}><Icon name="file-media" /> {loading ? "Cargando imágenes…" : "Adjuntar imagen"}</button><button className="btn btn-primary" type="submit" disabled={locked || (!text.trim() && !images.length)}>{sending ? "Enviando…" : "Enviar"}</button></div>
   </form>
 }

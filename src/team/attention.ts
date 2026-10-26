@@ -2,7 +2,7 @@ import type { TeamChatRecord, TeamRun } from "./types.ts"
 import { readableTeamError } from "../lib/provider-error.ts"
 import { taskProblem } from "./problem.ts"
 
-export type WaitingRequest = { sessionID: string; kind: "permission" | "question" }
+export type WaitingRequest = { sessionID: string; kind: "permission" | "question"; detail?: string }
 export type TeamAttention = { id: string; agentId: string | null; name: string; task: string; kind: "blocked" | "waiting" | "permission" | "question"; reason: string; sessionId: string | null; directory: string }
 
 export function teamAttention(chat: TeamChatRecord, run: TeamRun | undefined, requests: WaitingRequest[] = []): TeamAttention[] {
@@ -25,7 +25,13 @@ export function teamAttention(chat: TeamChatRecord, run: TeamRun | undefined, re
       addSession(attempt?.reviewSessionId, lead, `Revisar ${task.title}`, task.repository)
       const coordination = run.coordination?.findLast(c => c.fromTaskId === task.id && !["resolved", "cancelled"].includes(c.status))
       for (const session of coordination?.sessions ?? []) addSession(session, lead, `Ayudar a ${name}`, task.repository)
-      if (["blocked", "failed", "review_error", "interrupted"].includes(task.status)) {
+      if (coordination && (coordination.status === "blocked" || coordination.status === "checking" && ["blocked", "failed"].includes(run.status))) {
+        items.push({ id: `coordination-${coordination.id}`, agentId: leadId, name: lead, task: `Destrabar a ${name} · ${task.title}`, kind: "blocked",
+          reason: readableTeamError(coordination.summary || run.error || "El Lead no pudo terminar de revisar el pedido de este integrante."),
+          sessionId: coordination.sessions.at(-1) ?? null, directory: task.repository })
+        items.push({ id: task.id, agentId: task.assignedAgentId, name, task: task.title, kind: "waiting",
+          reason: `Espera instrucciones del Lead. El problema está en la coordinación; su trabajo ya guardado se conserva.`, sessionId: attempt?.sessionId ?? null, directory: task.repository })
+      } else if (["blocked", "failed", "review_error", "interrupted"].includes(task.status)) {
         const reviewFailed = attempt?.review?.status === "review_error"
         items.push({ id: task.id, agentId: reviewFailed ? leadId : task.assignedAgentId, name: reviewFailed ? lead : name, task: task.title, kind: "blocked",
           reason: task.error || attempt?.error || attempt?.review ? taskProblem(task) : "No quedó registrada la causa. Revisá su último paso en Actividad para poder ayudarlo.",
@@ -39,9 +45,10 @@ export function teamAttention(chat: TeamChatRecord, run: TeamRun | undefined, re
       }
     }
     if (!items.some(i => i.kind === "blocked") && ["blocked", "failed"].includes(run.status)) {
+      const coordinationSession = run.coordination?.findLast(c => ["blocked", "checking"].includes(c.status))?.sessions.at(-1)
       items.push({ id: "lead", agentId: leadId, name: lead, task: run.tasks.length ? "Continuar la ejecución" : "Organizar el equipo", kind: "blocked",
         reason: run.error ? readableTeamError(run.error) : "La ejecución se detuvo sin registrar una causa. Revisá la actividad del Lead.",
-        sessionId: run.closingSessions?.at(-1) ?? run.planSessionId, directory: root })
+        sessionId: coordinationSession ?? run.closingSessions?.at(-1) ?? run.planSessionId, directory: root })
     }
     // Older engines expose a waiting permission in run.error before its live
     // request arrives. Keep this visible while the run is still working.
@@ -69,7 +76,7 @@ export function teamAttention(chat: TeamChatRecord, run: TeamRun | undefined, re
     if (!owner) continue // Never surface another chat's requests here.
     const existing = items.findIndex(i => i.sessionId === request.sessionID)
     const item: TeamAttention = { id: request.sessionID, ...owner, kind: request.kind, sessionId: request.sessionID,
-      reason: request.kind === "permission" ? "Espera tu autorización para continuar. Abrí el permiso y revisá lo que solicita." : "Te hizo una pregunta y necesita tu respuesta para continuar." }
+      reason: request.kind === "permission" ? `Espera tu autorización para ${request.detail || "continuar"}. Abrí el permiso y revisá lo que solicita.` : request.detail ? `Necesita tu respuesta: ${request.detail}` : "Te hizo una pregunta y necesita tu respuesta para continuar." }
     if (existing >= 0) items[existing] = item
     else items.push(item)
   }

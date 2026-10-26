@@ -8,7 +8,7 @@ import { useAgent } from "./agent"
 import { useTerminals } from "./terminals"
 
 type UpdateInfo = { version: string; currentVersion: string; notes: string }
-type UpdatePolicy = { edition: string; requiresSourceIntegration: boolean }
+type UpdatePolicy = { edition: string; requiresSourceIntegration: boolean; localBuild?: string | null }
 type Phase = "idle" | "checking" | "available" | "downloading" | "ready" | "installing"
 type UpdateState = {
   open: boolean

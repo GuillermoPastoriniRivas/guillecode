@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test"
 
 async function setup(page: Page, localEdition = false) {
-  const state = { available: true, failed: false, busy: false, blocked: false, downloads: 0, installs: 0, localEdition }
+  const state = { available: true, failed: false, busy: false, blocked: false, downloads: 0, installs: 0, localEdition, localBuild: null as string | null }
   await page.addInitScript(() => {
     let id = 0
     const callbacks = new Map<number, (event: unknown) => void>()
@@ -28,7 +28,7 @@ async function setup(page: Page, localEdition = false) {
   })
   await page.route("**/test-updates/*", (route) => {
     const command = new URL(route.request().url()).pathname.split("/").pop()
-    if (command === "update_policy") return route.fulfill({ json: { edition: "Equipos IA", requiresSourceIntegration: state.localEdition } })
+    if (command === "update_policy") return route.fulfill({ json: { edition: "Equipos IA", requiresSourceIntegration: state.localEdition, localBuild: state.localBuild } })
     if (command === "update_check") return route.fulfill({ json: state.available ? { version: "0.3.1", currentVersion: "0.3.0", notes: "Mejoras de prueba" } : null })
     if (command === "live_busy_sessions") return route.fulfill({ json: state.busy ? ["session-other-project"] : [] })
     if (command === "update_download") {
@@ -79,6 +79,20 @@ test("edición local muestra novedades sin permitir reemplazar sus mejoras con e
   expect(state.downloads).toBe(0)
   expect(state.installs).toBe(0)
   await expect(page.getByRole("button", { name: "Instalar y reiniciar", exact: true })).toHaveCount(0)
+})
+
+test("una compilación local muestra su revisión y distingue los cambios propios de las publicaciones oficiales", async ({ page }) => {
+  const state = await setup(page)
+  state.available = false
+  state.localBuild = "abc1234"
+  await page.getByRole("button", { name: "Buscar actualizaciones", exact: true }).click()
+  await expect(page.getByText("Compilación local: abc1234 · Incluye cambios todavía no publicados.", { exact: true })).toBeVisible()
+  await expect(page.getByText("Estás al día con las versiones oficiales publicadas.", { exact: true })).toBeVisible()
+  await expect(page.getByText("Tenés la última versión.", { exact: true })).toHaveCount(0)
+  state.localBuild = null
+  await page.getByRole("button", { name: "Buscar actualizaciones", exact: true }).click()
+  await expect(page.getByText("Compilación local:", { exact: false })).toHaveCount(0)
+  await expect(page.getByText("Tenés la última versión.", { exact: true })).toBeVisible()
 })
 
 test("firma inválida permite reintentar sin instalar y agentes de otro proyecto bloquean reinicio", async ({ page }) => {

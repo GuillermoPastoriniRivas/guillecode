@@ -44,7 +44,8 @@ test("un fallo técnico se deriva al Lead y no se presenta como ayuda humana", (
   assert.equal(memberState(run.team.members[1], chat, run, items).needsHelp, false)
   assert.equal(memberState(run.team.members[2], chat, run, items).label, "Trabajando")
   run.coordination[0].status = "blocked"; run.coordination[0].summary = "Necesito acceso a la cuenta de prueba"; run.tasks[0].status = "blocked"; run.tasks[0].error = run.coordination[0].summary
-  assert.equal(memberState(run.team.members[1], chat, run, teamAttention(chat, run)).needsHelp, true)
+  assert.equal(memberState(run.team.members[0], chat, run, teamAttention(chat, run)).needsHelp, true)
+  assert.equal(memberState(run.team.members[1], chat, run, teamAttention(chat, run)).needsHelp, false)
 })
 
 test("cada integrante conserva su estado cuando otro necesita ayuda, incluso con nombres iguales", () => {
@@ -156,4 +157,19 @@ test("el Lead puede necesitar ayuda antes de planificar y se ve su permiso pendi
   assert.equal(items.length, 1)
   assert.equal(items[0].kind, "permission")
   assert.equal(items[0].sessionId, "lead-chat")
+})
+
+test("un fallo de coordinación señala al Lead y a su sesión, dejando al trabajador en espera", () => {
+  const { chat, run } = fixture()
+  run.status = "blocked"
+  run.tasks[0].status = "blocked"
+  run.tasks[0].error = "La cuenta o el proveedor alcanzó su límite de uso."
+  run.coordination = [{ id: "help", kind: "technical_blocker", fromTaskId: "frontend", message: "Necesito una instrucción", taskIds: [], status: "blocked", summary: "La cuenta o el proveedor alcanzó su límite de uso.", createdAt: 2, sessions: ["lead-help-failed"] }]
+  const items = teamAttention(chat, run)
+  assert.deepEqual(items.map(i => [i.name, i.kind]), [["Lead", "blocked"], ["Frontend", "waiting"]])
+  assert.equal(items[0].sessionId, "lead-help-failed")
+  assert.match(items[0].task, /Frontend/)
+  assert.match(items[1].reason, /coordinación/)
+  assert.equal(memberState(chat.team.members[0], chat, run, items).label, "Bloqueado")
+  assert.equal(memberState(chat.team.members[1], chat, run, items).needsHelp, false)
 })
