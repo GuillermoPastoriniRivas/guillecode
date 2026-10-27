@@ -11,6 +11,7 @@ pub mod accounts;
 pub mod approvals;
 pub mod desktop;
 pub mod features;
+mod engine_integrity;
 pub mod fs;
 pub mod gh;
 pub mod git;
@@ -278,11 +279,14 @@ fn resolve_sidecar_path() -> Result<PathBuf, String> {
         exe_dir.join("binaries").join("opencode-x86_64-pc-windows-msvc.exe"),
         exe_dir.join("opencode"),
     ];
-    candidates
+    let sidecar = candidates
         .iter()
         .find(|c| c.exists())
         .cloned()
-        .ok_or_else(|| format!("no encontré el binario de opencode junto al exe: {:?}", candidates))
+        .ok_or_else(|| format!("no encontré el binario de opencode junto al exe: {:?}", candidates))?;
+    #[cfg(target_os = "windows")]
+    engine_integrity::validate(&sidecar)?;
+    Ok(sidecar)
 }
 
 fn shutdown(app: &tauri::AppHandle) {

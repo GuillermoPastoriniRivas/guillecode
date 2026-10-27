@@ -9,6 +9,7 @@ async function run(file, args = [], env = process.env) {
   assert.equal(await new Promise(done => child.once("exit", done)), 0, file)
 }
 mkdirSync("test-results", { recursive: true })
+await run("tests/windows-engine-integrity.mjs")
 await run("tests/windows-installer-cleanup.mjs")
 const report = resolve("test-results/upgrade-native-fixture.json")
 let directory = process.argv[2] ? resolve(process.argv[2]) : null
