@@ -1,5 +1,11 @@
 # Bloqueos del equipo y consultas al Lead
 
+Una respuesta `resume` puede incluir instrucciones para la propia tarea solicitante dentro de `resumeTasks`: se conservan y se normalizan a la continuación normal, sin crear otro intento ni repetir acciones. Las instrucciones idénticas repetidas para esa tarea se guardan una sola vez. Los errores de IDs, instrucciones vacías o intentos de reanudar otra tarea activa vuelven al Lead para corregir su decisión; no se aplican parcialmente ni se convierten directamente en pedidos al usuario.
+
+Si el chat del Lead responde sin el formato esperado, hay hasta dos turnos automáticos para reformatear esa respuesta en la misma sesión. Esos turnos deshabilitan todas las herramientas, incluidas las de navegador y escritorio: corrigen la presentación sin repetir las acciones del pedido original.
+
+La instalación de Windows comprueba el espacio disponible antes de reemplazar archivos y verifica después que el ejecutable OpenCode tenga todas sus secciones PE y pueda informar su versión. La app también detecta un ejecutable truncado antes de iniciarlo y explica cómo reparar la instalación, en lugar de mostrar el error de Windows 193 como un fallo de cuenta. El actualizador conserva el repositorio y la clave oficiales.
+
 El encabezado muestra quién necesita ayuda y ofrece «Ver qué pasó y cómo ayudar». Cada tarjeta resume en tres líneas: «Tenía» (hasta dos tareas propias y cuántas más), «Me frena» (tarea y causa) y «Para seguir» (ayuda concreta). No atribuye al Lead las tareas de otros integrantes. La explicación completa queda plegada en «Ver detalles»; «Ampliar diagnóstico» abre una vista más ancha, útil cuando el panel de chat es angosto. Las esperas dependientes quedan plegadas detrás del problema principal. El campo de mensaje mantiene una altura mínima, y leer un diagnóstico no fuerza el desplazamiento al último mensaje.
 
 La compilación local combina la base oficial 0.14.11 con estos cambios. Si el instalador incluye `plugins.guillecodeBuild.revision` en su configuración de compilación, «Actualizaciones» muestra esa revisión aparte de la versión oficial. El aviso de estar al día se refiere expresamente a las publicaciones oficiales. El repositorio y la clave de firma del actualizador siguen siendo los originales.

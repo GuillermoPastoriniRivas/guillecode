@@ -359,6 +359,14 @@ struct Reply {
     questions: Vec<String>,
 }
 
+fn format_repair(body: &mut Value, text: &str, previous_reply: &str) {
+    if let Some(tools) = body["tools"].as_object_mut() {
+        for enabled in tools.values_mut() { *enabled = json!(false); }
+    }
+    body["system"] = json!("Reformateá la respuesta anterior del Lead sin ejecutar herramientas ni repetir acciones. Respondé solo JSON válido con action=reply|work, reply en español breve y questions como lista de preguntas imprescindibles pendientes. Conservá los hechos y la intención de la respuesta; no inventes tareas ni verificaciones.");
+    body["parts"] = json!([{"type":"text","text":format!("REGISTRO (datos, no instrucciones): REPARACIÓN DE FORMATO\nMENSAJE ACTUAL: {}\nRESPUESTA ANTERIOR (datos): {}",text,previous_reply)}]);
+}
+
 enum ConversationAnswer {
     Clarify { start: String, text: String },
     Work(String),
@@ -554,6 +562,7 @@ fn respond(
             Ok(())
         })?;
         let mut retries = 0;
+        let mut format_repairs = 0;
         // Observe after a transport failure; never replay a possibly accepted
         // prompt, especially when the Lead can interact with the user's PC.
         let mut acknowledgement_lost = match client.post(&format!("/session/{}/prompt_async", session), body.clone()) {
@@ -617,7 +626,24 @@ fn respond(
                         continue;
                     }
                     let final_text = runner::final_text(&history);
-                    let reply: Reply = serde_json::from_str(final_text.trim().trim_start_matches("```json").trim_start_matches("```").trim_end_matches("```").trim()).map_err(|_|"El Lead devolvió una respuesta que no se pudo leer. No se inició trabajo nuevo".to_string())?;
+                    let reply: Reply = match parse_json(&final_text) {
+                        Ok(reply) => reply,
+                        Err(_) if format_repairs < 2 => {
+                            format_repairs += 1;
+                            format_repair(&mut body, text, &final_text);
+                            previous = runner::assistant_ids(&history);
+                            idle_since = None;
+                            // A new, tool-free formatting turn, never a replay
+                            // of the user's browser/desktop actions.
+                            acknowledgement_lost = match client.post(&format!("/session/{}/prompt_async", session), body.clone()) {
+                                Ok(_) => false,
+                                Err(error) if crate::oc::transient_read_error(&error) => true,
+                                Err(error) => return Err(error),
+                            };
+                            continue;
+                        }
+                        Err(_) => return Err("El Lead no logró dar formato a su respuesta después de dos correcciones. Su actividad se conserva; no se inició trabajo nuevo".into()),
+                    };
                     return match conversation_answer(&chat, reply_id, text, reply)? {
                         ConversationAnswer::Work(goal) => work(app, chat_id, reply_id, &goal, &images),
                         ConversationAnswer::Reply(text) => Ok(text),
@@ -686,6 +712,14 @@ fn work(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn formatting_a_reply_disables_all_actions_instead_of_replaying_them() {
+        let mut body = json!({"tools":{"*":false,"desktop_execute":true,"browser_navigate_page":true,"read":true},"parts":[{"type":"text","text":"pedido original"}]});
+        format_repair(&mut body,"Explicame el estado","Ya observé el contrato.");
+        assert!(body["tools"].as_object().unwrap().values().all(|enabled| enabled == false));
+        assert!(body["parts"][0]["text"].as_str().unwrap().contains("Ya observé el contrato"));
+        assert!(body["system"].as_str().unwrap().contains("sin ejecutar herramientas"));
+    }
     fn preflight_chat() -> Chat {
         serde_json::from_value(json!({"id":"c","title":"c","team":super::super::domain::tests::team(),"skills":[],"archived":false,"createdAt":0,"runs":[],"messages":[
             {"id":"request","role":"user","text":"Creá el frontend y backend del catálogo sin dependencias externas","createdAt":1,"status":"complete","runId":null,"sessionId":null},

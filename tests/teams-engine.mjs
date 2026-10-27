@@ -91,9 +91,10 @@ const mock = createServer(async (request, response) => {
       else if (coordinationChecks === 4) {
         assert.ok(request.replies.some(reply=>reply.status==='recovery_requested'))
         assert.ok(prompt.includes('RECUPERACIÓN AUTOMÁTICA DEL LEAD'))
-        item=message({status:'blocked',summary:'Falló la prueba HTTP. Necesito que el usuario revise el error y decida qué comando ejecutar.'})
+        item=message({status:'resume',summary:'Continuá',resumeTasks:[{taskId:'frontend',summary:''}]})
       }
-      else { helpRounds++; item=message({status:'resume',summary:`Revisé el fallo. El archivo existe: continuá tu sesión, verificá con el comando ${commands.backend} y declaralo exactamente en checks. No repitas la escritura ni cambies los criterios.`}) }
+      else if (coordinationChecks === 5) item=message({status:'blocked',summary:'Falló la prueba HTTP. Necesito que el usuario revise el error y decida qué comando ejecutar.'})
+      else { helpRounds++; item=message({status:'resume',summary:`Revisé el fallo. El archivo existe: continuá tu sesión, verificá con el comando ${commands.backend} y declaralo exactamente en checks. No repitas la escritura ni cambies los criterios.`,resumeTasks:[{taskId:'backend',summary:'Continuá esta misma tarea desde los archivos actuales; no repitas efectos ya observados.'}]}) }
     } else if (leadPhase === 'closeout' && ++closeoutChecks === 1) item=message({status:'review_error',summary:'Necesito que el usuario revise las comprobaciones de integración antes de completar.',criteriaSatisfied:false,tasks:[]})
     else if (leadPhase) { reviews++;item=message({status:'approved',summary:'Archivos y comprobaciones observadas correctos.',criteriaSatisfied:true,tasks:[]}) }
     else {
@@ -151,13 +152,20 @@ const mock = createServer(async (request, response) => {
       }
     }
   } else if (autonomous && latestUserPrompt.includes("REGISTRO (datos, no instrucciones)")) {
-    assert.ok(body.tools.some(t => t.name === "desktop_status"), "Lead must receive PC tools")
-    assert.ok(!body.tools.some(t => ["bash", "write", "edit", "apply_patch", "task"].includes(t.name)), "Conversational file edits and delegation stay scheduler-owned")
+    const formatting = latestUserPrompt.includes('REPARACIÓN DE FORMATO')
+    const availableTools = body.tools ?? []
+    if (formatting) assert.equal(availableTools.length,0,'A formatting repair must not repeat PC/browser actions')
+    else assert.ok(availableTools.some(t => t.name === "desktop_status"), "Lead must receive PC tools")
+    assert.ok(!availableTools.some(t => ["bash", "write", "edit", "apply_patch", "task"].includes(t.name)), "Conversational file edits and delegation stay scheduler-owned")
     if (latestUserPrompt.includes("MENSAJE ACTUAL: Forzar rechazo Zen")) {
       response.writeHead(403, { "Content-Type": "application/json" })
       return response.end(JSON.stringify({ error: { message: "OpenCode's free tier can only be used from within OpenCode. Download it at https://opencode.ai and keep building." } }))
     }
-    if (latestUserPrompt.includes("MENSAJE ACTUAL: Consultá las herramientas")) {
+    if (formatting) item=message({action:'reply',reply:'Elijo los especialistas necesarios y reparto las tareas independientes.',questions:[]})
+    else if (latestUserPrompt.includes('MENSAJE ACTUAL: Explicame cómo')) {
+      item=message({});item.content[0].text='Elijo los especialistas necesarios y reparto las tareas independientes.'
+    }
+    else if (latestUserPrompt.includes("MENSAJE ACTUAL: Consultá las herramientas")) {
       if (!body.input.some(i => i.type === "function_call_output")) item = { type: "function_call", id: `fc-pc-${Date.now()}`, call_id: "call-pc", name: "desktop_status", arguments: "{}", status: "completed" }
       else { await delay(1500); item = message({ action: "reply", reply: "El estado de la PC fue observado con la herramienta. Todavía no inicié tareas del proyecto." }) }
     } else if (latestUserPrompt.includes("MENSAJE ACTUAL: Crear dos servicios")) {
@@ -320,7 +328,7 @@ try {
     assert.equal(circularPauses.size,2)
     assert.equal(parallelWorkers.size,2)
     assert.ok(circularRepairs >= 1)
-    assert.ok(coordinationChecks >= 6)
+    assert.ok(coordinationChecks >= 7)
     assert.equal(reviews,3)
     for(const role of ['backend','frontend']) assert.equal(await readFile(join(repo,`${role}.txt`),'utf8'),'version 2\n')
     assert.equal(await readFile(join(repo,'user.txt'),'utf8'),'user work\n')
