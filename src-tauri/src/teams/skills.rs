@@ -208,9 +208,9 @@ mod tests {
     }
     #[test]
     fn bundled_v2_upgrade_preserves_custom_instructions() {
-        let mut old = catalog().into_iter().find(|s| s.id == "frontend").unwrap();
-        old.version = 2;
-        old.instructions = old.instructions.replace("QA manual es opcional y pertenece al usuario. El equipo debe completar las verificaciones de su encargo antes de entregar, sin esperar un visto bueno manual.", "QA manual pertenece al usuario.");
+        let mut old: Skill = serde_json::from_str(include_str!("../../../tests/fixtures/frontend-v2.json"))
+            .expect("exact shipped v2 frontend skill");
+        assert_eq!(old.version, 2);
         assert!(previous_bundled(&old), "fingerprint must match the exact shipped v2 skill");
         let mut store = Store { schema_version: 2, teams: vec![], skills: legacy_catalog(), chats: vec![] };
         store.skills.push(old.clone());
