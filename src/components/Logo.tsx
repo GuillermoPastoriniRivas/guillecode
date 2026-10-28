@@ -30,7 +30,7 @@ export function Logo({ size = 24, className }: { size?: number; className?: stri
       <rect x="48" y="48" width="928" height="928" rx="216" fill={`url(#${id}-bg)`} />
       <rect x="48" y="48" width="928" height="928" rx="216" fill={`url(#${id}-shine)`} />
       <path
-        d="M 644 398 A 232 232 0 1 0 712 562 L 530 562"
+        d="M 356 296 L 356 728 M 356 296 L 668 296 M 356 520 L 580 520"
         fill="none"
         stroke="#ffffff"
         strokeWidth="112"
