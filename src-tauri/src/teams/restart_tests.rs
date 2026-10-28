@@ -87,7 +87,8 @@ fn restart_phase() {
                 let r = run(&handle, run_id.as_ref().unwrap()).unwrap();
                 if autonomous {
                     assert!(r.team.autonomous);
-                    assert_eq!(r.team.members.len(), if coordination { 3 } else { 2 });
+                    let base_members = r.team.members.iter().filter(|m| !["support-solver", "support-supervisor"].contains(&m.id.as_str())).count();
+                    assert_eq!(base_members, if coordination { 3 } else { 2 });
                     assert_eq!(r.team.members.iter().find(|m| m.id == "worker").unwrap().role, "Backend");
                     assert!(read(&handle).unwrap().teams.is_empty());
                 }

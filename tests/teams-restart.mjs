@@ -27,7 +27,7 @@ const mock=createServer(async(request,response)=>{
   const body=JSON.parse(raw),text=JSON.stringify(body.input)
   const latest=[...body.input].reverse().find((i)=>i.role==='user')
   const latestPrompt=typeof latest?.content==='string'?latest.content:(latest?.content??[]).map((p)=>p.text??'').join('\n')
-  const leadPhase=['Actuás como Team Lead.','Sos el Lead revisor','Sos el Lead de cierre','Sos el Lead de coordinación'].some((marker)=>latestPrompt.includes(marker))
+  const leadPhase=['Actuás como Team Lead.','Sos el Lead revisor','Sos el Lead de cierre','Sos el Lead de coordinación','Sos el Solucionador del equipo','Sos el Supervisor revisor','Sos el Supervisor de cumplimiento'].some((marker)=>latestPrompt.includes(marker))
   const engine=text.includes('engine-crash'),outputs=body.input.filter((i)=>i.type==='function_call_output')
   const isReview=text.includes('Sos el Lead revisor')||text.includes('Sos el Lead de cierre')
   let item
@@ -41,7 +41,10 @@ const mock=createServer(async(request,response)=>{
   else if(body.model==='qa-recovery-lead'&&(!autonomous||leadPhase)){
     const input=[...body.input].reverse().find((i)=>i.role==='user')
     const prompt=typeof input?.content==='string'?input.content:(input?.content??[]).map((p)=>p.text??'').join('\n')
-    if(coordination&&prompt.includes('Sos el Lead de coordinación')){
+    if(prompt.includes('Sos el Solucionador del equipo')) item=message({summary:'El efecto ya se aplicó una sola vez',findings:['app-effects.log contiene una línea once','La sesión del trabajador conserva su historial'],nextStep:'Verificá el archivo antes de volver a ejecutar y continuá la misma sesión'})
+    else if(prompt.includes('Sos el Supervisor revisor')) item=message({status:'approved',summary:'El efecto y su comprobación están presentes una sola vez',criteriaSatisfied:true,tasks:[]})
+    else if(prompt.includes('Sos el Supervisor de cumplimiento')) item=message({summary:'Todos los requisitos del objetivo están cubiertos',criteriaSatisfied:true,criteria:[{requirement:'Aplicar el efecto exactamente una vez',status:'met',evidence:'app-effects.log y comprobación observada'}]})
+    else if(coordination&&prompt.includes('Sos el Lead de coordinación')){
       const states=JSON.parse(prompt.split('ESTADO ACTUAL DEL EQUIPO: ')[1].split('\nHISTORIAL DE COORDINACIÓN:')[0])
       const delivered=states.find((t)=>t.id==='effect').status==='completed'
       item=message({status:delivered?'resume':'wait',summary:delivered?'Entrega effect completada y revisada; integrá ahora':'Backend continúa activo; esperá conservando tu sesión',waitForTaskIds:delivered?[]:['effect'],tasks:[]})
