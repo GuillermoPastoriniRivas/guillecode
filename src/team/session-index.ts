@@ -11,6 +11,7 @@ export function teamSessionOwners(chats: TeamChatRecord[]) {
     const add = (id: string | null | undefined) => { if (id) owners.set(id, chat) }
     for (const message of chat.messages ?? []) add(message.sessionId)
     for (const run of chat.runs) {
+      for (const report of run.supportReports ?? []) add(report.sessionId)
       add(run.planSessionId)
       for (const id of run.closingSessions ?? []) add(id)
       for (const request of run.coordination ?? []) for (const id of request.sessions) add(id)

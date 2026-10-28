@@ -10,6 +10,8 @@ import { tmpdir } from "node:os"
 // Only inference is deterministic/loopback; no account, paid tokens or user repo.
 const noGit = process.argv.includes("--no-git")
 const autonomous = process.argv.includes("--auto")
+const supervision=process.argv.includes("--supervision")
+let integrationObserved=false
 const transportFaults = process.argv.includes("--transport-faults")
 const circularWait = process.argv.includes("--circular-wait")
 const leadHelp = process.argv.includes("--lead-help")
@@ -32,6 +34,8 @@ if (!noGit) {
 const delay = (ms) => new Promise((done) => setTimeout(done, ms))
 const nodeCommand = `& '${process.execPath.replaceAll("'", "''")}'`
 const commands = { backend: `${nodeCommand} -e "process.exit(require('fs').existsSync('backend.txt') ? 0 : 1)"`, frontend: `${nodeCommand} -e "process.exit(require('fs').existsSync('frontend.txt') ? 0 : 1)"` }
+const integrationCommand = `${nodeCommand} -e "process.exit(['back-1.txt','back-2.txt','front-1.txt'].every(p=>require('fs').existsSync(p)) ? 0 : 1)"`
+let planFormatRepairs = 0
 let reviews = 0
 let coordinationChecks = 0
 let closeoutChecks = 0
@@ -72,13 +76,23 @@ const mock = createServer(async (request, response) => {
   const leadPhase = [
     ["plan", "Actuás como Team Lead."],
     ["review", "Sos el Lead revisor"],
+    ["review", "Sos el Supervisor revisor"],
+    ["solver", "Sos el Solucionador del equipo."],
+    ["assessment", "Sos el Supervisor de cumplimiento."],
     ["closeout", "Sos el Lead de cierre"],
     ["coordination", "Sos el Lead de coordinación"],
   ].map(([phase, marker]) => [phase, latestUserPrompt.indexOf(marker)]).filter(([, index]) => index >= 0).sort((a, b) => a[1] - b[1])[0]?.[0]
   if (autonomous) assert.ok(JSON.stringify(body.input).includes("data:image/png;base64,"), "User image must reach Lead conversation, planning, workers and review as an actual image part")
   let item
   const message = (value) => ({ type: "message", id: `msg-${Date.now()}`, role: "assistant", content: [{ type: "output_text", text: JSON.stringify(value), annotations: [] }], status: "completed" })
-  if (leadHelp) {
+  if (leadPhase === 'solver') {
+    assert.ok(!(body.tools ?? []).some(t=>['write','edit','apply_patch','bash','desktop_execute','browser_navigate_page'].includes(t.name)), 'Solver must investigate without changing files or bypassing controls')
+    item=message({summary:'El contrato y los archivos guardados permiten continuar sin repetir efectos.',findings:['La sesión del trabajador y sus comandos registrados se conservan.'],nextStep:'El Lead debe indicar el paso pendiente y reanudar esa misma sesión con una corrección concreta.'})
+  } else if (leadPhase === 'assessment') {
+    assert.ok(!(body.tools ?? []).some(t=>['write','edit','apply_patch','bash'].includes(t.name)))
+    const missing=supervision && !integrationObserved
+    item=message({summary:missing?'Falta una comprobación conjunta de los tres componentes.':'El objetivo inicial coincide con los archivos y las comprobaciones observadas.',criteriaSatisfied:!missing,criteria:[{requirement:'Implementación y verificación del objetivo inicial completo',status:missing?'unverified':'met',evidence:missing?'Existen comprobaciones individuales, pero todavía no una integración observada.':'Archivos actuales y comandos satisfactorios registrados en las sesiones de los trabajadores.'}]})
+  } else if (leadHelp) {
     const input = [...body.input].reverse().find(i => i.role === 'user')
     const prompt = typeof input?.content === 'string' ? input.content : (input?.content ?? []).map(p => p.text ?? '').join('\n')
     if (leadPhase === 'plan') item = message({tasks:['backend','frontend'].map(role=>({id:role,title:`Crear ${role}`,objective:`Crear ${role}.txt con versión 2`,assignedAgentId:role,repository:repo,dependencies:[],expectedFiles:[`${role}.txt`],writePaths:[`${role}.txt`],acceptanceCriteria:['Archivo con versión 2','Comprobación ejecutada']}))})
@@ -172,26 +186,36 @@ const mock = createServer(async (request, response) => {
       item = message({ action: "work", questions: ["¿Qué saludo deben mostrar los servicios?", "¿Se permiten dependencias externas?"] })
     } else item = message({ action: latestUserPrompt.includes("MENSAJE ACTUAL: Usá hola mundo") ? "work" : "reply", reply: "Elijo los especialistas necesarios y reparto tareas independientes para trabajar en paralelo.", questions: [] })
   } else if (autonomous) {
-    if (leadPhase === "plan") {
+    if (leadPhase === "plan" && !latestUserPrompt.includes("REPARACIÓN DEL PLAN")) {
       assert.ok(latestUserPrompt.includes("Crear dos servicios Backend y una pantalla Frontend"), "Planning must retain the original request")
       assert.ok(latestUserPrompt.includes("Usá hola mundo; sin dependencias externas"), "Planning must retain the clarification answers")
     }
-    if (leadPhase === "plan") item = message({ agents: [{ id: "back-1", role: "Backend" }, { id: "back-2", role: "Backend" }, { id: "front-1", role: "Frontend" }], tasks: ["back-1", "back-2", "front-1"].map(id => ({ id, title: id, objective: `Crear ${id}.txt y comprobarlo`, assignedAgentId: id, repository: repo, dependencies: [], expectedFiles: [`${id}.txt`], writePaths: [`${id}.txt`], acceptanceCriteria: ["Archivo creado y comprobado"] })) })
+    if (leadPhase === "plan") {
+      item = message({ agents: [{ id: "back-1", role: "Backend" }, { id: "back-2", role: "Backend" }, { id: "front-1", role: "Frontend" }], tasks: ["back-1", "back-2", "front-1"].map(id => ({ id, title: id, objective: `Crear ${id}.txt y comprobarlo`, assignedAgentId: id, repository: repo, dependencies: [], expectedFiles: [`${id}.txt`], writePaths: [`${id}.txt`], acceptanceCriteria: ["Archivo creado y comprobado"] })) })
+      if (latestUserPrompt.includes("REPARACIÓN DEL PLAN")) {
+        planFormatRepairs++; assert.equal((body.tools ?? []).length,0,"Plan formatting cannot repeat browser or filesystem tools")
+      } else item.content[0].text = 'Plan propuesto:\n```json\n'+item.content[0].text+'\n```\nResumen: tres especialistas en paralelo.\n```json\n{"chatSummary":{"done":"Plan listo","tested":"Sin pruebas aún","pending":"Implementar"}}\n```'
+    }
+    else if (supervision && leadPhase === 'closeout' && !integrationObserved && ++closeoutChecks===1) item=message({status:'approved',summary:'El Lead cree que ya está completo, aunque falta la integración señalada por el Supervisor.',criteriaSatisfied:true,tasks:[]})
+    else if (supervision && leadPhase === 'closeout' && !integrationObserved) item=message({status:'changes_requested',summary:'El Supervisor detectó que falta probar juntos los componentes. Asigno la integración sin consultar al usuario.',criteriaSatisfied:false,tasks:[{id:'integration',title:'Verificar integración final',objective:'Verificar integración de los tres componentes sin repetir escrituras',assignedAgentId:'front-1',repository:repo,dependencies:[],expectedFiles:['front-1.txt'],writePaths:['front-1.txt'],acceptanceCriteria:['Comprobar los tres archivos en una misma ejecución observada']}]})
     else if (leadPhase) { reviews++; item = message({ status: "approved", summary: "Los tres archivos y sus comprobaciones observadas están correctos.", criteriaSatisfied: true, tasks: [], chatSummary: { done: "Creé dos servicios y la pantalla.", tested: "Las tres comprobaciones pasaron.", pending: "Nada pendiente." } }) }
     else {
       const input = [...body.input].reverse().find(i => i.role === "user")
       const prompt = typeof input?.content === "string" ? input.content : (input?.content ?? []).map(p => p.text ?? "").join("\n")
       const objective = prompt.split("\nTAREA: ")[1].split("\nCRITERIOS:")[0]
-      const id = objective.match(/Crear (back-\d|front-\d)\.txt/)[1]
+      const id = objective.startsWith("Verificar integración") ? "integration" : objective.match(/Crear (back-\d|front-\d)\.txt/)[1]
       const outputs = body.input.filter(i => i.type === "function_call_output")
-      if (!outputs.length) {
+      if (!outputs.length && id!=="integration") {
         parallelWorkers.add(id)
         const deadline = Date.now() + 15000
         while (parallelWorkers.size < 3 && Date.now() < deadline) await delay(100)
         assert.equal(parallelWorkers.size, 3, "All three automatically chosen specialists must start before any completes")
       }
       const check = `${nodeCommand} -e "process.exit(require('fs').readFileSync('${id}.txt','utf8')==='hola mundo\\n'?0:1)"`
-      if (outputs.length >= 3) item = message({ status: "completed", summary: `${id} implementado y comprobado`, checks: [check], limitations: [] })
+      if (id==='integration') {
+        if (outputs.length) { integrationObserved=true;item=message({status:'completed',summary:'Integración conjunta comprobada sin reescribir componentes',checks:[integrationCommand],limitations:[]}) }
+        else item={type:'function_call',id:`fc-integration-${Date.now()}`,call_id:`call-integration-${Date.now()}`,name:'bash',arguments:JSON.stringify({command:integrationCommand,description:'Verificar integración de los tres componentes',timeout:10000}),status:'completed'}
+      } else if (outputs.length >= 3) item = message({ status: "completed", summary: `${id} implementado y comprobado`, checks: [check], limitations: [] })
       else {
         const name = outputs.length === 0 ? "read" : outputs.length === 1 ? "write" : "bash"
         const args = name === "read" ? { filePath: join(repo, "user.txt") } : name === "write" ? { filePath: join(repo, `${id}.txt`), content: "hola mundo\n" } : { command: check, description: "Comprobar saludo", timeout: 10000 }
@@ -306,7 +330,7 @@ try {
     await new Promise(done => proxy.listen(0, "127.0.0.1", done))
     testOrigin = `http://127.0.0.1:${proxy.address().port}`
   }
-  const cargo = spawn("cargo", ["test", "--manifest-path", "src-tauri/Cargo.toml", "--release", "--lib", "--features", "desktop-e2e", "teams::integration::native_team_end_to_end", "--", "--ignored", "--nocapture", "--test-threads=1"], { env: { ...process.env, GUILLE_TEAM_TEST_CYCLE: circularWait ? "1" : "0", GUILLE_TEAM_TEST_HELP: leadHelp ? "1" : "0", GUILLE_TEAM_TEST_TRANSPORT: transportFaults ? "1" : "0", GUILLE_TEAM_TEST_AUTO: autonomous?'1':'0', GUILLE_TEAM_TEST_ENGINE: testOrigin, GUILLE_TEAM_TEST_REPO: repo,GUILLE_TEAM_TEST_NO_GIT:noGit?'1':'0',GUILLE_TEAM_TEST_CAPTURE_URL:`http://127.0.0.1:${mock.address().port}/app`,GUILLE_TEAM_TEST_ARTIFACTS:resolve(noGit?'test-results/native-team-evidence-no-git':'test-results/native-team-evidence') }, windowsHide: true, stdio: "inherit" })
+  const cargo = spawn("cargo", ["test", "--manifest-path", "src-tauri/Cargo.toml", "--release", "--lib", "--features", "desktop-e2e", "teams::integration::native_team_end_to_end", "--", "--ignored", "--nocapture", "--test-threads=1"], { env: { ...process.env, GUILLE_TEAM_TEST_CYCLE: circularWait ? "1" : "0", GUILLE_TEAM_TEST_HELP: leadHelp ? "1" : "0", GUILLE_TEAM_TEST_TRANSPORT: transportFaults ? "1" : "0", GUILLE_TEAM_TEST_AUTO: autonomous?'1':'0', GUILLE_TEAM_TEST_SUPERVISION:supervision?'1':'0', GUILLE_TEAM_TEST_ENGINE: testOrigin, GUILLE_TEAM_TEST_REPO: repo,GUILLE_TEAM_TEST_NO_GIT:noGit?'1':'0',GUILLE_TEAM_TEST_CAPTURE_URL:`http://127.0.0.1:${mock.address().port}/app`,GUILLE_TEAM_TEST_ARTIFACTS:resolve(noGit?'test-results/native-team-evidence-no-git':'test-results/native-team-evidence') }, windowsHide: true, stdio: "inherit" })
   const code = await new Promise((done) => cargo.once("exit", done))
   assert.equal(code, 0, `Native runner failed\n${log}`)
   if (transportFaults) {
@@ -334,11 +358,13 @@ try {
     assert.equal(await readFile(join(repo,'user.txt'),'utf8'),'user work\n')
     console.log('Verified: real parallel sessions mutually wait → cyclic Lead decision rejected → automatic Lead repair → same worker sessions resume → both observed checks pass.')
   } else if (autonomous) {
+    assert.equal(planFormatRepairs,1,"A wrapped plan must be repaired once before dispatching specialists")
     assert.equal(desktopCalls, 1, "The native Lead conversation must execute exactly one PC observation")
+    if (supervision) {assert.ok(integrationObserved);assert.ok(closeoutChecks>=1)}
     assert.equal(parallelWorkers.size, 3)
     for (const id of parallelWorkers) assert.equal(await readFile(join(repo, `${id}.txt`), "utf8"), "hola mundo\n")
     assert.deepEqual([...models], ["qa-lead"])
-    assert.equal(reviews, transportFaults ? 5 : 4)
+    assert.equal(reviews, supervision ? 5 : transportFaults ? 5 : 4)
     assert.equal(await readFile(join(repo, "user.txt"), "utf8"), "user work\n")
     if (noGit) await assert.rejects(() => stat(join(repo, ".git")), { code: "ENOENT" })
     console.log("Verified: no template → Lead chooses two Backend + one Frontend → three real parallel sessions → writes and observed checks → persisted roster + brief.")

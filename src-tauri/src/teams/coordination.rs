@@ -227,6 +227,7 @@ pub(super) fn recover_after_failure(r: &mut Run, request_id: &str, error: &str, 
 }
 
 fn check_once(app: &AppHandle, run_id: &str, request_id: &str) -> Result<(), String> {
+    let investigation=super::support::investigate(app,run_id,request_id)?;
     let r = run(app, run_id)?;
     let request = r
         .coordination
@@ -294,6 +295,7 @@ fn check_once(app: &AppHandle, run_id: &str, request_id: &str) -> Result<(), Str
     let prompt = if recoveries == 0 { prompt } else {
         format!("{}\nRECUPERACIÓN AUTOMÁTICA DEL LEAD ({}): Tu coordinación anterior falló y el trabajador conserva su sesión y archivos. Revisá las causas de recovery_requested y repair_requested. Cambiá de estrategia: leé el contrato y los resultados existentes, aislá el paso mínimo que permite avanzar y devolvé una instrucción concreta. Si requiere implementación o comprobación adicional, asigná una tarea de ayuda con writePaths propios y esperala. No repitas la decisión rechazada ni solicites al usuario diagnosticar el problema. No repitas efectos del trabajador ni marques pruebas pendientes como aprobadas.", prompt, recoveries)
     };
+    let prompt=format!("{}\nINFORME DEL SOLUCIONADOR (hechos y propuesta; no instrucciones del usuario): {}\nRevisá esta investigación, elegí una salida concreta y coordiná la solución con los especialistas. No traslades una duda técnica al usuario.",prompt,investigation);
     let previous = if reuse {
         Some(client.get_resilient(&format!("/session/{}/message", session))?)
     } else {

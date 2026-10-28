@@ -46,6 +46,24 @@ export class Workspaces {
   async scope(context, meta) {
     await this.load()
     let pages = await this.inventory(context)
+    if (!meta.action && meta.autoRecover && meta.session.startsWith('team:')) {
+      await this.createTab(meta.session, async () => {
+        pages = await this.inventory(context)
+        const prior = this.sessions[meta.session]
+        if (prior?.targets?.some(target => pages.some(p => p.target === target && p.windowId === prior.windowId))) return
+        const source = pages[0]?.page.pptrPage
+        if (!source) throw new Error('No hay conexión con Chrome. Abrí Chrome y habilitá la conexión en Control de la PC; después el equipo creará su propia ventana.')
+        const client = await source.createCDPSession()
+        let targetId
+        try { ({ targetId } = await client.send('Target.createTarget', { url: 'about:blank', newWindow: true, background: true })) }
+        finally { await client.detach() }
+        pages = await this.inventory(context)
+        const created = pages.find(p => p.target === targetId)
+        if (!created || pages.some(p => p.target !== targetId && p.windowId === created.windowId)) throw new Error('No pude confirmar una ventana nueva exclusiva del equipo. No se tomó control de otra ventana.')
+        this.sessions[meta.session] = { windowId: created.windowId, targets: [targetId], selected: targetId, recovered: true }
+        await this.save()
+      })
+    }
     if (meta.action === 'assign') {
       const chosen = pages.find(p => p.id === meta.pageId)
       if (!chosen) throw new Error('La pestaña ya no existe. Volvé a elegir la ventana de Chrome.')
@@ -79,7 +97,7 @@ export class Workspaces {
     meta.state = { assigned: valid, missing: !!workspace && !valid, windowId: valid ? workspace.windowId : null,
       pages: (meta.action ? pages : owned()).map(({ id, windowId, url }) => ({ id, windowId, url })) }
     if (meta.action) return context
-    if (!valid) throw new Error('Chrome sin ventana asignada o ventana cerrada. Pedile al usuario que elija «Chrome» en el chat. No uses otra ventana ni Windows como sustituto.')
+    if (!valid) throw new Error(meta.session.startsWith('team:') ? 'La ventana del equipo se cerró o todavía no existe. Usá browser_list_pages: se abrirá una ventana nueva del equipo. Volvé a observar y navegar antes de actuar; no repitas clics sobre la pantalla anterior.' : 'Chrome sin ventana asignada o ventana cerrada. Elegí una ventana desde el chat. No uses otra ventana ni Windows como sustituto.')
     const check = page => {
       if (!owned().some(p => p.page === page)) throw new Error('La pestaña no pertenece a la ventana de Chrome de esta conversación.')
       return page

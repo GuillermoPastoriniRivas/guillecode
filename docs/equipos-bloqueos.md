@@ -16,7 +16,7 @@ La instalación de Windows comprueba el espacio disponible antes de reemplazar a
 
 El encabezado muestra quién necesita ayuda y ofrece «Ver qué pasó y cómo ayudar». Cada tarjeta resume en tres líneas: «Tenía» (hasta dos tareas propias y cuántas más), «Me frena» (tarea y causa) y «Para seguir» (ayuda concreta). No atribuye al Lead las tareas de otros integrantes. La explicación completa queda plegada en «Ver detalles»; «Ampliar diagnóstico» abre una vista más ancha, útil cuando el panel de chat es angosto. Las esperas dependientes quedan plegadas detrás del problema principal. El campo de mensaje mantiene una altura mínima, y leer un diagnóstico no fuerza el desplazamiento al último mensaje.
 
-La compilación local combina la base oficial 0.14.11 con estos cambios. Si el instalador incluye `plugins.guillecodeBuild.revision` en su configuración de compilación, «Actualizaciones» muestra esa revisión aparte de la versión oficial. El aviso de estar al día se refiere expresamente a las publicaciones oficiales. El repositorio y la clave de firma del actualizador siguen siendo los originales.
+La compilación local combina la base oficial 0.14.13 con estos cambios. Si el instalador incluye `plugins.guillecodeBuild.revision` en su configuración de compilación, «Actualizaciones» muestra esa revisión aparte de la versión oficial. El aviso de estar al día se refiere expresamente a las publicaciones oficiales. El repositorio y la clave de firma del actualizador siguen siendo los originales.
 
 `app.exe --build-info` devuelve la versión y la revisión de esa misma configuración embebida, sin abrir ventanas, iniciar el motor ni modificar el perfil. Permite comprobar la identidad del ejecutable instalado además de comparar su hash con el artefacto compilado.
 
@@ -49,3 +49,36 @@ La validación incluye pruebas de atribución del bloqueo y recomendaciones, con
 ![Diagnóstico ampliado del equipo](evidencias/equipos-diagnostico-ampliado.png)
 
 Capturas reales de la interfaz con datos de prueba controlados: Lead detenido por límite de cuenta y especialista esperando instrucciones. No corresponden a una sesión privada ni acreditan disponibilidad de un proveedor de producción.
+
+
+## Lectura, edición y recuperación del navegador
+
+El chat permite ampliar y restaurar la conversación conservando el borrador. Los pedidos largos quedan plegados y el Lead muestra sus tres frases en una tarjeta con más separación y tamaño de lectura. Los detalles técnicos permanecen plegados. En pantallas bajas se reduce el espacio de los controles para conservar un área de lectura útil.
+
+Los permisos de escritura se calculan desde la base real informada por OpenCode, también sin Git y al abrir una subcarpeta de un repositorio. Cada especialista conserva únicamente sus rutas asignadas; al reanudar una sesión se actualiza ese mismo alcance. Se conservan las restricciones sobre archivos sensibles, Git, otras carpetas y comandos de shell. Las solicitudes de permisos muestran la ruta o el comando que informó el motor; no se atribuye un fallo de edición a la cuenta de IA.
+
+Una respuesta del plan envuelta en texto o con varios bloques JSON se devuelve hasta dos veces al Lead para corregir su formato, en la misma sesión y con todas las herramientas deshabilitadas. No se descarta inmediatamente el reparto de especialistas ni se repiten acciones de observación.
+
+Si falta la ventana del equipo o se cerró, los trabajadores y el Lead del chat pueden recuperarla mediante `browser_list_pages`: la app crea una sola ventana nueva exclusiva del equipo, también ante pedidos simultáneos. No adopta una ventana personal ni reproduce clics, formularios o acciones de la página perdida. El agente debe volver a navegar y observar antes de actuar. Planificación y revisiones de solo lectura no crean ventanas. Se respetan la pausa del usuario, el control apagado y los permisos de conexión de Chrome.
+
+Las pruebas nativas verifican escritura sin permisos manuales de edición en una carpeta sin Git, reparación de un plan mal formateado antes de ejecutar tres especialistas, continuación de una sesión con permisos actualizados y recuperación de Chrome real con persistencia tras reiniciar. La inferencia del runner es determinista local; esas pruebas no equivalen a una entrega con el proveedor de producción.
+
+
+## Solucionador, Supervisor y análisis del objetivo
+
+Ante un pedido de ayuda se crea una sesión real del **Solucionador**, que investiga archivos, contratos y fuentes web con herramientas de lectura. Envía hechos y un siguiente paso al Lead antes de que este decida cómo continuar. La investigación se conserva por pedido y no se repite en cada corrección del mismo mensaje. No escribe código ni cambia permisos. Las dudas técnicas no se trasladan al usuario; las decisiones rutinarias se resuelven con una suposición explícita dentro del alcance. Los accesos, credenciales o decisiones imprescindibles sin alternativa segura conservan sus controles.
+
+El **Supervisor** revisa cada entrega, busca incompatibilidades con los contratos de los demás y reporta los faltantes. El Lead conserva la responsabilidad de asignar correcciones y reanudar las sesiones. La supervisión puede observar entregas independientes en paralelo y no reserva rutas de escritura de los trabajadores.
+
+Antes del cierre, el Supervisor contrasta otra vez el objetivo inicial completo con los archivos, resultados y pruebas observadas. Produce una lista de requisitos `met`, `missing` o `unverified`, con la evidencia o la explicación de su ausencia. No basta marcar tareas completas ni aprobar revisiones individuales: la app impide aprobar el cierre si esa comparación no confirma todos los requisitos. Los faltantes vuelven al Lead para asignar correcciones y se realiza una nueva comparación después. La revisión manual del usuario viene después de la entrega comprobada.
+
+Las sesiones, modelos usados e informes quedan registrados en Actividad y en las evidencias; las sesiones de apoyo también quedan agrupadas dentro del equipo en el historial normal. Resultados muestra un resumen del contraste objetivo/resultado y deja plegada la lista de comprobaciones. Una sesión de apoyo pendiente mantiene ocupada su carpeta hasta reconciliarse; cancelar conserva sus informes y cambios previos.
+
+
+Capturas reales de la interfaz con datos controlados de las pruebas (no acreditan una sesión de proveedor de producción):
+
+![Chat con pedidos largos plegados y respuestas con más espacio](evidencias/equipo-chat-legible.png)
+
+![Conversación ampliada conservando el borrador](evidencias/equipo-chat-ampliado.png)
+
+![Supervisor comparando requisitos originales y comprobaciones](evidencias/supervisor-objetivo-y-resultado.png)

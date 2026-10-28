@@ -37,3 +37,11 @@ test("incluye descendientes con ancestros fuera del filtro y conserva sesiones n
   assert.equal(grouped.groups[0].chat?.id, "one")
   assert.equal(grouped.groups[1].chat, undefined)
 })
+
+test("sesiones de Solucionador y Supervisor permanecen dentro del equipo",()=>{
+  const record=chat("support")
+  record.runs[0].supportReports=[{sessionId:"solver-session"},{sessionId:"supervisor-session"}] as NonNullable<TeamChatRecord["runs"][0]["supportReports"]>
+  const grouped=groupTeamSessions([session("solver-session","Investigación"),session("supervisor-session","Revisión"),session("normal")],[record])
+  assert.deepEqual(grouped.normal.map(s=>s.id),["normal"])
+  assert.equal(grouped.groups[0].sessions.length,2)
+})

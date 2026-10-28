@@ -4,6 +4,7 @@ use std::collections::HashSet;
 pub const MAX_WORKERS: usize = 8;
 
 pub fn validate_assignments(proposals: &[AgentProposal], tasks: &[Task]) -> Result<(), String> {
+    if proposals.iter().any(|p|super::support::reserved(&p.id)) || tasks.iter().any(|t|super::support::reserved(&t.assigned_agent_id)) { return Err("El Solucionador y el Supervisor se administran por sus sesiones de apoyo, sin tareas de escritura".into()); }
     if proposals
         .iter()
         .any(|p| !tasks.iter().any(|t| t.assigned_agent_id == p.id))
@@ -31,7 +32,7 @@ pub fn with_agents(
     if !team.autonomous {
         return Err("Los integrantes de este equipo manual se configuran en su plantilla".into());
     }
-    if team.members.len() + proposals.len() > MAX_WORKERS + 1 {
+    if team.members.iter().filter(|m|!super::support::member(m)).count() + proposals.len() > MAX_WORKERS + 1 {
         return Err("El Lead propuso demasiados especialistas para una ejecución".into());
     }
     let lead = team
@@ -42,7 +43,7 @@ pub fn with_agents(
     let mut next = team.clone();
     let mut ids: HashSet<_> = team.members.iter().map(|m| m.id.clone()).collect();
     for p in proposals {
-        if p.id.is_empty()
+        if super::support::reserved(&p.id) || p.id.is_empty()
             || p.id.len() > 64
             || !p
                 .id

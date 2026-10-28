@@ -24,7 +24,8 @@ export function runProblem(run: TeamRun): string {
   }
   const task = run.tasks.find(t => ["blocked", "failed", "changes_requested", "review_error", "interrupted"].includes(t.status))
   if (task) {
-    const responsible = task.attempts.at(-1)?.review?.status === "review_error" ? run.team.leadAgentId : task.assignedAgentId
+    const report=run.supportReports?.find(s=>s.sessionId===task.attempts.at(-1)?.reviewSessionId)
+    const responsible = task.attempts.at(-1)?.review?.status === "review_error" || report && ["failed","uncertain"].includes(report.status) ? report?.agent.id ?? run.team.leadAgentId : task.assignedAgentId
     const name = run.team.members.find(m => m.id === responsible)?.name ?? "Un integrante"
     return `${name} · ${task.title}: ${taskProblem(task)}`
   }

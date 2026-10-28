@@ -138,7 +138,10 @@ pub fn message(value: &Value) -> String {
     {
         return "El proveedor rechazó el formato de esta solicitud. Revisá el objetivo y los archivos adjuntos; si vuelve a pasar, probá con un objetivo más breve.".into();
     }
-    if ["permission denied", "insufficient permission", "forbidden", "http 403"]
+    if ["permission denied", "permiso denegado", "access is denied"].iter().any(|s| text.contains(s)) && ["edit", "write", "apply_patch", "modificar", "escribir"].iter().any(|s| text.contains(s)) {
+        return "No pude editar un archivo de la tarea. El Lead debe revisar su ruta y la asignación de escritura; los demás agentes pueden continuar. Revisá en Actividad el archivo y la operación solicitada.".into();
+    }
+    if ["insufficient permission", "forbidden", "http 403"]
         .iter()
         .any(|s| text.contains(s))
     {

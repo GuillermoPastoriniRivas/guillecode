@@ -875,3 +875,56 @@ test("un Lead bloqueado explica causa y ayuda sin comprimir el chat, y acepta co
   expect(chat.runs).toHaveLength(1)
   expect(calls.filter(c=>c.command==="team_chat_send")).toHaveLength(2)
 })
+
+
+test("chat legible pliega pedidos largos y amplía la conversación conservando el borrador", async ({page})=>{
+  const {store}=await setup(page)
+  await createTeam(page)
+  await page.setViewportSize({width:1100,height:760})
+  const composer=page.getByLabel("Mensaje para el equipo",{exact:true})
+  await composer.fill("Crear frontend y backend. ".repeat(25));await composer.press("Enter")
+  const run=store.chats[0].runs[0]
+  run.status="completed";run.finishedAt=Date.now();run.summary="Frontend y Backend integrados. Pruebas correctas."
+  run.chatSummary={done:"Creé la pantalla y la API.",tested:"Pasaron las pruebas de integración.",pending:"Listo para tu revisión."}
+  await page.evaluate(async()=>{const {refreshTeams}=await import(/* @vite-ignore */ "/src/state/teams.ts");await refreshTeams()})
+  const goal=page.locator(".team-goal-details").last()
+  await expect(goal).not.toHaveAttribute("open","")
+  await expect(page.locator(".lead-brief").last()).toContainText("Creé la pantalla y la API")
+  await composer.fill("Este borrador se conserva")
+  await page.getByRole("button",{name:"Ampliar chat del equipo",exact:true}).click()
+  await expect(page.locator(".team-chat-expanded")).toBeVisible()
+  const width=await page.locator(".team-chat").evaluate(el=>el.getBoundingClientRect().width)
+  expect(width).toBeGreaterThan(900)
+  await expect(composer).toHaveValue("Este borrador se conserva")
+  await expect(page.locator(".lead-details").last()).not.toHaveAttribute("open","")
+  await page.locator(".team-chat-body").evaluate(el=>{el.scrollTop=Math.max(0,el.scrollTop-90)})
+  await page.screenshot({path:test.info().outputPath("equipo-chat-ampliado.png")})
+  await page.getByRole("button",{name:"Restaurar tamaño del chat",exact:true}).click()
+  await expect(page.locator(".team-chat-expanded")).toHaveCount(0)
+  await expect(composer).toHaveValue("Este borrador se conserva")
+  await page.locator(".team-chat-body").evaluate(el=>{el.scrollTop=Math.max(0,el.scrollTop-90)})
+  await page.screenshot({path:test.info().outputPath("equipo-chat-legible.png")})
+})
+
+
+test("Actividad muestra al Solucionador y Supervisor y el cierre compara requisitos originales",async({page})=>{
+  const {store}=await setup(page);await createTeam(page)
+  const composer=page.getByLabel("Mensaje para el equipo",{exact:true});await composer.fill("Crear frontend y backend integrados");await composer.press("Enter")
+  const run=store.chats[0].runs[0]
+  const supervisor={...run.team.members[0],id:"support-supervisor",name:"Supervisor",role:"Supervisor"}
+  const solver={...supervisor,id:"support-solver",name:"Solucionador",role:"Solucionador"}
+  run.team.members.push(supervisor,solver)
+  run.supportReports=[{id:"solve",kind:"investigation",agent:solver,sessionId:"solver-session",repository:run.team.projectRoot,taskId:null,requestId:null,startedAt:Date.now(),finishedAt:Date.now(),status:"completed",summary:"Encontré el contrato que faltaba.",result:{findings:["La API existe y devuelve el saludo."],nextStep:"Reanudar Frontend con el contrato registrado."}},{id:"analysis",kind:"goal_analysis",agent:supervisor,sessionId:"supervisor-session",repository:run.team.projectRoot,taskId:null,requestId:null,startedAt:Date.now(),finishedAt:Date.now(),status:"completed",summary:"Pantalla y API integradas y comprobadas.",result:{criteriaSatisfied:true,criteria:[{requirement:"Frontend y backend integrados",status:"met",evidence:"Prueba HTTP conjunta registrada con código 0."}]}}]
+  run.status="completed";run.finishedAt=Date.now()
+  await page.evaluate(async()=>{const {refreshTeams}=await import(/* @vite-ignore */ "/src/state/teams.ts");await refreshTeams()})
+  await page.getByRole("button",{name:"Actividad",exact:true}).click()
+  await expect(page.locator(".team-support-report")).toHaveCount(2)
+  await expect(page.getByRole("button",{name:"Ver sesión de Solucionador",exact:true})).toBeVisible()
+  await page.getByRole("button",{name:"Resultados / Comportamientos",exact:true}).click()
+  const analysis=page.locator(".team-goal-analysis")
+  await expect(analysis).toContainText("confirmó su cumplimiento")
+  await analysis.locator("summary").click()
+  await expect(analysis).toContainText("Frontend y backend integrados · Comprobado")
+  await expect(analysis).toContainText("código 0")
+  await page.screenshot({path:test.info().outputPath("supervisor-objetivo-y-resultado.png")})
+})

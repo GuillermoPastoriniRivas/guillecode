@@ -33,3 +33,10 @@ test("el botón enumera otros equipos y conserva una ejecución propia antigua s
   assert.equal(folderConflicts([request],request.id).length,0)
   assert.equal(folderConflicts([owner],"missing").length,0)
 })
+
+test("una investigación pendiente también conserva la reserva de la carpeta",()=>{
+  const {run}=fixture();run.status="completed";run.supportReports=[{finishedAt:null}] as NonNullable<TeamRun["supportReports"]>
+  assert.equal(occupiesFolder(run),true)
+  run.supportReports[0].finishedAt=2
+  assert.equal(!!occupiesFolder(run),false)
+})

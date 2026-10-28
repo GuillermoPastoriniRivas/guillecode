@@ -397,7 +397,7 @@ fn call_tool(app: &AppHandle, channel: Channel, name: &str, args: &Value) -> Val
             }
             let session = tasks::current(app).map(|t| t.session).unwrap_or_default();
             let workspace = crate::teams::browser_session(app, &session);
-            match browser::call_session(&session, &workspace, name, args.clone()) {
+            match browser::call_session_recovery(&session, &workspace, name, args.clone(), crate::teams::browser_can_recover(app,&session)) {
                 Ok(result) => {
                     let failed = result["isError"].as_bool().unwrap_or(false);
                     record(app, "browser", name, &summary, !failed);

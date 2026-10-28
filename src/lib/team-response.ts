@@ -7,6 +7,8 @@ export type TeamResponse = {
   checks: string[]
   limitations: string[]
   request?: string
+  findings?: string[]
+  criteria?: { requirement: string; status: string; evidence: string }[]
   chatSummary: ChatSummary
 }
 
@@ -29,7 +31,9 @@ export function compactTeamReply(value: unknown, fallback: ChatSummary): ChatSum
 }
 
 export function firstTeamSentence(text: string): string {
-  return short(text.split(/(?<=[.!?])\s+(?=[A-ZÁÉÍÓÚÑ])/u)[0] ?? "")
+  const sentences = text.split(/(?<=[.!?])\s+(?=[A-ZÁÉÍÓÚÑ])/u)
+  const first = sentences[0] ?? ""
+  return short(/^(terminamos|listo|completado|trabajo completado)[.!]?$/i.test(first.trim()) && sentences[1] ? `${first} ${sentences[1]}` : first)
 }
 
 export function readableTeamSummary(text: string): string {
@@ -51,6 +55,14 @@ export function decodeTeamResponse(text: string): TeamResponse | null {
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null
     value = parsed
   } catch { return null }
+  if (typeof value.summary === "string" && !value.status && Array.isArray(value.findings) && typeof value.nextStep === "string") {
+    return {title:"Informe del Solucionador",summary:readableTeamSummary(value.summary),tasks:[],checks:[],limitations:[],findings:strings(value.findings),request:value.nextStep,chatSummary:{done:firstTeamSentence(value.summary),tested:"Los hechos y las fuentes de la investigación están en los detalles.",pending:short(`Propuesta al Lead: ${value.nextStep}`)}}
+  }
+  if (typeof value.summary === "string" && !value.status && Array.isArray(value.criteria) && typeof value.criteriaSatisfied === "boolean") {
+    const criteria=value.criteria.filter((c):c is RecordValue=>!!c && typeof c==="object" && typeof c.requirement==="string" && typeof c.evidence==="string" && typeof c.status==="string").map(c=>({requirement:c.requirement as string,status:c.status as string,evidence:c.evidence as string}))
+    const met=value.criteriaSatisfied && criteria.length>0 && criteria.length===value.criteria.length && criteria.every(c=>c.status==="met" && !!c.evidence.trim())
+    return {title:"Análisis del Supervisor",summary:readableTeamSummary(value.summary),tasks:[],checks:[],criteria,limitations:criteria.filter(c=>c.status!=="met").map(c=>c.requirement),chatSummary:{done:firstTeamSentence(value.summary),tested:`Contrasté ${criteria.length} requisitos con la evidencia registrada en los detalles.`,pending:met?"Informe enviado al Lead para su revisión final.":"El Lead debe resolver los requisitos faltantes o sin verificar antes de cerrar."}}
+  }
   const tasks = Array.isArray(value.tasks) ? value.tasks.filter((v): v is RecordValue => !!v && typeof v === "object" && typeof v.title === "string" && typeof v.objective === "string").map(v => ({ title: v.title as string, objective: v.objective as string })) : []
   const status = typeof value.status === "string" ? value.status : ""
   const label = Object.hasOwn(labels, status) ? labels[status] : undefined

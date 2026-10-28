@@ -6,7 +6,7 @@ export function foldersOverlap(left: string, right: string) {
   return a===b || a.startsWith(b+"/") || b.startsWith(a+"/")
 }
 export function occupiesFolder(run: TeamRun) {
-  return runActive(run.status) || run.coordination?.some(c=>c.status==="checking")
+  return run.supportReports?.some(s=>s.finishedAt==null) || runActive(run.status) || run.coordination?.some(c=>c.status==="checking")
     || run.tasks.some(t=>t.attempts.some(a=>a.finishedAt==null && !!(a.sessionId || a.reviewSessionId)))
 }
 export function folderConflicts(chats: TeamChatRecord[], chatId: string) {

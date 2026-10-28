@@ -51,7 +51,6 @@ export function TeamComposer({ chatId, label, pending, onSent, ref }: { ref?: Re
       onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void submit() } }} />
     <input ref={fileInput} type="file" accept={IMAGE_TYPES} multiple hidden aria-label="Imágenes para el equipo" onChange={e => { if (e.target.files) void addImages(Array.from(e.target.files)); e.target.value = "" }} />
     {error && <p className="team-error" role="alert">{error}</p>}
-    <BrowserWorkspace sessionId={`team:${chatId}`} shared />
-    <div className="team-composer-actions"><button className="btn btn-sm" type="button" disabled={locked} onClick={() => fileInput.current?.click()}><Icon name="file-media" /> {loading ? "Cargando imágenes…" : "Adjuntar imagen"}</button><button className="btn btn-primary" type="submit" disabled={locked || (!text.trim() && !images.length)}>{sending ? "Enviando…" : "Enviar"}</button></div>
+    <div className="team-composer-actions"><BrowserWorkspace sessionId={`team:${chatId}`} shared /><button className="btn btn-sm" type="button" disabled={locked} onClick={() => fileInput.current?.click()}><Icon name="file-media" /> {loading ? "Cargando imágenes…" : "Adjuntar imagen"}</button><button className="btn btn-primary" type="submit" disabled={locked || (!text.trim() && !images.length)}>{sending ? "Enviando…" : "Enviar"}</button></div>
   </form>
 }

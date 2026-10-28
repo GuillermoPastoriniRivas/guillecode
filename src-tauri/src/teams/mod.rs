@@ -17,6 +17,7 @@ mod retention;
 mod runner;
 mod skills;
 mod staffing;
+mod support;
 
 use domain::*;
 use rusqlite::{params, Connection};
@@ -85,6 +86,7 @@ pub fn read(app: &AppHandle) -> Result<Store, String> {
 fn owns_session(c: &Chat, session: &str) -> bool {
     !session.is_empty() && (c.messages.iter().any(|m| m.session_id.as_deref() == Some(session)) || c.runs.iter().any(|r| {
                     r.plan_session_id.as_deref() == Some(session)
+                        || r.support_reports.iter().any(|s|s.session_id==session)
                         || r.closing_sessions.iter().any(|id| id == session)
                         || r.coordination
                             .iter()
@@ -107,6 +109,11 @@ pub(crate) fn browser_session(app: &AppHandle, session: &str) -> String {
     app.try_state::<TeamsState>().and_then(|state| state.store.lock().ok().and_then(|s|
         browser_owner(&s, session)))
         .unwrap_or_else(|| session.to_string())
+}
+
+pub(crate) fn browser_can_recover(app: &AppHandle, session: &str) -> bool {
+    app.try_state::<TeamsState>().and_then(|state| state.store.lock().ok().map(|s|
+        s.chats.iter().any(|c| c.messages.iter().any(|m| m.session_id.as_deref()==Some(session)) || c.runs.iter().flat_map(|r| &r.tasks).flat_map(|t| &t.attempts).any(|a| a.session_id.as_deref()==Some(session))))).unwrap_or(false)
 }
 
 fn browser_owner(store: &Store, session: &str) -> Option<String> {
@@ -503,6 +510,7 @@ fn start_run(app: AppHandle, chat_id: String, goal: String, images: Vec<ChatImag
             })
             .unwrap_or_default();
         c.runs.push(Run {
+            support_reports: vec![],
             images: images.clone(),
             guidance: vec![],
             chat_summary: None,
