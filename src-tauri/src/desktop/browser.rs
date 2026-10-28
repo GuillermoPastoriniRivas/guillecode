@@ -495,28 +495,44 @@ pub fn call_session_recovery(session: &str, workspace: &str, name: &str, mut arg
     if !SCOPED_TOOLS.contains(&original_name(name).as_str()) { return Err("Esta herramienta no está limitada a la ventana Chrome asignada".into()); }
     if !args.is_object() { return Err("Los argumentos del navegador deben ser un objeto".into()); }
     args["_guillecode"] = json!({ "session": workspace, "actor": session, "autoRecover": recover && workspace.starts_with("team:") && original_name(name) == "list_pages" });
+    if workspace.starts_with("team:") && recover && original_name(name)=="list_pages" {
+        super::internal_browser::open_actor(crate::proc::app().ok_or("Flufy no está iniciado")?,workspace,session,None,false)?;
+    }
     if super::internal_browser::selected(workspace) {
         let profile = super::internal_browser::profile(workspace)?;
         let app = crate::proc::app().ok_or("GuilleCode no está iniciado")?;
-        if original_name(name) == "list_pages" && recover { super::internal_browser::open(app, workspace, None, false)?; }
-        if original_name(name) == "new_page" {
-            let wanted = args["url"].as_str().unwrap_or("about:blank").to_string();
-            super::internal_browser::open(app, workspace, args["url"].as_str(), true)?;
-            args = json!({"_guillecode":{"session":workspace,"actor":session,"isolated":true}});
-            return with_profile(profile, || {
-                let deadline = Instant::now() + Duration::from_secs(12);
-                loop {
-                    let result = call("list_pages", args.clone())?;
-                    if text_of(&result).contains(&wanted) { return Ok(result); }
-                    if Instant::now() >= deadline { return Err("La vista nueva se abrió pero todavía no aparece en el listado. Consultá browser_list_pages antes de abrir otra; no repitas la apertura.".into()); }
-                    std::thread::sleep(Duration::from_millis(150));
-                }
-            });
+        if original_name(name) == "list_pages" && recover {
+            super::internal_browser::open_actor(app, workspace, session, None, false)?;
         }
+        if original_name(name) == "new_page" {
+            super::internal_browser::open_actor(app, workspace, session, args["url"].as_str(), true)?;
+            claim_internal(workspace, session)?;
+            return with_profile(profile, || call("list_pages", json!({"_guillecode":{"session":workspace,"actor":session,"isolated":true}})));
+        }
+        claim_internal(workspace, session)?;
         args["_guillecode"]["isolated"] = json!(true);
         return with_profile(profile, || call(name, args));
     }
     call(name, args)
+}
+
+pub(super) fn claim_internal(workspace: &str, actor: &str) -> Result<(),String> {
+    let profile=super::internal_browser::profile(workspace)?;
+    let app=crate::proc::app().ok_or("Flufy no está iniciado")?;
+    for page in super::internal_browser::pending(workspace,actor) {
+        with_profile(profile.clone(), || {
+            let deadline=Instant::now()+Duration::from_secs(15);
+            loop {
+                let result=call("list_pages",json!({"_guillecode":{"session":workspace,"actor":actor,"isolated":true,"action":"inspect","claimUrl":page.marker}}))?;
+                if failed(&result) {return Err(text_of(&result));}
+                let state:Value=serde_json::from_str(&text_of(&result)).map_err(|e|e.to_string())?;
+                if state["claimed"]==true {return super::internal_browser::claim(app,&page.label);}
+                if Instant::now()>=deadline {return Err("La página está abriendo. Consultá el listado de nuevo; no repitas acciones anteriores.".into());}
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        })?;
+    }
+    Ok(())
 }
 
 pub fn workspace(session: &str, page_id: Option<u64>) -> Result<Value, String> {

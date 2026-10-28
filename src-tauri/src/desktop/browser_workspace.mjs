@@ -50,6 +50,16 @@ export class Workspaces {
       // This MCP connection is attached only to this team's own WebView2 profile.
       this.sessions[meta.session] ??= { actors: {} }
       const w = this.sessions[meta.session]
+      w.owners ??= {}
+      w.actors ??= {}
+      if (meta.actor && meta.claimUrl) {
+        const created = pages.find(p => p.url === meta.claimUrl)
+        if (created) {
+          if (w.owners[created.target] && w.owners[created.target] !== meta.actor) throw new Error('Esta página pertenece a otro agente.')
+          w.owners[created.target] = meta.actor
+          w.actors[meta.actor] = created.target
+        }
+      }
       w.windowId = 0; w.targets = pages.map(p => p.target)
       if (!w.targets.includes(w.selected)) w.selected = w.targets[0]
     }
@@ -95,13 +105,13 @@ export class Workspaces {
     // A recycled windowId is not identity on its own: a target must survive.
     const survives = () => !!workspace && Array.isArray(workspace.targets) && pages.some(p => workspace.targets.includes(p.target) && (meta.isolated || p.windowId === workspace.windowId))
     const valid = survives()
-    const owned = () => valid ? pages.filter(p => (meta.isolated || p.windowId === workspace.windowId)) : []
+    const owned = () => valid ? pages.filter(p => meta.isolated ? !meta.actor || workspace.owners?.[p.target] === meta.actor : p.windowId === workspace.windowId) : []
     if (valid) {
       workspace.targets = owned().map(p => p.target)
       if (!workspace.targets.includes(selectedTarget())) select(workspace.targets[0])
       await this.save()
     }
-    meta.state = { assigned: valid, missing: !!workspace && !valid, windowId: valid ? workspace.windowId : null,
+    meta.state = { claimed: !!meta.claimUrl && pages.some(p => p.url === meta.claimUrl && workspace?.owners?.[p.target] === meta.actor), assigned: valid, missing: !!workspace && !valid, windowId: valid ? workspace.windowId : null,
       pages: (meta.action ? pages : owned()).map(({ id, windowId, url }) => ({ id, windowId, url })) }
     if (meta.action) return context
     if (!valid) throw new Error(meta.session.startsWith('team:') ? 'La ventana del equipo se cerró o todavía no existe. Usá browser_list_pages: se abrirá una ventana nueva del equipo. Volvé a observar y navegar antes de actuar; no repitas clics sobre la pantalla anterior.' : 'Chrome sin ventana asignada o ventana cerrada. Elegí una ventana desde el chat. No uses otra ventana ni Windows como sustituto.')

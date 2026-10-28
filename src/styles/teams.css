@@ -190,3 +190,24 @@
 .team-goal-criteria dt { font-weight: 600; margin-bottom: 6px; }
 .team-goal-criteria dd { margin: 0; color: var(--fg-dim); line-height: 1.6; overflow-wrap: anywhere; }
 .team-support-report > * + *, .team-goal-analysis > * + * { margin-top: 12px; }
+
+/* The Lead conversation stays plain; execution reports live behind disclosure. */
+.team-chat-message .team-lead-message { border: 0; background: none; padding: 0; }
+.team-chat-message { margin-bottom: 24px; }
+.team-chat-message > small { font-size: 11px; margin-bottom: 6px; }
+.team-chat-message .lead-details { margin: 8px 0; }
+.team-text-action { background:none; border:0; color:var(--fg-dim); cursor:pointer; padding:6px 0; font:inherit; font-size:12px; text-align:left; }
+.team-chat-message .team-lead-answer p { margin:0 0 8px; }
+.team-browser-body { display:flex; flex-direction:column; padding:0; overflow:hidden; }
+.team-browser { display:flex; flex-direction:column; flex:1; min-height:0; }
+.team-browser-tabs { display:flex; gap:4px; overflow:auto; padding:8px; flex-shrink:0; }
+.team-browser-tabs button { border:1px solid var(--border); border-radius:5px; background:var(--bg-side); padding:6px 10px; white-space:nowrap; cursor:pointer; }
+.team-browser-tabs button[aria-selected=true] { color:var(--accent-strong); border-color:var(--accent); }
+.team-browser-toolbar { display:flex; gap:5px; padding:8px; flex-shrink:0; }
+.team-browser-toolbar input { flex:1; min-width:0; }
+.team-browser-surface { flex:1; min-height:240px; background:var(--bg); }
+.team-browser-surface > p { padding:24px; color:var(--fg-dim); }
+
+.team-chat-expanded .team-browser-body {padding:0;}
+.team-browser-toolbar {border-bottom:1px solid var(--border);background:var(--bg-side);}
+.team-browser-toolbar input {font-size:14px;padding:8px 10px;}

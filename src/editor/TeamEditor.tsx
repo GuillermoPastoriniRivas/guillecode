@@ -72,9 +72,9 @@ function TeamEditorForm({ id }: { id: string }) {
     if (!goal) return
     setBusy(true)
     try {
-      const reply = await oneShot("Propuesta de equipo", `Necesidad: ${goal}\nSkills: ${JSON.stringify(latest.map((s) => ({ id: s.id, name: s.name, description: s.description })))}\nModelos disponibles: ${models.map((m) => modelKey(m)).join(", ")}`, 'Proponé entre 1 y 8 empleados para un equipo de desarrollo. Primero el Lead. No ejecutes tareas. Respondé solo JSON: {"name":"nombre","members":[{"name":"nombre","role":"rol","model":"provider/model disponible","skills":["id existente"]}]}')
+      const reply = await oneShot("Propuesta de equipo", `Necesidad: ${goal}\nSkills: ${JSON.stringify(latest.map((s) => ({ id: s.id, name: s.name, description: s.description })))}\nModelos disponibles: ${models.map((m) => modelKey(m)).join(", ")}`, 'Proponé entre 1 y 11 empleados para un equipo de desarrollo. Primero el Lead. No ejecutes tareas. Respondé solo JSON: {"name":"nombre","members":[{"name":"nombre","role":"rol","model":"provider/model disponible","skills":["id existente"]}]}')
       const raw: unknown = JSON.parse(reply.replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, ""))
-      if (!raw || typeof raw !== "object" || !("members" in raw) || !Array.isArray(raw.members) || !raw.members.length || raw.members.length > 8) throw new Error("La propuesta no contiene integrantes válidos")
+      if (!raw || typeof raw !== "object" || !("members" in raw) || !Array.isArray(raw.members) || !raw.members.length || raw.members.length > 11) throw new Error("La propuesta no contiene integrantes válidos")
       const members = raw.members.map((m: unknown) => {
         if (!m || typeof m !== "object" || !("name" in m) || !("role" in m) || typeof m.name !== "string" || typeof m.role !== "string") throw new Error("Integrante inválido")
         const value = employee(m.name, m.role)

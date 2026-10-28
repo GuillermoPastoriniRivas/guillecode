@@ -478,6 +478,8 @@ pub fn run() {
             desktop::browser::browser_workspace,
             desktop::internal_browser::browser_internal_open,
             desktop::internal_browser::browser_internal_control,
+            desktop::internal_browser::browser_internal_pages,
+            desktop::internal_browser::browser_internal_view,
             desktop::tasks::desktop_task_get,
             desktop::tasks::desktop_task_cancel,
             desktop::tasks::desktop_task_begin,

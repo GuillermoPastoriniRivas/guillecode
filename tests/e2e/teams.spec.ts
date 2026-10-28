@@ -7,6 +7,7 @@ async function setup(page: Page) {
   const store: TeamStore = { schemaVersion: 1, teams: [], chats: [], skills: ["Frontend", "Backend", "QA"].map((name) => ({ id: name.toLowerCase(), name, version: 1, description: name, instructions: `Trabajar en ${name}`, verificationGuidelines: ["Comprobar cambios"] })) }
   const imageUrls = new Map<string, string>()
   let browserAssigned = false
+  const browserPages: {label:string;actor:string;url:string}[] = []
   const calls: { command: string; args: Record<string, unknown> }[] = []
   await page.addInitScript(() => {
     localStorage.clear()
@@ -30,6 +31,11 @@ async function setup(page: Page) {
     let result: unknown = null
     if (["recent_projects", "routines_list", "auth_entries", "live_busy_sessions", "fs_read_dir", "fs_list_files", "term_shells", "windows_list", "git_subrepos"].includes(command)) result = []
     if (command === "teams_state") result = store
+    if (command === "browser_internal_pages") result=browserPages
+    if (command === "browser_internal_open") {
+      const next={label:"embedded-user",actor:"user",url:String(args.url||"about:blank")};browserPages.splice(0,browserPages.length,next);result=next
+    }
+    if (command === "browser_internal_view" || command === "browser_internal_control") result=null
     if (command === "browser_workspace") {
       if (args.pageId != null) browserAssigned = true
       result = { assigned: browserAssigned, missing: false, windowId: browserAssigned ? 7 : null, pages: [{ id: 12, windowId: 7, url: "http://127.0.0.1:4317/prueba-equipo" }] }
@@ -155,6 +161,7 @@ test("modo equipo abre sin plantilla y muestra integrantes elegidos por el Lead 
   expect(store.teams).toHaveLength(0)
   expect(store.chats[0].team.members).toHaveLength(1)
   expect(calls.filter(c => c.command === "team_chats_auto")).toHaveLength(1)
+  await page.getByRole("button", {name:"Tareas",exact:true}).click()
   await page.getByText("Equipo elegido por el Lead", { exact: true }).click()
   const roster = page.getByRole("list", { name: "Estado de los integrantes" })
   await expect(roster).toContainText("Listo")
@@ -170,6 +177,8 @@ test("modo equipo abre sin plantilla y muestra integrantes elegidos por el Lead 
   }
   await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
   await expect(page.locator(".team-chat-header")).toContainText("4 integrantes")
+  await page.getByRole("button",{name:"Tareas",exact:true}).click()
+  await page.getByText("Equipo elegido por el Lead",{exact:true}).click()
   await expect(page.locator(".team-roster")).toContainText("Backend 2")
   await expect(roster.locator(".team-member-status.working")).toHaveCount(4)
   await page.screenshot({ path: test.info().outputPath("modo-equipo-paralelo.png") })
@@ -213,23 +222,23 @@ test("modo equipo abre sin plantilla y muestra integrantes elegidos por el Lead 
   run.chatSummary = { done: "Creé los dos servicios y la pantalla.", tested: "Las pruebas de integración pasaron.", pending: "Nada pendiente." }
   run.summary = "Detalle técnico completo: comando interno node --check backend/server.js y puertos de la integración. ".repeat(15)
   await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
-  const brief = page.locator(".team-lead-message .lead-brief")
-  await expect(brief).toContainText("Creé los dos servicios")
-  await expect(brief).toContainText("Ahora revisá la entrega")
-  await expect(page.getByRole("button", { name: "Trabajo completado", exact: true })).toBeVisible()
   await expect(lead).toContainText("Espera tu revisión")
   await expect(lead).not.toContainText("Necesita tu ayuda")
-  await expect(page.locator(".lead-details")).not.toHaveAttribute("open", "")
+  await page.getByRole("button",{name:"Chat",exact:true}).click()
+  await expect(page.locator(".team-chat-message")).toContainText("Creé los dos servicios")
   await expect(page.getByText(/Detalle técnico completo:/).first()).not.toBeVisible()
-  await page.screenshot({ path: test.info().outputPath("lead-respuesta-breve.png") })
-  await page.getByText("Detalles técnicos", { exact: true }).click()
+  await page.screenshot({path:test.info().outputPath("lead-respuesta-breve.png")})
+  await page.getByText("Qué se hizo y probó",{exact:true}).click()
+  await expect(page.locator(".team-lead-message .lead-brief")).toContainText("Las pruebas de integración pasaron")
+  await page.getByText("Detalles técnicos",{exact:true}).click()
   await expect(page.getByText(/Detalle técnico completo:/).first()).toBeVisible()
+  await page.getByRole("button",{name:"Resultados / Comportamientos",exact:true}).click()
+  await expect(page.getByRole("button",{name:"Trabajo completado",exact:true})).toBeVisible()
   await page.reload()
-  await page.getByTitle("Equipos IA", { exact: true }).click()
-  await page.locator(".team-sidebar-card").getByRole("button", { name: "Modo equipo", exact: true }).click()
+  await page.getByTitle("Equipos IA",{exact:true}).click()
+  await page.locator(".team-sidebar-card").getByRole("button",{name:"Modo equipo",exact:true}).click()
   await expect(page.locator(".team-chat-header")).toContainText("4 integrantes")
-  await expect(brief).toContainText("Las pruebas de integración pasaron")
-  await expect(page.locator(".lead-details")).not.toHaveAttribute("open", "")
+  await expect(page.getByText(/Detalle técnico completo:/).first()).not.toBeVisible()
 })
 
 test("equipo con modelos distintos y skills combinables persiste; chat normal sigue accesible", async ({ page }) => {
@@ -575,6 +584,7 @@ test("un conflicto abre una referencia humana y permite ir a la ejecución exact
   await expect(dialog).toContainText("Integrar la API del catálogo")
   await dialog.getByRole("button",{name:"Abrir equipo",exact:true}).click()
   await expect(page.locator(".team-chat-header")).toContainText("API del catálogo")
+  await page.getByRole("button",{name:"Tareas",exact:true}).click()
   await expect(page.getByLabel("Entrega / ejecución")).toHaveValue("held")
 })
 
@@ -686,21 +696,37 @@ test("se puede cambiar el modelo del Lead tras un rechazo sin recrear el chat", 
   await page.screenshot({ path: test.info().outputPath("cambiar-lead-despues-de-rechazo.png") })
 })
 
-test("el navegador se asigna al chat de equipo y conserva el mismo destino al reabrir", async ({ page }) => {
-  const { calls } = await setup(page)
+test("navegador embebido queda dentro del chat y se retira al volver a conversar", async ({ page }) => {
+  const {calls}=await setup(page)
   await createTeam(page)
-  await page.getByRole("button", { name: "Elegir navegador", exact: true }).click()
-  await expect(page.getByText("Ventana del navegador para este equipo", { exact: true })).toBeVisible()
-  await page.getByRole("button", { name: "http://127.0.0.1:4317/prueba-equipo", exact: true }).click()
-  await expect(page.getByRole("button", { name: "Navegador · 1 pestañas", exact: true })).toBeVisible()
-  const assignment = calls.find(c => c.command === "browser_workspace" && c.args.pageId === 12)!
-  expect(assignment.args.session).toBe("team:chat-0")
-  await page.reload()
-  await page.getByTitle("Equipos IA", { exact: true }).click()
-  await page.locator(".team-sidebar-card").last().getByRole("button", { name: "Team Backend", exact: true }).click()
-  await page.getByRole("button", { name: /Elegir navegador|Navegador asignado/ }).click()
-  await expect(page.getByRole("button", { name: "Navegador · 1 pestañas", exact: true })).toBeVisible()
-  expect(calls.filter(c => c.command === "browser_workspace").every(c => c.args.session === "team:chat-0")).toBe(true)
+  await page.locator(".team-composer").getByRole("button",{name:"Navegador",exact:true}).click()
+  await expect(page.locator(".team-chat")).toHaveClass(/team-chat-expanded/)
+  await expect(page.locator(".team-composer")).toHaveCount(0)
+  await page.getByLabel("Dirección del navegador del chat").fill("http://127.0.0.1:4317/prueba-equipo")
+  await page.getByRole("button",{name:"Abrir",exact:true}).click()
+  await expect(page.getByRole("tab",{name:"Tu página",exact:true})).toBeVisible()
+  await expect.poll(()=>calls.some(c=>c.command==="browser_internal_view" && c.args.label==="embedded-user" && !!c.args.bounds)).toBe(true)
+  expect(calls.find(c=>c.command==="browser_internal_open")?.args.session).toBe("team:chat-0")
+  expect(calls.filter(c=>c.command==="browser_workspace")).toHaveLength(0)
+  await page.screenshot({path:test.info().outputPath("navegador-dentro-del-chat.png")})
+  await page.getByRole("button",{name:"Chat",exact:true}).click()
+  await expect.poll(()=>calls.some(c=>c.command==="browser_internal_view" && c.args.label===null)).toBe(true)
+  await expect(page.locator(".team-composer")).toBeVisible()
+})
+
+test("chat del Lead oculta informes largos y conserva la respuesta completa", async ({page})=>{
+  const {store}=await setup(page)
+  await createTeam(page)
+  const chat=store.chats[0]
+  chat.messages=[{id:"u",role:"user",text:"¿Dónde veo la demo?",createdAt:1,status:"complete",runId:null,sessionId:null},{id:"a",role:"assistant",text:"La demo está en http://127.0.0.1:4317.\n\nDetalles de integración: "+"Comprobación registrada. ".repeat(40),createdAt:2,status:"complete",runId:null,sessionId:"lead-session"}]
+  await page.evaluate(async()=>{const {refreshTeams}=await import(/* @vite-ignore */ "/src/state/teams.ts");await refreshTeams()})
+  await expect(page.locator(".team-lead-answer")).toContainText("La demo está en")
+  await expect(page.getByText(/Detalles de integración:/)).toHaveCount(0)
+  await expect(page.getByRole("button",{name:"Ver equipos que ocupan la carpeta"})).toHaveCount(0)
+  await expect(page.getByRole("button",{name:"Ver actividad y permisos del Lead"})).toHaveCount(0)
+  await page.screenshot({path:test.info().outputPath("lead-chat-limpio.png")})
+  await page.getByRole("button",{name:"Ver respuesta completa",exact:true}).click()
+  await expect(page.getByText(/Detalles de integración:/)).toBeVisible()
 })
 
 test("abrir la conversación normal que ya estaba seleccionada cierra la vista de equipo", async ({ page }) => {
@@ -725,7 +751,7 @@ test("se puede inspeccionar y detener al Lead durante una acción sin perder su 
   await createTeam(page)
   store.chats[0].messages = [{ id: "pending", role: "assistant", text: "", createdAt: Date.now(), status: "pending", runId: null, sessionId: "lead-interactive" }]
   await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
-  await expect(page.getByRole("button", { name: "Ver actividad y permisos del Lead", exact: true })).toBeVisible()
+  await expect(page.getByRole("button", { name: "Ver actividad y permisos del Lead", exact: true })).toHaveCount(0)
   await page.getByRole("button", { name: "Actividad", exact: true }).click()
   await expect(page.getByRole("heading", { name: "Actividad del chat con el Lead", exact: true })).toBeVisible()
   await page.getByRole("button", { name: "Detener pedido del Lead", exact: true }).click()
@@ -794,7 +820,9 @@ test("QA manual viene después del trabajo: mejoras crean otra entrega y trabajo
   first.artifacts = [{ id: "first-proof", taskId: null, phase: "test", kind: "log", relativePath: "primera-entrega.log", capturedAt: Date.now(), status: "captured", source: "fixture", reason: null }]
   await page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
   await expect(page.locator(".team-chat-header")).toContainText("Listo para tu revisión")
+  await page.getByRole("button",{name:"Resultados / Comportamientos",exact:true}).click()
   await expect(page.getByRole("button", { name: "Trabajo completado", exact: true })).toBeVisible()
+  await page.getByRole("button",{name:"Chat",exact:true}).click()
   await composer.fill("Mejorá el contraste del formulario")
   await composer.press("Enter")
   await expect(page.locator(".team-chat-header")).toContainText("Trabajando")
