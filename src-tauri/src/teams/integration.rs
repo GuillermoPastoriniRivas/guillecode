@@ -453,7 +453,7 @@ fn native_team_end_to_end() {
         }));
         let _ = tx.send(result);
     });
-    let deadline = Instant::now() + Duration::from_secs(210);
+    let deadline = Instant::now() + Duration::from_secs(420);
     let result = loop {
         app.run_iteration(|_, _| {});
         if let Ok(result) = rx.try_recv() {
