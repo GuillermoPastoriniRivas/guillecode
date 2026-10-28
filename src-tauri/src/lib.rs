@@ -365,6 +365,7 @@ pub fn run() {
             teams::team_chat_cancel,
             teams::team_image_read,
             teams::team_runs_control,
+            teams::team_runs_stop_conflicts,
             teams::team_tasks_reassign,
             teams::team_runs_model,
             teams::team_runs_limits,

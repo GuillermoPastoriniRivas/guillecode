@@ -21,6 +21,7 @@ import { TeamSettings } from "../team/TeamSettings"
 import { attentionLabel, teamAttention } from "../team/attention"
 import { leadRecovery, memberState } from "../team/member-state"
 import { TeamProblems } from "../team/TeamProblems"
+import { TeamFolderConflicts } from "../team/TeamFolderConflicts"
 
 function RunReply({ run }: { run: TeamRun }) {
   const blockedTask = run.tasks.find(t => ["blocked", "failed", "review_error", "interrupted"].includes(t.status))
@@ -65,7 +66,8 @@ export function TeamChat({ chatId }: { chatId: string }) {
   const allSessions = useAgent(s => s.allSessions)
   const approvals = useApprovals()
   const [view, setView] = useState("Chat")
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
+  const selectedRunId=useTeams(s=>s.selectedRunIds[chatId] ?? null)
+  const setSelectedRunId=(id:string|null)=>useTeams.setState(s=>({selectedRunIds:{...s.selectedRunIds,[chatId]:id}}))
   const bottom = useRef<HTMLDivElement>(null)
   const followLatest = useRef(true)
   const body = useRef<HTMLDivElement>(null)
@@ -97,6 +99,7 @@ export function TeamChat({ chatId }: { chatId: string }) {
     <header className="team-chat-header"><div className="team-section-title"><strong><Icon name="organization" /> {chat.title}</strong><button className="btn btn-xs" type="button" aria-label="Configuración del equipo" aria-pressed={view === "Configuración"} onClick={() => setView(view === "Configuración" ? "Chat" : "Configuración")}><Icon name="settings-gear" /> Configuración</button></div><p>{roster.members.length} integrantes · {headerStatus}{attentionText && <span className="team-attention-badge" aria-live="polite"> · {attentionText}</span>}</p>
       {attention.length > 0 && <button className="team-attention-summary" onClick={() => { followLatest.current = false; problems.current?.scrollIntoView({ block: "start" }) }}><Icon name="warning" /><span>{attention.filter(i => i.kind !== "waiting").map(i => i.name).filter((name, i, names) => names.indexOf(name) === i).join(", ") || "Integrantes en espera"}</span><strong>{needsUserHelp ? "Ver qué pasó y cómo ayudar" : "Ver cómo sigue el equipo"}</strong></button>}
     </header>
+    <TeamFolderConflicts chatId={chatId} failure={messages.findLast(m=>m.role==="assistant" && m.status==="error")?.text || runError} />
     <nav className="team-chat-nav" aria-label="Vistas del equipo">{["Chat", "Tareas", "Actividad", "Resultados / Comportamientos"].map((v) => <button key={v} className={view === v ? "active" : ""} onClick={() => setView(v)}>{v}</button>)}</nav>
     <div className="team-chat-body" ref={body} onScroll={() => { const el = body.current; if (el) followLatest.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80 }}>
       {attention.length > 0 && <div ref={problems}><TeamProblems items={attention} run={run} pending={pendingReply} onInspect={item => item.sessionId ? openSession(item.sessionId, item.directory) : setView("Actividad")} onSettings={() => { if (modelSettings.current) { modelSettings.current.open = true; modelSettings.current.scrollIntoView({ block: "start" }) } else setView("Configuración") }} onAsk={() => { setView("Chat"); composer.current?.write(needsUserHelp ? "¿Quién está bloqueado, por qué y qué ayuda necesitás de mí?" : "¿Cómo va el estado y qué está resolviendo el Lead?") }} onContinue={() => void act("retry")} /></div>}

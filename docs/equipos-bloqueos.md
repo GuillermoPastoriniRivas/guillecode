@@ -1,5 +1,13 @@
 # Bloqueos del equipo y consultas al Lead
 
+«Ver equipos que ocupan la carpeta» muestra el nombre, la tarea, el estado y la carpeta de cada ejecución que impide continuar, incluso si su chat está archivado. «Abrir equipo» selecciona esa ejecución exacta. Se puede detener una ejecución o todas las listadas; se conservan los cambios, conversaciones y evidencias. La selección completa se valida antes de actuar y no incluye equipos nuevos que aparezcan después del clic ni ejecuciones de otra carpeta. La carpeta se considera libre solo cuando las sesiones quedaron detenidas y reconciliadas; las detenciones en curso siguen figurando como tales. Una entrega completada con una sesión pendiente se conserva como completada al liberar esa sesión.
+
+Los errores de carpeta ocupada identifican el equipo y la tarea en lenguaje humano, y abren este diagnóstico. El identificador técnico queda plegado. Capturas de interfaz con datos controlados:
+
+![Equipos que ocupan la carpeta y acciones para abrirlos o detenerlos](evidencias/equipos-ocupan-carpeta.png)
+
+![Equipos detenidos con historial conservado](evidencias/equipos-detenidos-con-historial.png)
+
 Una respuesta `resume` puede incluir instrucciones para la propia tarea solicitante dentro de `resumeTasks`: se conservan y se normalizan a la continuación normal, sin crear otro intento ni repetir acciones. Las instrucciones idénticas repetidas para esa tarea se guardan una sola vez. Los errores de IDs, instrucciones vacías o intentos de reanudar otra tarea activa vuelven al Lead para corregir su decisión; no se aplican parcialmente ni se convierten directamente en pedidos al usuario.
 
 Si el chat del Lead responde sin el formato esperado, hay hasta dos turnos automáticos para reformatear esa respuesta en la misma sesión. Esos turnos deshabilitan todas las herramientas, incluidas las de navegador y escritorio: corrigen la presentación sin repetir las acciones del pedido original.

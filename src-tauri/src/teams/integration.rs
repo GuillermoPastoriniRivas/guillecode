@@ -626,6 +626,21 @@ fn automatic_team_scenario(handle: &tauri::AppHandle, repo: &str) {
     assert_eq!(interrupted.chats[0].messages[9].status, "interrupted");
     assert!(interrupted.chats[0].messages[9].text.contains("no se repitió"));
     assert_eq!(interrupted.chats[0].runs.len(), 1);
+    // A terminal run with an orphaned recorded session still owns the folder.
+    // The bulk-stop action must settle it using the real engine, preserving
+    // the completed delivery and its observed verification commands.
+    update_run(handle,&result.id,|run| {
+        run.tasks[0].attempts.last_mut().unwrap().finished_at=None;
+        Ok(())
+    }).unwrap();
+    assert!(conflicts::occupies(&run(handle,&result.id).unwrap()));
+    let stopped=conflicts::stop(handle,&chat.id,vec![result.id.clone()]).unwrap();
+    assert!(serde_json::to_value(stopped).unwrap()[0]["stopped"].as_bool().unwrap());
+    let settled=run(handle,&result.id).unwrap();
+    assert!(!conflicts::occupies(&settled));
+    assert_eq!(settled.status,"completed");
+    assert_eq!(settled.artifacts.len(),result.artifacts.len());
+    assert_eq!(settled.tasks[0].attempts[0].commands,result.tasks[0].attempts[0].commands);
     if std::env::var("GUILLE_TEAM_TEST_TRANSPORT").as_deref() == Ok("1") {
         // A real blocked task must not prevent a later independent task from
         // getting a worker when there is only one execution slot.

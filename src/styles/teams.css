@@ -151,3 +151,4 @@
 .team-problem-details { margin-top: 12px; }
 .team-problem-details summary { cursor: pointer; color: var(--fg-dim); }
 .team-problem-details[open] summary { margin-bottom: 12px; }
+.team-folder-conflicts-trigger { flex-shrink: 0; white-space: normal; margin: 6px 12px; text-align: left; }

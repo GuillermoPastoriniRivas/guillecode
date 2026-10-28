@@ -95,6 +95,16 @@ async function setup(page: Page) {
       if (args.action === "approve") run.status = "qa_approved"
       result = true
     }
+    if (command === "team_runs_stop_conflicts") {
+      result=(args.runIds as string[]).map(id=>{
+        const owner=store.chats.find(c=>c.runs.some(r=>r.id===id))!
+        const run=owner.runs.find(r=>r.id===id)!
+        run.status="cancelled";run.finishedAt=Date.now()
+        for(const task of run.tasks) for(const attempt of task.attempts) attempt.finishedAt=Date.now()
+        for(const request of run.coordination??[]) request.status="cancelled"
+        return {runId:id,title:owner.title,stopped:true,message:"Detenido. Sus cambios y su historial se conservan."}
+      })
+    }
     if (command === "team_image_read") result = imageUrls.get(String(args.imageId)) ?? null
     if (command === "team_evidence_read") result = "Evidencia observada por el test de interfaz"
     if (command === "team_evidence_image") result = { mime: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP4z8AARAwQCgAf7gP9i18U1AAAAABJRU5ErkJggg==", sha256: "fixture" }
@@ -549,6 +559,49 @@ test("la recuperación automática del Lead no pide ayuda ni reintento al usuari
   await expect(page.getByRole("region",{name:"Bloqueos del equipo"})).toContainText("No necesitás intervenir ahora")
   await page.locator(".team-chat").screenshot({path:test.info().outputPath("lead-recuperacion-automatica.png")})
   expect(calls.filter(c=>c.command==="team_runs_control")).toHaveLength(0)
+})
+
+test("un conflicto abre una referencia humana y permite ir a la ejecución exacta aunque esté archivada",async({page})=>{
+  const {store}=await setup(page)
+  await createTeam(page)
+  const target=store.chats[0]
+  const run={id:"held",goal:"Integrar la API del catálogo",team:structuredClone(target.team),skills:[],status:"running" as const,startedAt:Date.now(),finishedAt:null,planSessionId:null,tasks:[],summary:"",error:null,evidenceDir:"",artifacts:[],notified:false}
+  store.chats.push({...structuredClone(target),id:"held-chat",title:"API del catálogo",archived:true,runs:[run,{...structuredClone(run),id:"newer-completed",status:"completed",finishedAt:2}]})
+  target.messages=[{id:"conflict",role:"assistant",text:"La carpeta está ocupada por el equipo «API del catálogo».",createdAt:3,status:"error",runId:null,sessionId:null}]
+  await page.evaluate(async()=>{const {refreshTeams}=await import(/* @vite-ignore */ "/src/state/teams.ts");await refreshTeams()})
+  const dialog=page.getByRole("dialog",{name:"Equipos que ocupan la carpeta",exact:true})
+  await expect(dialog).toBeVisible()
+  await expect(dialog).toContainText("API del catálogo · Archivado")
+  await expect(dialog).toContainText("Integrar la API del catálogo")
+  await dialog.getByRole("button",{name:"Abrir equipo",exact:true}).click()
+  await expect(page.locator(".team-chat-header")).toContainText("API del catálogo")
+  await expect(page.getByLabel("Entrega / ejecución")).toHaveValue("held")
+})
+
+test("detener los equipos que ocupan la carpeta conserva el historial y no alcanza otra carpeta",async({page})=>{
+  const {store,calls}=await setup(page)
+  await createTeam(page)
+  const target=store.chats[0]
+  const startedAt=Date.now()
+  for(const [id,title,root] of [["api","API del catálogo","C:/qa/teams"],["front","Pantalla del catálogo","C:/qa/teams"],["elsewhere","Otro proyecto","D:/unrelated"]]) {
+    const team={...structuredClone(target.team),projectRoot:root,allowedRepositories:[root]}
+    store.chats.push({...structuredClone(target),id,title,team,messages:[{id:`message-${id}`,role:"assistant",text:"Trabajo guardado",createdAt:1,status:"complete",runId:id,sessionId:null}],runs:[{id,goal:`Completar ${title}`,team,skills:[],status:"running",startedAt,finishedAt:null,planSessionId:null,tasks:[],summary:"",error:null,evidenceDir:"",artifacts:[],notified:false}]})
+  }
+  const history=structuredClone(store.chats[1].messages)
+  target.messages=[{id:"conflict",role:"assistant",text:"Hay un equipo o una sesión pendiente en estos repositorios: api",createdAt:3,status:"error",runId:null,sessionId:null}]
+  await page.evaluate(async()=>{const {refreshTeams}=await import(/* @vite-ignore */ "/src/state/teams.ts");await refreshTeams()})
+  const dialog=page.getByRole("dialog",{name:"Equipos que ocupan la carpeta",exact:true})
+  await expect(dialog).toContainText("API del catálogo")
+  await expect(dialog).toContainText("Pantalla del catálogo")
+  await expect(dialog).not.toContainText("Otro proyecto")
+  await dialog.screenshot({path:test.info().outputPath("equipos-ocupan-carpeta.png")})
+  await dialog.getByRole("button",{name:"Detener todos estos equipos (2)",exact:true}).click()
+  await expect(dialog).toContainText("No hay otros equipos ocupando esta carpeta")
+  await expect(dialog).toContainText("Sus cambios y su historial se conservan")
+  expect(calls.find(c=>c.command==="team_runs_stop_conflicts")?.args.runIds).toEqual(["api","front"])
+  expect(store.chats[1].messages).toEqual(history)
+  expect(store.chats[3].runs[0].status).toBe("running")
+  await dialog.screenshot({path:test.info().outputPath("equipos-detenidos-con-historial.png")})
 })
 
 test("imágenes: adjuntar, quitar, enviar y recuperar del historial", async ({ page }) => {
