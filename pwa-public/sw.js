@@ -97,9 +97,9 @@ self.addEventListener("push", (event) => {
   try {
     data = event.data ? event.data.json() : {}
   } catch {
-    data = { title: "GuilleCode", body: event.data ? event.data.text() : "" }
+    data = { title: "Flufy", body: event.data ? event.data.text() : "" }
   }
-  const title = data.title || "GuilleCode"
+  const title = data.title || "Flufy"
   const url = data.url || "/"
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
