@@ -55,7 +55,7 @@ export async function writePlane(key: string, body: string): Promise<void> {
 }
 
 export async function resetPlane(key: string): Promise<boolean> {
-  if (!(await confirmAction("Restaurar el original", "Se descarta tu versión de este archivo y vuelve a la que trae GuilleCode.", "Restaurar", true))) return false
+  if (!(await confirmAction("Restaurar el original", "Se descarta tu versión de este archivo y vuelve a la que trae Flufy.", "Restaurar", true))) return false
   try {
     await call("plane_reset", { key })
     notify.info("Archivo restaurado al original")

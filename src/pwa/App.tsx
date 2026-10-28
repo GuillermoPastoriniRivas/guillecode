@@ -103,7 +103,7 @@ export function App() {
         if (r) open(r)
       }
       if (data.type === "push" && routeFromUrl(data.url)) {
-        setToast({ title: data.title ?? "GuilleCode", body: data.body ?? "", url: data.url })
+        setToast({ title: data.title ?? "Flufy", body: data.body ?? "", url: data.url })
         if ("vibrate" in navigator) navigator.vibrate(80)
       }
     }
@@ -117,14 +117,14 @@ export function App() {
     return () => clearTimeout(timer)
   }, [toast])
 
-  if (!fleetVisible) return <main className="screen center"><p>GuilleCode · conectada a Mis computadoras</p></main>
+  if (!fleetVisible) return <main className="screen center"><p>Flufy · conectada a Mis computadoras</p></main>
 
   if (!token)
     return (
       <main className="screen center">
         <img src="/icon-256.png" alt="" className="logo big" />
-        <h1>GuilleCode</h1>
-        <p className="muted">Abrí este link desde el QR de GuilleCode: comando «Conectar el celular».</p>
+        <h1>Flufy</h1>
+        <p className="muted">Abrí este link desde el QR de Flufy: comando «Conectar el celular».</p>
       </main>
     )
 

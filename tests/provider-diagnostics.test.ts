@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { createProviderDiagnostics } from "../src-tauri/src/provider-diagnostics.js"
-import { GuilleCodeResponses } from "../src-tauri/src/responses_guard.js"
+import { FlufyResponses } from "../src-tauri/src/responses_guard.js"
 
 const records = async (path: string) => (await readFile(path, "utf8")).trim().split("\n").map(JSON.parse)
 
@@ -77,7 +77,7 @@ test("Fetch diagnosticado conserva el HTTP 503, clasifica el proxy y propaga err
     let response = new Response("upstream connect error or disconnect/reset before headers. reset reason: remote connection failure PRIVATE_ERROR", { status: 503 })
     let failure
     globalThis.fetch = async () => { if (failure) throw failure; return response }
-    await GuilleCodeResponses(undefined, { diagnosticsPath: path })
+    await FlufyResponses(undefined, { diagnosticsPath: path })
     const init = { method: "POST", body: JSON.stringify({ model: "qa", input: [] }) }
     assert.equal(await fetch("https://chatgpt.com/backend-api/codex/responses", init), response)
     assert.match(await response.text(), /upstream connect error/)

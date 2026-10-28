@@ -1,6 +1,6 @@
 //! Whisper local (whisper.cpp) para la transcripción de audios sin nube.
 //!
-//! GuilleCode ya sabe hablar el contrato de OpenAI (`/audio/transcriptions`).
+//! Flufy ya sabe hablar el contrato de OpenAI (`/audio/transcriptions`).
 //! Acá empaquetamos el `whisper-server` de whisper.cpp como binario propio,
 //! lo levantamos en un puerto local efímero con `--inference-path
 //! /v1/audio/transcriptions` y dejamos que `voice.rs` le pegue como si fuera
@@ -145,7 +145,7 @@ pub fn ensure(app: &AppHandle, size: &str) -> Result<u16, String> {
     let bin = server_bin(app).ok_or_else(|| "El motor de Whisper no está instalado en esta PC".to_string())?;
     let model = model_path(app, size)
         .filter(|p| p.is_file())
-        .ok_or_else(|| format!("Falta descargar el modelo de Whisper «{}» (GuilleCode → Audios)", size))?;
+        .ok_or_else(|| format!("Falta descargar el modelo de Whisper «{}» (Flufy → Audios)", size))?;
     let port = free_port()?;
     let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
     let mut cmd = Command::new(&bin);

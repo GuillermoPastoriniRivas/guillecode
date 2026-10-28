@@ -122,9 +122,9 @@ fn persist(app: &AppHandle) {
 fn title_for(path: &str) -> String {
     let name = path.replace('\\', "/").trim_end_matches('/').rsplit('/').next().unwrap_or_default().to_string();
     if name.is_empty() {
-        "GuilleCode".to_string()
+        "Flufy".to_string()
     } else {
-        format!("{} — GuilleCode", name)
+        format!("{} — Flufy", name)
     }
 }
 
@@ -171,7 +171,7 @@ pub fn create_bubble(app: &AppHandle, project: String, session: String, origin: 
         .push(Bubble { label: label.clone(), project, session, origin });
     let window_title = title.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
     let built = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
-        .title(window_title.unwrap_or_else(|| "GuilleCode".to_string()))
+        .title(window_title.unwrap_or_else(|| "Flufy".to_string()))
         .inner_size(380.0, 620.0)
         .min_inner_size(300.0, 340.0)
         .resizable(true)

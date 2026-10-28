@@ -39,7 +39,7 @@ export function VoiceSetup({ onClose, onRecord }: { onClose: () => void; onRecor
         <h2 id="voice-setup-title">Configurar voz</h2>
         <button className="icon-button" type="button" aria-label="Cerrar configuración de voz" onClick={onClose}><Icon name="close" /></button>
       </header>
-      <p>Para grabar, activá la transcripción en esta instancia de GuilleCode.</p>
+      <p>Para grabar, activá la transcripción en esta instancia de Flufy.</p>
       <VoiceSettings />
       {error && <p role="alert">{error}</p>}
       <footer className="voice-setup-actions">

@@ -45,7 +45,7 @@ const MODES = [
   { prefix: "#", label: "Sesiones del agente", icon: "hubot" },
 ]
 
-const CATEGORY_ORDER = ["GuilleCode", "Archivo"]
+const CATEGORY_ORDER = ["Flufy", "Archivo"]
 const categoryRank = (category?: string) => {
   const i = CATEGORY_ORDER.indexOf(category ?? "")
   return i === -1 ? CATEGORY_ORDER.length : i

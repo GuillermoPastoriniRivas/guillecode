@@ -132,12 +132,12 @@ export function RemoteEditor() {
           <div className="editor-banner warning">
             <Icon name="warning" />
             <span>
-              Falta compilar la app del celular. En la carpeta de GuilleCode corré <code>npm run build:pwa</code> y tocá Actualizar.
+              Falta compilar la app del celular. En la carpeta de Flufy corré <code>npm run build:pwa</code> y tocá Actualizar.
             </span>
           </div>
         )}
         <p className="remote-text">
-          Desde el celular ves tus sesiones de todos los proyectos, contestás preguntas, aprobás permisos, le escribís al agente y corrés rutinas. Funciona mientras GuilleCode esté abierto o en la bandeja.
+          Desde el celular ves tus sesiones de todos los proyectos, contestás preguntas, aprobás permisos, le escribís al agente y corrés rutinas. Funciona mientras Flufy esté abierto o en la bandeja.
         </p>
         {!status.tailscaleIp && (
           <div className="remote-steps">
@@ -190,7 +190,7 @@ export function RemoteEditor() {
             <span>
               {status.pushDevices === 0
                 ? "Ningún dispositivo las activó todavía. En la app del celular tocá la campanita (necesita el link HTTPS)."
-                : `${status.pushDevices} dispositivo${status.pushDevices === 1 ? " recibe" : "s reciben"} avisos cuando el agente termina, falla o te necesita. No llegan mientras estás usando GuilleCode en la PC.`}
+                : `${status.pushDevices} dispositivo${status.pushDevices === 1 ? " recibe" : "s reciben"} avisos cuando el agente termina, falla o te necesita. No llegan mientras estás usando Flufy en la PC.`}
             </span>
             {status.pushDevices > 0 && (
               <button type="button" className="btn btn-sm" onClick={() => void testPush()}>

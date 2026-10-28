@@ -8,12 +8,12 @@ const wireBytes = (text) => new TextEncoder().encode(text).byteLength
 const MIN_OUTPUT_BYTES = 4096
 
 const shortenOutput = (output, originalBytes) => output.slice(0, 512)
-  + `\n[GuilleCode: salida antigua abreviada para el presupuesto de transporte; original ${originalBytes} bytes. El contenido completo sigue en el historial local. No inferir datos omitidos; consultar de nuevo si son necesarios.]\n`
+  + `\n[Flufy: salida antigua abreviada para el presupuesto de transporte; original ${originalBytes} bytes. El contenido completo sigue en el historial local. No inferir datos omitidos; consultar de nuevo si son necesarios.]\n`
   + output.slice(-512)
 
 const omitCapture = (originalBytes) => ({
   type: "input_text",
-  text: `[GuilleCode: captura anterior omitida para el presupuesto de transporte; original ${originalBytes} bytes. El historial local conserva la imagen. No inferir datos omitidos; observá la pantalla de nuevo si es necesario.]`,
+  text: `[Flufy: captura anterior omitida para el presupuesto de transporte; original ${originalBytes} bytes. El historial local conserva la imagen. No inferir datos omitidos; observá la pantalla de nuevo si es necesario.]`,
 })
 
 // Requests over the transport budget are reduced where possible and sent.
@@ -55,7 +55,7 @@ export function budgetChatGPTRequest(body) {
   for (const [index, item] of request.input.entries()) {
     if (item?.role !== "user" || !Array.isArray(item.content)) continue
     const markers = new Set(item.content.flatMap((part) => part?.type === "input_text" && typeof part.text === "string"
-      ? Array.from(part.text.matchAll(/\[GuilleCode desktop capture sha256:([a-f0-9]{64})\]/g), (match) => match[1]) : []))
+      ? Array.from(part.text.matchAll(/\[Flufy desktop capture sha256:([a-f0-9]{64})\]/g), (match) => match[1]) : []))
     if (!markers.size) continue
     for (const [position, part] of item.content.entries()) {
       if (part?.type !== "input_image" || typeof part.image_url !== "string") continue

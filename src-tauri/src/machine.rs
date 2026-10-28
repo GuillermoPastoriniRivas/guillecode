@@ -54,7 +54,7 @@ mod platform {
         let mut slot = AWAKE.lock().unwrap();
         match (on, *slot) {
             (true, None) => unsafe {
-                let mut reason: Vec<u16> = "GuilleCode: acceso desde el celular activo\0".encode_utf16().collect();
+                let mut reason: Vec<u16> = "Flufy: acceso desde el celular activo\0".encode_utf16().collect();
                 let context = REASON_CONTEXT {
                     Version: POWER_REQUEST_CONTEXT_VERSION,
                     Flags: POWER_REQUEST_CONTEXT_SIMPLE_STRING,

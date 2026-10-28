@@ -72,7 +72,7 @@ try {
   if (live) {
     console.log("Chrome: enable chrome://inspect/#remote-debugging and click Allow if prompted.")
     const before = new Set(pageIds(await call("list_pages")))
-    const html = '<!doctype html><title>GuilleCode browser test</title><label>Nombre de prueba<input id="nombre"></label><button onclick="document.getElementById(\'resultado\').textContent=document.getElementById(\'nombre\').value">Comprobar</button><p id="resultado"></p>'
+    const html = '<!doctype html><title>Flufy browser test</title><label>Nombre de prueba<input id="nombre"></label><button onclick="document.getElementById(\'resultado\').textContent=document.getElementById(\'nombre\').value">Comprobar</button><p id="resultado"></p>'
     await call("new_page", { url: `data:text/html;charset=utf-8,${encodeURIComponent(html)}` })
     const created = pageIds(await call("list_pages")).filter((id) => !before.has(id))
     assert.equal(created.length, 1, "Expected one new test tab")
@@ -80,13 +80,13 @@ try {
     const snapshot = await call("take_snapshot", { pageId: testPage, verbose: false })
     const input = snapshot.match(/uid=([\w_]+) textbox "Nombre de prueba"/)
     assert.ok(input, "The input must be accessible by uid")
-    await call("fill_form", { pageId: testPage, elements: [{ uid: input[1], value: "GuilleCode browser OK" }] })
+    await call("fill_form", { pageId: testPage, elements: [{ uid: input[1], value: "Flufy browser OK" }] })
     const updated = await call("take_snapshot", { pageId: testPage, verbose: false })
     const button = updated.match(/uid=([\w_]+) button "Comprobar"/)
     assert.ok(button, "The button must be accessible by uid")
     await call("click", { pageId: testPage, uid: button[1] })
     const result = await call("evaluate_script", { pageId: testPage, function: "() => document.getElementById('resultado').textContent" })
-    assert.ok(result.includes("GuilleCode browser OK"), "The click must update the real page")
+    assert.ok(result.includes("Flufy browser OK"), "The click must update the real page")
     await call("close_page", { pageId: testPage })
     testPage = undefined
     const after = new Set(pageIds(await call("list_pages")))

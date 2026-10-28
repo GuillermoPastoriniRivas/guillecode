@@ -129,13 +129,13 @@ fn endpoint(app: &AppHandle, config: &VoiceConfig) -> Result<(String, String, St
         }
         let size = local_size(config);
         if !whisper::model_present(app, &size) {
-            return Err(format!("Falta descargar el modelo de Whisper «{}» (GuilleCode → Audios)", size));
+            return Err(format!("Falta descargar el modelo de Whisper «{}» (Flufy → Audios)", size));
         }
         let port = whisper::ensure(app, &size)?;
         Ok((format!("http://127.0.0.1:{}/v1", port), "whisper-1".to_string(), String::new()))
     } else {
         if !is_ready(app, config) {
-            return Err("Falta configurar la transcripción en GuilleCode (comando «Conectar el celular» → Audios)".into());
+            return Err("Falta configurar la transcripción en Flufy (comando «Conectar el celular» → Audios)".into());
         }
         Ok((config.base_url.trim().trim_end_matches('/').to_string(), config.model.trim().to_string(), config.api_key.trim().to_string()))
     }

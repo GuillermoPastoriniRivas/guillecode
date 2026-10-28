@@ -130,7 +130,7 @@ export function PcCard({ status: initial, onChange }: { status: PcStatus; onChan
       {open && (
         <div className="pc-more">
           {status.activity.length === 0 ? (
-            <small className="muted">El agente todavía no usó la PC desde que abriste GuilleCode.</small>
+            <small className="muted">El agente todavía no usó la PC desde que abriste Flufy.</small>
           ) : (
             <ul className="pc-activity">
               {status.activity.slice(0, 8).map((a, i) => (
@@ -148,7 +148,7 @@ export function PcCard({ status: initial, onChange }: { status: PcStatus; onChan
             </button>
           )}
           {!status.bridge.connected && status.enabled && status.browser && (
-            <small className="muted">Para usar tu Chrome, habilitá chrome://inspect/#remote-debugging en la PC y aceptá la conexión. Podés comprobarla en GuilleCode → «Control de la PC»; no necesita extensión ni token.</small>
+            <small className="muted">Para usar tu Chrome, habilitá chrome://inspect/#remote-debugging en la PC y aceptá la conexión. Podés comprobarla en Flufy → «Control de la PC»; no necesita extensión ni token.</small>
           )}
         </div>
       )}

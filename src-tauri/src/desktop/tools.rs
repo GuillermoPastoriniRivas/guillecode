@@ -681,7 +681,7 @@ fn status_text(app: &AppHandle) -> ToolResult {
     let config = super::config(app);
     let fg = win::window(win::foreground());
     let mut lines = vec![
-        format!("Control del escritorio: {}", if !config.enabled { "APAGADO (el usuario tiene que activarlo en GuilleCode o desde el celular)" } else if config.paused { "PAUSADO por el usuario" } else { "activado" }),
+        format!("Control del escritorio: {}", if !config.enabled { "APAGADO (el usuario tiene que activarlo en Flufy o desde el celular)" } else if config.paused { "PAUSADO por el usuario" } else { "activado" }),
         format!(
             "Sesión: {}",
             if m.locked || !m.interactive {
@@ -1621,7 +1621,7 @@ mod tests {
             .build(tauri::generate_context!()).expect("isolated Tauri runtime");
         crate::proc::install(app.handle().clone());
         let overlay = tauri::WebviewWindowBuilder::new(app.handle(), "bubble-e2e", tauri::WebviewUrl::External("about:blank".parse().unwrap()))
-            .title("GuilleCode QA overlay").inner_size(320.0, 300.0).always_on_top(true).build().unwrap();
+            .title("Flufy QA overlay").inner_size(320.0, 300.0).always_on_top(true).build().unwrap();
         context::start(app.handle());
         let handle = app.handle().clone();
         let owned_stem = stem.clone();
@@ -1640,7 +1640,7 @@ mod tests {
                 assert_eq!(preview["target"]["window"], format!("w{}", w.hwnd), "focusing the bubble must preserve the external target");
                 let prepared = tauri::async_runtime::block_on(context::desktop_context_prepare(handle.clone(), "bubble-test".into(), "Agregar y guardar".into(), true)).unwrap();
                 assert!(prepared["image"].as_str().unwrap().starts_with("data:image/jpeg;base64,"));
-                assert!(!prepared["scene"]["content"].as_str().unwrap().contains("GuilleCode QA overlay"));
+                assert!(!prepared["scene"]["content"].as_str().unwrap().contains("Flufy QA overlay"));
                 assert!(overlay.is_visible().unwrap(), "capture restores the overlay");
                 let binding = tasks::bind(&handle, "bubble-test").unwrap();
                 let _session = tasks::enter(&handle, &json!({"_guillecode":binding})).unwrap();

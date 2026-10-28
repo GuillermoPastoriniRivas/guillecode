@@ -71,7 +71,7 @@ export async function installUpdate(): Promise<void> {
     }
     const dirty = dirtyPaths()
     const terminals = useTerminals.getState().terminals.filter((t) => !t.exited).length
-    const choice = await ask("Instalar actualización y reiniciar GuilleCode", {
+    const choice = await ask("Instalar actualización y reiniciar Flufy", {
       message: [
         `Se instalará la versión ${useUpdates.getState().update?.version}. Tus cuentas y conversaciones se conservan.`,
         dirty.length ? `Se guardarán ${dirty.length} archivos antes de cerrar.` : "",

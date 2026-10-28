@@ -55,7 +55,7 @@ pub fn write(text: &str) -> Result<(), String> {
     let mut units: Vec<u16> = text.chars().take(MAX_CHARS).collect::<String>().replace("\r\n", "\n").replace('\n', "\r\n").encode_utf16().collect();
     units.push(0);
     // EmptyClipboard + SetClipboardData need a non-null clipboard owner.
-    let owner = unsafe { CreateWindowExW(WINDOW_EX_STYLE(0), w!("STATIC"), w!("GuilleCode clipboard"), WINDOW_STYLE(0), 0, 0, 0, 0, Some(HWND_MESSAGE), None, None, None) }.map_err(|e| e.to_string())?;
+    let owner = unsafe { CreateWindowExW(WINDOW_EX_STYLE(0), w!("STATIC"), w!("Flufy clipboard"), WINDOW_STYLE(0), 0, 0, 0, 0, Some(HWND_MESSAGE), None, None, None) }.map_err(|e| e.to_string())?;
     if let Err(e) = open(Some(owner)) {
         unsafe { let _ = DestroyWindow(owner); }
         return Err(e);
@@ -129,7 +129,7 @@ pub fn save() -> Result<Saved, String> {
 }
 
 pub fn restore(saved: Saved) -> Result<(), String> {
-    let owner = unsafe { CreateWindowExW(WINDOW_EX_STYLE(0), w!("STATIC"), w!("GuilleCode clipboard"), WINDOW_STYLE(0), 0, 0, 0, 0, Some(HWND_MESSAGE), None, None, None) }.map_err(|e| e.to_string())?;
+    let owner = unsafe { CreateWindowExW(WINDOW_EX_STYLE(0), w!("STATIC"), w!("Flufy clipboard"), WINDOW_STYLE(0), 0, 0, 0, 0, Some(HWND_MESSAGE), None, None, None) }.map_err(|e| e.to_string())?;
     if let Err(e) = open(Some(owner)) {
         unsafe {
             let _ = DestroyWindow(owner);

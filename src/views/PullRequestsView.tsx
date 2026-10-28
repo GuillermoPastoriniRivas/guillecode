@@ -81,7 +81,7 @@ export function PullRequestsView() {
             </button>
           }
         >
-          GuilleCode usa <code>gh</code> con tu propia cuenta: no guarda tokens.
+          Flufy usa <code>gh</code> con tu propia cuenta: no guarda tokens.
         </EmptyState>
       )}
       {gh && gh.installed && !gh.authenticated && (

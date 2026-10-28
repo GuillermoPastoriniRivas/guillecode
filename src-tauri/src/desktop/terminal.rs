@@ -6,13 +6,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
-pub const INSTRUCTIONS: &str = "Terminal integrada de GuilleCode (MCP terminal): el usuario ve cada terminal que abrís, en la carpeta que indicás y con el comando escrito tal cual, y puede leer los logs ahí mismo.
+pub const INSTRUCTIONS: &str = "Terminal integrada de Flufy (MCP terminal): el usuario ve cada terminal que abrís, en la carpeta que indicás y con el comando escrito tal cual, y puede leer los logs ahí mismo.
 - Servidores, watchers y todo proceso que tenga que quedar corriendo (npm run dev, APIs, GQL, docker compose up, túneles): SIEMPRE con terminal_run. Nunca los lances con el shell interno (bash/PowerShell del agente), ni con Start-Process, ni con scripts que los dejen en segundo plano: ese paso queda colgado para siempre.
 - Builds, tests, instalaciones, migraciones y scripts largos: preferí terminal_run, así el usuario los ve. Consultas rápidas (git status, listar o leer archivos, buscar) siguen en el shell interno.
 - cwd es la ruta absoluta de la carpeta donde corre el comando. El comando es PowerShell en un solo renglón (encadená con ;).
 - Para un servidor pasá until con el texto que indica que está listo (ej. «listening|ready in|compiled») y un wait_seconds razonable: te devuelve el control apenas aparece y el proceso sigue a la vista. Si vence el tiempo no se corta nada.
 - Logs y errores: terminal_read (lines, grep; wait_seconds/until para esperar). Cortar: terminal_send key=ctrl+c. Reiniciar: ctrl+c y terminal_run con terminal=<id>.
-- Reutilizá tus terminales libres (terminal=<id>) en vez de abrir una por comando; una libre del mismo cwd y título se reutiliza sola, y al terminar el turno GuilleCode cierra las que quedaron libres. Las terminales del usuario se pueden leer; no escribas en ellas ni las cortes salvo que te lo pida.";
+- Reutilizá tus terminales libres (terminal=<id>) en vez de abrir una por comando; una libre del mismo cwd y título se reutiliza sola, y al terminar el turno Flufy cierra las que quedaron libres. Las terminales del usuario se pueden leer; no escribas en ellas ni las cortes salvo que te lo pida.";
 
 const DEFAULT_WAIT: u64 = 60;
 const MAX_WAIT: u64 = 600;
@@ -70,7 +70,7 @@ pub fn definitions() -> Vec<Value> {
     vec![
         tool(
             "terminal_run",
-            "Abre una terminal visible en el panel Terminal de GuilleCode (o reutiliza una tuya), se ubica en cwd y escribe command como si lo tipeara el usuario. Espera a que termine, a que aparezca until o a que pasen wait_seconds (por defecto 60); lo que siga corriendo queda vivo en la terminal. Devuelve el id, el estado (código de salida o «sigue corriendo») y la salida del comando. Es la forma de levantar servidores y procesos largos.",
+            "Abre una terminal visible en el panel Terminal de Flufy (o reutiliza una tuya), se ubica en cwd y escribe command como si lo tipeara el usuario. Espera a que termine, a que aparezca until o a que pasen wait_seconds (por defecto 60); lo que siga corriendo queda vivo en la terminal. Devuelve el id, el estado (código de salida o «sigue corriendo») y la salida del comando. Es la forma de levantar servidores y procesos largos.",
             json!({
                 "command": prop("string", "Comando de PowerShell en un solo renglón."),
                 "cwd": prop("string", "Ruta absoluta de la carpeta donde correrlo. Obligatoria al abrir una terminal nueva."),
@@ -84,7 +84,7 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "terminal_read",
-            "Lee lo que muestra una terminal de GuilleCode (también las que abrió el usuario): las últimas líneas, o las del historial que coinciden con grep. Con wait_seconds espera antes a que termine el comando en curso o a que aparezca until.",
+            "Lee lo que muestra una terminal de Flufy (también las que abrió el usuario): las últimas líneas, o las del historial que coinciden con grep. Con wait_seconds espera antes a que termine el comando en curso o a que aparezca until.",
             json!({
                 "id": prop("string", id),
                 "lines": prop("integer", "Cuántas líneas devolver (por defecto 120, máximo 400)."),
@@ -109,7 +109,7 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "terminal_list",
-            "Lista las terminales abiertas en GuilleCode: id, título, carpeta, si la abrió el agente o el usuario, si hay un comando corriendo y su última línea.",
+            "Lista las terminales abiertas en Flufy: id, título, carpeta, si la abrió el agente o el usuario, si hay un comando corriendo y su última línea.",
             json!({}),
             &[],
             true,
@@ -280,14 +280,14 @@ fn open(app: &AppHandle, cwd: &str, title: Option<&str>) -> Result<String, Strin
     let payload = json!({ "id": id, "cwd": cwd, "title": title, "shell": term::agent_shell() });
     if let Err(e) = app.emit_to(label.as_str(), "terminal://agent-open", payload) {
         term::forget_spawn(app, &id);
-        return Err(format!("No pude avisarle a la ventana de GuilleCode: {}", e));
+        return Err(format!("No pude avisarle a la ventana de Flufy: {}", e));
     }
     match spawned.recv_timeout(OPEN_TIMEOUT) {
         Ok(Ok(())) => Ok(id),
         Ok(Err(e)) => Err(format!("No se pudo abrir la terminal: {}", e)),
         Err(_) => {
             term::forget_spawn(app, &id);
-            Err("La ventana de GuilleCode no abrió la terminal a tiempo. Revisá que GuilleCode esté abierto con ese proyecto.".to_string())
+            Err("La ventana de Flufy no abrió la terminal a tiempo. Revisá que Flufy esté abierto con ese proyecto.".to_string())
         }
     }
 }

@@ -9,6 +9,6 @@ export function useRecorder(onText: (text: string) => void, onError: (message: s
     transcribe,
     onText,
     onError,
-    unsupportedHint: "Para grabar audio abrí GuilleCode desde el link HTTPS (el que termina en .ts.net).",
+    unsupportedHint: "Para grabar audio abrí Flufy desde el link HTTPS (el que termina en .ts.net).",
   })
 }

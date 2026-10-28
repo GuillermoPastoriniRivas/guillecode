@@ -53,7 +53,7 @@ pub fn message(value: &Value) -> String {
     parts(value, 0, &mut messages);
     let text = messages.join(" ").to_lowercase();
     if text.contains("free tier can only be used from within opencode") {
-        return "Ese modelo gratuito de OpenCode Zen está restringido a la aplicación OpenCode. El proveedor lo rechaza desde GuilleCode. Elegí otro modelo habilitado para tu cuenta en Configuración; reintentar el mismo modelo no lo habilita.".into();
+        return "Ese modelo gratuito de OpenCode Zen está restringido a la aplicación OpenCode. El proveedor lo rechaza desde Flufy. Elegí otro modelo habilitado para tu cuenta en Configuración; reintentar el mismo modelo no lo habilita.".into();
     }
     if payment_required(value, 0)
         || [
@@ -199,7 +199,7 @@ pub fn message(value: &Value) -> String {
         }
     }
     if messages.iter().any(|s| s.starts_with('{') || s.starts_with('[')) {
-        return "El proveedor de IA respondió con un error que GuilleCode no pudo interpretar. Revisá la conexión, la cuenta y el modelo; después reintentá. Tus cambios se conservan.".into();
+        return "El proveedor de IA respondió con un error que Flufy no pudo interpretar. Revisá la conexión, la cuenta y el modelo; después reintentá. Tus cambios se conservan.".into();
     }
     "El agente no pudo completar la tarea. Abrí su sesión en Actividad para ver el último paso; sus cambios se conservan. Corregí lo indicado y reintentá.".into()
 }

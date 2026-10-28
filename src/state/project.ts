@@ -111,7 +111,7 @@ export async function pickWindow(): Promise<void> {
       })),
       { id: "__new__", label: "Nueva ventana", icon: "empty-window" },
     ],
-    { title: "Ventanas de GuilleCode", placeholder: "Elegí una ventana" },
+    { title: "Ventanas de Flufy", placeholder: "Elegí una ventana" },
   )
   if (!choice) return
   if (choice.id === "__new__") await openInNewWindow()

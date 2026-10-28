@@ -8,7 +8,7 @@ export function UpdateButton() {
   const phase = useUpdates((s) => s.phase)
   const version = useUpdates((s) => s.update?.version)
   if (!isTauri) return null
-  return <button type="button" className={`btn update-button${version ? " has-update" : ""}`} onClick={showUpdates} title="Actualizaciones de GuilleCode">
+  return <button type="button" className={`btn update-button${version ? " has-update" : ""}`} onClick={showUpdates} title="Actualizaciones de Flufy">
     <Icon name={phase === "downloading" ? "loading" : "cloud-download"} spin={phase === "downloading"} />
     {phase === "ready" ? "Reiniciar para actualizar" : phase === "downloading" ? "Descargando…" : version ? `Actualizar a ${version}` : "Actualizaciones"}
   </button>
@@ -23,11 +23,11 @@ export function UpdatesHost() {
     window.addEventListener("keydown", listener)
     return () => window.removeEventListener("keydown", listener)
   }, [open, phase])
-  if (phase === "installing") return <div className="update-installing" role="alert" aria-busy="true"><Spinner /><strong>Instalando actualización…</strong><span>GuilleCode volverá a abrirse con la nueva versión.</span></div>
+  if (phase === "installing") return <div className="update-installing" role="alert" aria-busy="true"><Spinner /><strong>Instalando actualización…</strong><span>Flufy volverá a abrirse con la nueva versión.</span></div>
   if (!open) return null
   const percent = total ? Math.min(100, Math.floor(downloaded * 100 / total)) : null
-  return <section className="updates-panel" role="dialog" aria-label="Actualizaciones de GuilleCode">
-    <div className="updates-head"><h2>Actualizaciones de GuilleCode</h2><button type="button" className="btn" aria-label="Cerrar actualizaciones" onClick={close}><Icon name="close" /></button></div>
+  return <section className="updates-panel" role="dialog" aria-label="Actualizaciones de Flufy">
+    <div className="updates-head"><h2>Actualizaciones de Flufy</h2><button type="button" className="btn" aria-label="Cerrar actualizaciones" onClick={close}><Icon name="close" /></button></div>
     <p className="updates-version">Versión instalada: {version || update?.currentVersion || "…"}</p>
     {policy?.localBuild && <p className="updates-version">Compilación local: {policy.localBuild} · Incluye cambios todavía no publicados.</p>}
     {policy && !policy.requiresSourceIntegration && <p className="updates-version">Edición: {policy.edition}</p>}

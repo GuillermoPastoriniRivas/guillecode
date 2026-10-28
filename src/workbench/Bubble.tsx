@@ -93,7 +93,7 @@ function BubbleHead({ sessionId, origin }: { sessionId: string; origin: string }
       <button
         type="button"
         className="bubble-dock"
-        title="Volver a GuilleCode (el chat vuelve a las pestañas)"
+        title="Volver a Flufy (el chat vuelve a las pestañas)"
         onMouseDown={(e) => e.stopPropagation()}
         onClick={() => void dockBubble(sessionId, origin)}
       >

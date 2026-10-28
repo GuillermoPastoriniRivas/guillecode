@@ -9,7 +9,7 @@ test("OpenCode pack has 13 unique valid SKILL.md files matching the embedded cat
     assert.match(skill.slug, /^[a-z]+(?:-[a-z]+)*$/)
     const source = await readFile(`.opencode/skills/${skill.slug}/SKILL.md`, "utf8")
     assert.ok(source.startsWith(`---\nname: ${skill.slug}\n`) || source.startsWith(`---\r\nname: ${skill.slug}\r\n`))
-    assert.match(source, /compatibility: opencode/); assert.match(source, /Contrato de GuilleCode/)
+    assert.match(source, /compatibility: opencode/); assert.match(source, /Contrato de Flufy/)
     assert.ok(skill.verificationGuidelines.length >= 2)
     assert.ok(source.includes("permisos") && source.includes("QA manual"))
   }

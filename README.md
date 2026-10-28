@@ -1,4 +1,4 @@
-# GuilleCode
+# Flufy
 
 Agente de IA, editor, Git y terminal en una aplicación para Windows x64.
 
@@ -7,7 +7,7 @@ Agente de IA, editor, Git y terminal en una aplicación para Windows x64.
 Cada usuario conecta sus propias cuentas. Se puede usar **solo ChatGPT**, **solo OpenCode Go** o **ambos**. Alcanza con un proveedor conectado con modelos disponibles.
 
 - **ChatGPT:** iniciar sesión desde el navegador o mediante un código de dispositivo. Se usan los modelos y los límites habilitados por la cuenta. No requiere cuenta ni API key de OpenCode.
-- **OpenCode Go:** pegar la API key del plan Go desde la consola de OpenCode. GuilleCode consulta la cuota para verificar la clave antes de guardarla; no genera mensajes para validarla.
+- **OpenCode Go:** pegar la API key del plan Go desde la consola de OpenCode. Flufy consulta la cuota para verificar la clave antes de guardarla; no genera mensajes para validarla.
 - **OpenCode Zen (opcional):** usa la misma clave y se activa con el interruptor «Incluir OpenCode Zen» en Cuentas de IA. Suma modelos que se cobran por token, aparte del plan Go; con «Solo modelos gratuitos de Zen» (por defecto) la lista se limita a los que no consumen saldo, y el interruptor se puede apagar para ver todos.
 - **Ambos:** elegir el proveedor y modelo desde el selector del chat o desde Cuentas de IA.
 
@@ -25,11 +25,11 @@ La barra lateral incluye **Equipos IA** para guardar un Lead y especialistas con
 
 Incluye capturas reales antes/después con flujos locales configurables, comparador de imágenes, presupuestos y retención opcionales. Recupera sesiones tras reiniciar sin reenviar ciegamente el objetivo. Ver [uso, arquitectura, pruebas y limitaciones del Modo Equipos IA](docs/equipos-ia.md) y [resultados de validación](docs/equipos-ia-validacion.md).
 
-Las actualizaciones consultan exclusivamente el canal firmado de **GuillermoPastoriniRivas/guillecode**. La app no consulta releases de forks; las publicaciones se preparan desde el repositorio original. Ver [skills y perfiles](docs/skills-equipos.md) y [actualizaciones](docs/actualizaciones-edicion-local.md).
+Las actualizaciones consultan exclusivamente el canal firmado de **fluws-labs/flufy**. La app no consulta releases de forks; las publicaciones se preparan desde el repositorio original. Ver [skills y perfiles](docs/skills-equipos.md) y [actualizaciones](docs/actualizaciones-edicion-local.md).
 
 ## Memoria
 
-GuilleCode recuerda el proyecto y las conversaciones de forma **100% local**, sin cuentas ni servicios. Un plugin del motor inyecta el contexto antes de cada respuesta, así el recuerdo no depende de que el agente pida nada. En cada conversación hay un interruptor **Memoria** (encendido por defecto): apagado, no se inyecta contexto, no se guardan checkpoints y el agente no puede usar las herramientas `memory_*`. La vista **Memoria** permite leer y editar las notas del proyecto, el estado de cada conversación y las preferencias, y «Continuar en un chat nuevo» arranca una sesión con el checkpoint. Los datos viven en el perfil de datos de GuilleCode, no en la nube.
+Flufy recuerda el proyecto y las conversaciones de forma **100% local**, sin cuentas ni servicios. Un plugin del motor inyecta el contexto antes de cada respuesta, así el recuerdo no depende de que el agente pida nada. En cada conversación hay un interruptor **Memoria** (encendido por defecto): apagado, no se inyecta contexto, no se guardan checkpoints y el agente no puede usar las herramientas `memory_*`. La vista **Memoria** permite leer y editar las notas del proyecto, el estado de cada conversación y las preferencias, y «Continuar en un chat nuevo» arranca una sesión con el checkpoint. Los datos viven en el perfil de datos de Flufy, no en la nube.
 
 ## Instalar
 
@@ -45,7 +45,7 @@ Funciones adicionales:
 
 ### Conectar tu Chrome
 
-1. Abrí **Control de la PC** en GuilleCode y activá el control.
+1. Abrí **Control de la PC** en Flufy y activá el control.
 2. Pulsá **Abrir configuración de Chrome**, o abrí `chrome://inspect/#remote-debugging` en Chrome, y habilitá la depuración remota.
 3. Pulsá **Probar / reconectar** y aceptá **Permitir** en Chrome. Se verifica la conexión leyendo las pestañas; «Chrome DevTools listo» solo indica que el servidor MCP arrancó.
 
@@ -84,6 +84,6 @@ npm run lint
 
 Los tests E2E usan Microsoft Edge con cuentas y llamadas IPC simuladas, sin modificar cuentas reales. El smoke test ejecuta el OpenCode incluido con un perfil temporal vacío y comprueba que el login de ChatGPT está disponible sin cuenta OpenCode. No consume tokens.
 
-Para comprobar el MCP del navegador instalado por GuilleCode, ejecutá `node tests/browser-smoke.mjs`. Con Chrome abierto y la depuración habilitada, `node tests/browser-smoke.mjs --live` también comprueba snapshot, formulario, clic y lectura en una pestaña local de prueba, que cierra al terminar. Puede pedir permiso en Chrome.
+Para comprobar el MCP del navegador instalado por Flufy, ejecutá `node tests/browser-smoke.mjs`. Con Chrome abierto y la depuración habilitada, `node tests/browser-smoke.mjs --live` también comprueba snapshot, formulario, clic y lectura en una pestaña local de prueba, que cierra al terminar. Puede pedir permiso en Chrome.
 
 El build del instalador no reemplaza la prueba de instalación, actualización y desinstalación en una máquina Windows limpia. Firma y actualizaciones automáticas requieren su configuración de distribución.

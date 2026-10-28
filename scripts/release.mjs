@@ -8,7 +8,7 @@ import { canonicalBinaryHash } from "./binary-validation.mjs"
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const config = JSON.parse(readFileSync(join(root, "scripts/release-config.json"), "utf8"))
-const OFFICIAL_REPOSITORY = "GuillermoPastoriniRivas/guillecode"
+const OFFICIAL_REPOSITORY = "fluws-labs/flufy"
 const OFFICIAL_UPDATER_PUBKEY = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRCNjAxMjRFQTE5N0EzMDIKUldRQ281ZWhUaEpnUzJ0ZnFoSy9od0dtbFdxTzM4QnROaWFFLzJvM29uUE1TTW9RR2pJcE1sdHoK"
 const json = (path) => JSON.parse(readFileSync(join(root, path), "utf8"))
 const writeJson = (path, data) => writeFileSync(join(root, path), `${JSON.stringify(data, null, 2)}\n`)

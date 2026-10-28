@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { GuilleCodeResponses } from "../src-tauri/src/responses_guard.js"
+import { FlufyResponses } from "../src-tauri/src/responses_guard.js"
 import { budgetChatGPTRequest, CHATGPT_REQUEST_BUDGET } from "../src-tauri/src/responses-budget.js"
 import { desktopCaptureMarker } from "../src/lib/internal-context.ts"
 
@@ -121,7 +121,7 @@ test("ChatGPT recorta y nunca falla localmente; respeta Request, cancelación y 
       sentBody = typeof init?.body === "string" ? init.body : input instanceof Request ? await input.clone().text() : null
       return new Response("ok")
     }
-    await GuilleCodeResponses()
+    await FlufyResponses()
     const body = JSON.stringify({ input: [{ role: "user", content: "x".repeat(CHATGPT_REQUEST_BUDGET) }] })
     const response = await fetch(new Request("https://chatgpt.com/backend-api/codex/responses", { method: "POST", body }))
     assert.equal(await response.text(), "ok")
@@ -163,9 +163,9 @@ test("Responses preserva bytes fragmentados y exige un terminal válido; cancela
   let response: Response
   try {
     globalThis.fetch = async () => response
-    await GuilleCodeResponses()
+    await FlufyResponses()
     const once = globalThis.fetch
-    await GuilleCodeResponses()
+    await FlufyResponses()
     assert.equal(globalThis.fetch, once, "El guard se instala una vez por proceso")
     const event = (value) => `data: ${JSON.stringify(value)}\r\n\r\n`
     const delta = event({ type: "response.output_text.delta", delta: "á🙂 parcial" })

@@ -65,8 +65,8 @@ async function setup(page: Page, initial: string[] = []) {
 
 test("sin cuentas exige una; key inválida no se guarda; OpenCode solo habilita continuar", async ({ page }) => {
   const { mutations } = await setup(page)
-  await expect(page.getByRole("heading", { name: "Bienvenido a GuilleCode" })).toBeVisible()
-  const proceed = page.getByRole("button", { name: "Continuar con GuilleCode" })
+  await expect(page.getByRole("heading", { name: "Bienvenido a Flufy" })).toBeVisible()
+  const proceed = page.getByRole("button", { name: "Continuar con Flufy" })
   await expect(proceed).toBeDisabled()
   await page.getByLabel("API key de OpenCode Go").fill("invalid-test-key")
   await page.getByRole("button", { name: "Conectar OpenCode", exact: true }).click()
@@ -85,7 +85,7 @@ test("sin cuentas exige una; key inválida no se guarda; OpenCode solo habilita 
 test("ChatGPT solo puede continuar sin key de OpenCode", async ({ page }) => {
   const { mutations } = await setup(page)
   await page.getByRole("button", { name: "Con un código", exact: true }).click()
-  await expect(page.getByRole("button", { name: "Continuar con GuilleCode" })).toBeEnabled()
+  await expect(page.getByRole("button", { name: "Continuar con Flufy" })).toBeEnabled()
   await expect(page.getByLabel("Elegí el modelo que querés usar")).toHaveValue("openai/openai-model")
   expect(mutations).toEqual([])
 })
@@ -100,8 +100,8 @@ test("ambos: selecciona cualquiera, quitar el activo pasa al restante; quitar ú
   await expect(page.getByLabel("Elegí el modelo que querés usar")).toHaveValue("openai/openai-model")
   await page.getByRole("button", { name: "Cerrar sesión", exact: true }).click()
   await page.getByRole("dialog").getByRole("button", { name: "Desconectar", exact: true }).click()
-  await expect(page.getByRole("heading", { name: "Bienvenido a GuilleCode" })).toBeVisible()
-  await expect(page.getByRole("button", { name: "Continuar con GuilleCode" })).toBeDisabled()
+  await expect(page.getByRole("heading", { name: "Bienvenido a Flufy" })).toBeVisible()
+  await expect(page.getByRole("button", { name: "Continuar con Flufy" })).toBeDisabled()
 })
 
 test("Zen: el interruptor agrega y quita el proveedor sin repetir la clave", async ({ page }) => {
@@ -132,7 +132,7 @@ test("Zen se conecta solo y conectar Go después conserva su clave independiente
   const { accounts, mutations } = await setup(page)
   await page.getByLabel("API key de OpenCode Zen").fill("test-zen-only-key")
   await page.getByRole("button", { name: "Conectar OpenCode Zen", exact: true }).click()
-  await expect(page.getByRole("button", { name: "Continuar con GuilleCode" })).toBeEnabled()
+  await expect(page.getByRole("button", { name: "Continuar con Flufy" })).toBeEnabled()
   await expect(page.getByLabel("API key de OpenCode Zen")).toHaveValue("")
   await expect(page.getByLabel("Elegí el modelo que querés usar")).toHaveValue("opencode/zen-free")
   expect(accounts.has("opencode-go")).toBe(false)

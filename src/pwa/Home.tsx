@@ -309,7 +309,7 @@ export function Home({ open, viewed }: { open: (r: Route) => void; viewed: strin
     <main className="screen">
       <header className="topbar">
         <img src="/icon-256.png" alt="" className="logo" />
-        <h1>GuilleCode</h1>
+        <h1>Flufy</h1>
         <span className="spacer" />
         {live === "down" && !offline && (
           <span className="live-state">

@@ -37,7 +37,7 @@
     "slug": "comportamientos",
     "name": "Comportamientos",
     "version": 3,
-    "description": "Capturar evidencias de comportamiento antes y después de una implementación: screenshots reales, APIs, pruebas, logs sanitizados y manifiesto final de GuilleCode.",
+    "description": "Capturar evidencias de comportamiento antes y después de una implementación: screenshots reales, APIs, pruebas, logs sanitizados y manifiesto final de Flufy.",
     "verificationGuidelines": [
       "Antes registrado antes de editar y después reproducible",
       "Artefactos existentes, sanitizados y con QA manual opcional"
@@ -81,7 +81,7 @@
     "slug": "frontend",
     "name": "Frontend",
     "version": 3,
-    "description": "Implementar interfaces web React, TypeScript, formularios, accesibilidad, integración API y pruebas visuales; usar ante tareas frontend o UI en GuilleCode.",
+    "description": "Implementar interfaces web React, TypeScript, formularios, accesibilidad, integración API y pruebas visuales; usar ante tareas frontend o UI en Flufy.",
     "verificationGuidelines": [
       "Flujo real, estados de carga/error y accesibilidad",
       "Typecheck/build y pruebas pertinentes; capturas reales o ausencia documentada"
@@ -92,7 +92,7 @@
     "slug": "git-integration",
     "name": "Git Integration",
     "version": 3,
-    "description": "Coordinar archivos compartidos, diffs, branches y merges entre agentes paralelos de GuilleCode sin sobrescribir cambios del usuario.",
+    "description": "Coordinar archivos compartidos, diffs, branches y merges entre agentes paralelos de Flufy sin sobrescribir cambios del usuario.",
     "verificationGuidelines": [
       "Cambios previos preservados y locks respetados",
       "Diff atribuible, conflictos resueltos y checks posteriores"
@@ -136,7 +136,7 @@
     "slug": "team-lead",
     "name": "Team Lead",
     "version": 3,
-    "description": "Coordinación autónoma de equipos de IA en GuilleCode: planificar tareas, asignar especialistas, controlar concurrencia, revisar resultados y entregar evidencias y QA manual opcional.",
+    "description": "Coordinación autónoma de equipos de IA en Flufy: planificar tareas, asignar especialistas, controlar concurrencia, revisar resultados y entregar evidencias y QA manual opcional.",
     "verificationGuidelines": [
       "DAG válido, empleados existentes y delegación real",
       "Cierre verificado con evidencias y QA manual opcional"

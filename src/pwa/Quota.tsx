@@ -364,7 +364,7 @@ function GoSection({ quota }: { quota: Quota }) {
       ))}
       {m && (
         <small className="muted">
-          Es la cuota real de OpenCode Go, medida a las {clock(m.usage.measuredAt)}. Los montos salen de tus topes: cambialos en GuilleCode → «Go» → Editar topes.
+          Es la cuota real de OpenCode Go, medida a las {clock(m.usage.measuredAt)}. Los montos salen de tus topes: cambialos en Flufy → «Go» → Editar topes.
         </small>
       )}
     </>

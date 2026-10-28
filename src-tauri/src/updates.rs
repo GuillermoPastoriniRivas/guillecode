@@ -56,7 +56,7 @@ pub struct UpdatePolicy {
 const LOCAL_UPDATE_REASON: &str = "Esta edición incluye Equipos IA y cambios locales. Para conservarlos, integrá la actualización en el código de esta rama, verificá y compilá un instalador combinado. El instalador público reemplazaría esta edición.";
 
 const EDITION_ENDPOINT: &str =
-    "https://github.com/GuillermoPastoriniRivas/guillecode/releases/latest/download/latest.json";
+    "https://github.com/fluws-labs/flufy/releases/latest/download/latest.json";
 
 fn local_edition(identifier: &str, endpoints: &[&str]) -> bool {
     // Only the original repository's signed releases are allowed to replace this edition.

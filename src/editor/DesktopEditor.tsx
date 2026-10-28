@@ -63,7 +63,7 @@ export function DesktopEditor() {
         <section className="doc-section remote-section">
           <div className="editor-banner warning">
             <Icon name="warning" />
-            <span>Esta versión de GuilleCode todavía no tiene el control de la PC. Cerrala y abrila de nuevo con run.bat para compilar la nueva.</span>
+            <span>Esta versión de Flufy todavía no tiene el control de la PC. Cerrala y abrila de nuevo con run.bat para compilar la nueva.</span>
           </div>
         </section>
       </div>
@@ -137,7 +137,7 @@ export function DesktopEditor() {
         {!status.available && (
           <div className="editor-banner warning">
             <Icon name="warning" />
-            <span>El servidor del control de la PC no pudo arrancar. Reiniciá GuilleCode.</span>
+            <span>El servidor del control de la PC no pudo arrancar. Reiniciá Flufy.</span>
           </div>
         )}
         {m.lidSleeps && (
@@ -192,13 +192,13 @@ export function DesktopEditor() {
           </div>
           <span className="desktop-note">Sin extensión ni token. Se usa el perfil elegido por Chrome; si tenés varios, comprobá que sea el correcto. El control de escritorio queda disponible para la barra, los menús y los diálogos nativos.</span>
           <Toggle checked={status.browser} onChange={(v) => void run(() => update({ browser: v }), "No se pudo cambiar")} label="Ofrecerle al agente las herramientas del navegador" />
-          {status.browser !== status.browserActive && <span className="desktop-note">Se aplica cuando reinicies GuilleCode.</span>}
+          {status.browser !== status.browserActive && <span className="desktop-note">Se aplica cuando reinicies Flufy.</span>}
         </div>
         <div className="remote-steps">
           <strong>
             <Icon name="shield" /> Apps que el agente no puede tocar
           </strong>
-          <span>Consolas, administradores de contraseñas y herramientas del sistema vienen bloqueadas. GuilleCode también: así el agente no puede aprobarse sus propios permisos.</span>
+          <span>Consolas, administradores de contraseñas y herramientas del sistema vienen bloqueadas. Flufy también: así el agente no puede aprobarse sus propios permisos.</span>
           <div className="desktop-chips">
             {status.blocked.map((b) => (
               <span key={b} className="desktop-chip">
@@ -230,7 +230,7 @@ export function DesktopEditor() {
             <Icon name="history" /> Qué hizo el agente
           </strong>
           {status.activity.length === 0 ? (
-            <span>Todavía nada en esta sesión de GuilleCode.</span>
+            <span>Todavía nada en esta sesión de Flufy.</span>
           ) : (
             <ul>
               {status.activity.slice(0, 40).map((a, i) => (
@@ -247,7 +247,7 @@ export function DesktopEditor() {
         <div className="remote-note">
           <Icon name="info" />
           <span>
-            Desde el celular, en la tarjeta «Tu PC», podés activarlo, pausarlo, ver la pantalla y detener todo. Mientras el acceso desde el celular está activo, GuilleCode no deja que Windows suspenda la
+            Desde el celular, en la tarjeta «Tu PC», podés activarlo, pausarlo, ver la pantalla y detener todo. Mientras el acceso desde el celular está activo, Flufy no deja que Windows suspenda la
             PC por inactividad.
           </span>
         </div>

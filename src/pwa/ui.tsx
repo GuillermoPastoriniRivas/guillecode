@@ -64,7 +64,7 @@ const OFFLINE_COPY: Record<OfflineReason, { title: string; body: string }> = {
     title: "No llego a tu PC",
     body: "Puede estar apagada o suspendida, o Tailscale está desconectado en este dispositivo.",
   },
-  closed: { title: "GuilleCode está cerrado en tu PC", body: "La PC responde, pero GuilleCode no. Abrilo (o revisá que siga en la bandeja)." },
+  closed: { title: "Flufy está cerrado en tu PC", body: "La PC responde, pero Flufy no. Abrilo (o revisá que siga en la bandeja)." },
 }
 
 export function OfflineBanner({ reason, cachedAt, onRetry }: { reason: OfflineReason; cachedAt: number | null; onRetry: () => void }) {

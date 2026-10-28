@@ -1,8 +1,8 @@
 # Actualizaciones desde el repositorio original
 
-El botón **Actualizaciones** consulta exclusivamente `https://github.com/GuillermoPastoriniRivas/guillecode/releases/latest/download/latest.json` y verifica la firma con la clave pública oficial. No hay un endpoint alternativo. La app rechaza manifiestos firmados con otra clave y las validaciones de release rechazan otro repositorio, claves distintas o endpoints adicionales.
+El botón **Actualizaciones** consulta exclusivamente `https://github.com/fluws-labs/flufy/releases/latest/download/latest.json` y verifica la firma con la clave pública oficial. No hay un endpoint alternativo. La app rechaza manifiestos firmados con otra clave y las validaciones de release rechazan otro repositorio, claves distintas o endpoints adicionales.
 
-Los workflows de release solo corren en `GuillermoPastoriniRivas/guillecode`. Los cambios de esta edición se integran allí mediante PR y las versiones se preparan y firman con los secretos de ese repositorio. Nunca se publican actualizaciones en `Kaitach/guillecode`.
+Los workflows de release solo corren en `fluws-labs/flufy`. Los cambios de esta edición se integran allí mediante PR y las versiones se preparan y firman con los secretos de ese repositorio. Nunca se publican actualizaciones en `Kaitach/guillecode`.
 
 Una actualización reemplaza ejecutables y recursos, no fusiona código. El identificador de la app se mantiene para conservar el perfil, equipos, conversaciones, cuentas y adjuntos. Las instalaciones viejas que todavía consultan el fork deben instalar manualmente esta compilación puente; sus binarios no cambian de canal por sí solos. Las releases anteriores de Kaitach son históricas y esta app ya no las consulta.
 

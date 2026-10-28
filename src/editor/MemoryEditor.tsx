@@ -165,7 +165,7 @@ export function MemoryEditor() {
       <header className="memory-head">
         <div className="memory-title">
           <Icon name="library" />
-          <div><strong>Memoria de GuilleCode</strong><small>{data.slug ? `${data.slug} · guardada solo en esta PC` : "local, sin servicios externos"}</small></div>
+          <div><strong>Memoria de Flufy</strong><small>{data.slug ? `${data.slug} · guardada solo en esta PC` : "local, sin servicios externos"}</small></div>
         </div>
         <button type="button" className="btn" disabled={busy} onClick={() => void loadMemory(root)} title="Recargar"><Icon name="refresh" /></button>
       </header>

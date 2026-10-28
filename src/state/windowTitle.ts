@@ -5,10 +5,10 @@ import { setBaseTitle } from "./attention"
 
 function compute(): string {
   const { project, root } = useProject.getState()
-  if (!project) return "GuilleCode"
+  if (!project) return "Flufy"
   const feature = findFeature(root, useFeatures.getState().list)
   const name = projectName(project)
-  return feature && feature.kind !== "main" ? `${name} · ${featureTitle(feature)} — GuilleCode` : `${name} — GuilleCode`
+  return feature && feature.kind !== "main" ? `${name} · ${featureTitle(feature)} — Flufy` : `${name} — Flufy`
 }
 
 let started = false

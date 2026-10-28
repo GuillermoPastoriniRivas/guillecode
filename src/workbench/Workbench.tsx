@@ -121,7 +121,7 @@ function NoProject() {
   return (
     <div className="no-project">
       <Logo size={80} className="welcome-logo-svg" />
-      <h1>GuilleCode</h1>
+      <h1>Flufy</h1>
       <p>Agente y editor en una sola app. Elegí la carpeta del proyecto para arrancar.</p>
       {error && <div className="view-error">{error}</div>}
       <button type="button" className="btn btn-primary btn-lg" onClick={() => void pickProject()}>

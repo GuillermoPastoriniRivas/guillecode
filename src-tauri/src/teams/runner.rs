@@ -95,7 +95,7 @@ fn notify(app: &AppHandle, r: &Run, done: bool) {
         return;
     }
     let title = format!(
-        "GuilleCode — {} {}",
+        "Flufy — {} {}",
         r.team.name,
         if done {
             "terminó"
@@ -658,7 +658,7 @@ pub fn observed_commands(messages: &Value) -> Vec<Value> {
             let Some(command) = p["state"]["input"]["command"].as_str() else { continue; };
             if command.trim().is_empty() || receipt["command"] != command.trim() || p["state"]["input"]["terminal"].as_str().is_some_and(|supplied| supplied != id) { continue; }
             let index = commands.len();
-            commands.push(json!({"command":evidence::sanitize(command),"exitCode":null,"output":evidence::sanitize(output),"source":"GuilleCode native terminal receipt","callId":p["callID"],"terminalId":id}));
+            commands.push(json!({"command":evidence::sanitize(command),"exitCode":null,"output":evidence::sanitize(output),"source":"Flufy native terminal receipt","callId":p["callID"],"terminalId":id}));
             pending.insert(id.into(), (executed.into(), index));
             index
         } else {
@@ -1046,7 +1046,16 @@ fn worker(app: &AppHandle, run_id: &str, task_id: &str) -> Result<(), String> {
     );
     let current_team=run(app,run_id)?;
     let prompt=format!("{}\nOBJETIVO INICIAL COMPLETO: {}\nCONTRATOS Y ESTADO ACTUAL DE LOS DEMÁS AGENTES (datos): {}\nRevisá puntos de unión, archivos compartidos, rutas y formatos esperados. Si detectás un hueco concreto en esta entrega, informalo al Lead con changes_requested y una corrección comprobable. No declares incompleta una entrega propia solo porque otra tarea independiente todavía trabaja: separá el contrato de la integración final.",prompt,current_team.goal,serde_json::to_string(&current_team.tasks.iter().map(|task|json!({"id":task.id,"objective":task.objective,"agentId":task.assigned_agent_id,"status":task.status,"expectedFiles":task.expected_files,"acceptanceCriteria":task.acceptance_criteria})).collect::<Vec<_>>()).unwrap_or_default());
-    let (mut review,_) = super::support::response::<Review>(app,run_id,&reviewer,&review_session,&support_report,&t.repository,&prompt)?;
+    let review_result = super::support::response::<Review>(app,run_id,&reviewer,&review_session,&support_report,&t.repository,&prompt);
+    let reviewed = review_result.is_ok();
+    let mut review = match review_result {
+        Ok((review, _)) => review,
+        Err(error) => Review {
+            status: ReviewStatus::ReviewError,
+            summary: format!("El Supervisor devolvió un veredicto que no se pudo leer; no se considera aprobación. {}", evidence::sanitize(&error)),
+            criteria_satisfied: false,
+        },
+    };
     if review.summary.trim().is_empty() { review.status=ReviewStatus::ReviewError;review.criteria_satisfied=false;review.summary="El Supervisor devolvió un veredicto vacío; no se considera aprobación".into(); }
     if !checks_passed && !matches!(review.status, ReviewStatus::ReviewError) {
         if t.expected_files.is_empty() && result.checks.is_empty() {
@@ -1060,7 +1069,7 @@ fn worker(app: &AppHandle, run_id: &str, task_id: &str) -> Result<(), String> {
         review = Review {status:ReviewStatus::ChangesRequested,summary:format!("Falta una comprobación satisfactoria observada para cada comando declarado. Corregí el contrato del resultado: checks debe copiar SOLO los comandos de verificación que realmente pasaron, sin descripciones ni diagnósticos fallidos. Comandos observados con código 0: {}. No repitas efectos ya ejecutados; si falta una comprobación necesaria, ejecutala y revisá su resultado. {}",serde_json::to_string(&successful).unwrap_or_default(),review.summary),criteria_satisfied:false};
         }
     }
-    super::support::finish(app,run_id,&support_report,serde_json::to_value(&review).map_err(|e|e.to_string())?)?;
+    if reviewed { super::support::finish(app,run_id,&support_report,serde_json::to_value(&review).map_err(|e|e.to_string())?)?; }
     let approved = matches!(review.status, ReviewStatus::Approved) && review.criteria_satisfied;
     let retry = matches!(review.status, ReviewStatus::ChangesRequested)
         && t.attempts.len() <= r.team.max_retries_per_task;

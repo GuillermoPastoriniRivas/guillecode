@@ -59,7 +59,7 @@ function describeProviders(providers: ConnectedProvider[], entries: AuthEntry[] 
       else if (entry) how = "Credencial guardada"
       else if (p?.source === "env") {
         how = `Variable de entorno ${p.env[0] ?? ""}`.trim()
-        hint = "Para quitarlo, borrá la variable de Windows y reiniciá GuilleCode."
+        hint = "Para quitarlo, borrá la variable de Windows y reiniciá Flufy."
       } else if (p?.source === "config") {
         how = "Configurado en opencode.json"
         hint = "Para quitarlo, sacalo del opencode.json global o del proyecto."
@@ -247,7 +247,7 @@ export function AccountsEditor({ onboarding = false, onContinue }: { onboarding?
       <button type="button" className="btn btn-sm btn-primary" disabled={!!starting || savingKey} onClick={() => void loginChatgpt("browser")}>
         <Icon name={starting === "browser" ? "loading" : "sign-in"} spin={starting === "browser"} /> Iniciar sesión con ChatGPT
       </button>
-      <button type="button" className="btn btn-sm" disabled={!!starting || savingKey} title="Para cuando el navegador de esta PC no puede volver a GuilleCode" onClick={() => void loginChatgpt("device")}>
+      <button type="button" className="btn btn-sm" disabled={!!starting || savingKey} title="Para cuando el navegador de esta PC no puede volver a Flufy" onClick={() => void loginChatgpt("device")}>
         <Icon name={starting === "device" ? "loading" : "key"} spin={starting === "device"} /> Con un código
       </button>
     </div>
@@ -259,7 +259,7 @@ export function AccountsEditor({ onboarding = false, onContinue }: { onboarding?
         <div className="doc-kicker">
           <Icon name="account" /> Modelos del agente
         </div>
-        <h1>{onboarding ? "Bienvenido a GuilleCode" : "Cuentas de IA"}</h1>
+        <h1>{onboarding ? "Bienvenido a Flufy" : "Cuentas de IA"}</h1>
         <div className="doc-meta">
           <span className={`routine-pill ${pill.tone}`}>{pill.text}</span>
         </div>
@@ -272,7 +272,7 @@ export function AccountsEditor({ onboarding = false, onContinue }: { onboarding?
       </header>
       <section className="doc-section remote-section">
         <p className="remote-text">Usá solamente ChatGPT, solamente OpenCode o ambos. Conectar una sola cuenta alcanza; podés agregar la otra cuando quieras.</p>
-        <p className="remote-text">OpenCode viene incluido como motor interno de GuilleCode. Si elegís ChatGPT, no necesitás una cuenta ni una clave de OpenCode.</p>
+        <p className="remote-text">OpenCode viene incluido como motor interno de Flufy. Si elegís ChatGPT, no necesitás una cuenta ni una clave de OpenCode.</p>
         {modelsError && <div className="view-error">No se pudieron verificar tus cuentas: {modelsError}. Usá «Recargar modelos» para reintentar.</div>}
         <p className="remote-text">
           Con tu suscripción de ChatGPT Plus o Pro el agente usa los modelos de OpenAI sin API key y sin pagar por token: consume los límites de uso de tu plan, los mismos que Codex.
@@ -368,7 +368,7 @@ export function AccountsEditor({ onboarding = false, onContinue }: { onboarding?
             {models.map((m) => <option key={modelKey(m)} value={modelKey(m)}>{m.providerName} · {m.name}</option>)}
           </select>
         </div>}
-        {onboarding && <button type="button" className="btn btn-primary btn-lg" disabled={!canContinue || savingKey || !!starting || !!flow} onClick={onContinue}><Icon name="arrow-right" /> Continuar con GuilleCode</button>}
+        {onboarding && <button type="button" className="btn btn-primary btn-lg" disabled={!canContinue || savingKey || !!starting || !!flow} onClick={onContinue}><Icon name="arrow-right" /> Continuar con Flufy</button>}
         {onboarding && !canContinue && !modelsError && <p className="remote-text">Conectá al menos un proveedor para continuar.</p>}
         <ProviderList />
         <div className="remote-note">

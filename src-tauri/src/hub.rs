@@ -25,13 +25,13 @@ fn request_quit(app: &AppHandle) {
 }
 
 pub fn setup(app: &AppHandle) -> tauri::Result<()> {
-    let open = MenuItem::with_id(app, "open", "Abrir GuilleCode", true, None::<&str>)?;
+    let open = MenuItem::with_id(app, "open", "Abrir Flufy", true, None::<&str>)?;
     let new_window = MenuItem::with_id(app, "new-window", "Nueva ventana", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Salir de GuilleCode", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Salir de Flufy", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
     let menu = Menu::with_items(app, &[&open, &new_window, &separator, &quit])?;
     let mut tray = TrayIconBuilder::with_id("main")
-        .tooltip("GuilleCode")
+        .tooltip("Flufy")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
