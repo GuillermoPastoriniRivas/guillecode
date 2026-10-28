@@ -9,6 +9,7 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 
 pub mod browser;
+pub mod internal_browser;
 pub mod context;
 pub mod tasks;
 mod mcp;
@@ -457,7 +458,7 @@ pub fn apply(app: &AppHandle, patch: DesktopPatch) -> DesktopStatus {
     let c = config(app);
     // Turning the control (or the browser) off releases the persistent Node
     // bridge instead of keeping it alive until the app closes.
-    if !c.enabled || c.paused || !c.browser { browser::stop(); }
+    if !c.enabled || c.paused || !c.browser { browser::stop_all(); }
     #[cfg(windows)]
     if gate(app).is_err() {
         stream::release_control();
@@ -526,7 +527,7 @@ pub fn screen_jpeg(_window: Option<&str>, _max_side: u32) -> Result<Vec<u8>, Str
 pub fn shutdown() {
     #[cfg(windows)]
     stream::disconnect_all();
-    browser::stop();
+    browser::stop_all();
 }
 
 #[tauri::command]
@@ -551,7 +552,7 @@ pub async fn desktop_browser_restart(app: AppHandle) -> Result<browser::BridgeSt
         if !config(&app).browser {
             return Err("Activá «Ofrecerle al agente las herramientas del navegador» y reiniciá GuilleCode.".into());
         }
-        browser::stop();
+        browser::stop_all();
         let result = browser::connect();
         record(&app, "browser", "list_pages", "Comprobar la conexión con Chrome", result.is_ok());
         result

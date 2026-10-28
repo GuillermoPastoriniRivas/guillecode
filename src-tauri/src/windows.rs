@@ -238,6 +238,7 @@ pub async fn window_new(app: AppHandle, path: Option<String>) -> Result<String, 
 pub fn windows_list(app: AppHandle) -> Vec<WindowInfo> {
     let mut out = Vec::new();
     for (label, window) in app.webview_windows() {
+        if label.starts_with("internal-") { continue; }
         out.push(WindowInfo {
             project: project_of(&app, &label),
             focused: window.is_focused().unwrap_or(false),

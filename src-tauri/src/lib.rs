@@ -476,6 +476,8 @@ pub fn run() {
             desktop::context::desktop_context_select,
             desktop::context::desktop_context_prepare,
             desktop::browser::browser_workspace,
+            desktop::internal_browser::browser_internal_open,
+            desktop::internal_browser::browser_internal_control,
             desktop::tasks::desktop_task_get,
             desktop::tasks::desktop_task_cancel,
             desktop::tasks::desktop_task_begin,
