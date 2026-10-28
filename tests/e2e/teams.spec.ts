@@ -95,6 +95,16 @@ async function setup(page: Page) {
       if (args.action === "approve") run.status = "qa_approved"
       result = true
     }
+    if (command === "team_runs_stop_conflicts") {
+      result=(args.runIds as string[]).map(id=>{
+        const owner=store.chats.find(c=>c.runs.some(r=>r.id===id))!
+        const run=owner.runs.find(r=>r.id===id)!
+        run.status="cancelled";run.finishedAt=Date.now()
+        for(const task of run.tasks) for(const attempt of task.attempts) attempt.finishedAt=Date.now()
+        for(const request of run.coordination??[]) request.status="cancelled"
+        return {runId:id,title:owner.title,stopped:true,message:"Detenido. Sus cambios y su historial se conservan."}
+      })
+    }
     if (command === "team_image_read") result = imageUrls.get(String(args.imageId)) ?? null
     if (command === "team_evidence_read") result = "Evidencia observada por el test de interfaz"
     if (command === "team_evidence_image") result = { mime: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP4z8AARAwQCgAf7gP9i18U1AAAAABJRU5ErkJggg==", sha256: "fixture" }
@@ -551,6 +561,49 @@ test("la recuperación automática del Lead no pide ayuda ni reintento al usuari
   expect(calls.filter(c=>c.command==="team_runs_control")).toHaveLength(0)
 })
 
+test("un conflicto abre una referencia humana y permite ir a la ejecución exacta aunque esté archivada",async({page})=>{
+  const {store}=await setup(page)
+  await createTeam(page)
+  const target=store.chats[0]
+  const run={id:"held",goal:"Integrar la API del catálogo",team:structuredClone(target.team),skills:[],status:"running" as const,startedAt:Date.now(),finishedAt:null,planSessionId:null,tasks:[],summary:"",error:null,evidenceDir:"",artifacts:[],notified:false}
+  store.chats.push({...structuredClone(target),id:"held-chat",title:"API del catálogo",archived:true,runs:[run,{...structuredClone(run),id:"newer-completed",status:"completed",finishedAt:2}]})
+  target.messages=[{id:"conflict",role:"assistant",text:"La carpeta está ocupada por el equipo «API del catálogo».",createdAt:3,status:"error",runId:null,sessionId:null}]
+  await page.evaluate(async()=>{const {refreshTeams}=await import(/* @vite-ignore */ "/src/state/teams.ts");await refreshTeams()})
+  const dialog=page.getByRole("dialog",{name:"Equipos que ocupan la carpeta",exact:true})
+  await expect(dialog).toBeVisible()
+  await expect(dialog).toContainText("API del catálogo · Archivado")
+  await expect(dialog).toContainText("Integrar la API del catálogo")
+  await dialog.getByRole("button",{name:"Abrir equipo",exact:true}).click()
+  await expect(page.locator(".team-chat-header")).toContainText("API del catálogo")
+  await expect(page.getByLabel("Entrega / ejecución")).toHaveValue("held")
+})
+
+test("detener los equipos que ocupan la carpeta conserva el historial y no alcanza otra carpeta",async({page})=>{
+  const {store,calls}=await setup(page)
+  await createTeam(page)
+  const target=store.chats[0]
+  const startedAt=Date.now()
+  for(const [id,title,root] of [["api","API del catálogo","C:/qa/teams"],["front","Pantalla del catálogo","C:/qa/teams"],["elsewhere","Otro proyecto","D:/unrelated"]]) {
+    const team={...structuredClone(target.team),projectRoot:root,allowedRepositories:[root]}
+    store.chats.push({...structuredClone(target),id,title,team,messages:[{id:`message-${id}`,role:"assistant",text:"Trabajo guardado",createdAt:1,status:"complete",runId:id,sessionId:null}],runs:[{id,goal:`Completar ${title}`,team,skills:[],status:"running",startedAt,finishedAt:null,planSessionId:null,tasks:[],summary:"",error:null,evidenceDir:"",artifacts:[],notified:false}]})
+  }
+  const history=structuredClone(store.chats[1].messages)
+  target.messages=[{id:"conflict",role:"assistant",text:"Hay un equipo o una sesión pendiente en estos repositorios: api",createdAt:3,status:"error",runId:null,sessionId:null}]
+  await page.evaluate(async()=>{const {refreshTeams}=await import(/* @vite-ignore */ "/src/state/teams.ts");await refreshTeams()})
+  const dialog=page.getByRole("dialog",{name:"Equipos que ocupan la carpeta",exact:true})
+  await expect(dialog).toContainText("API del catálogo")
+  await expect(dialog).toContainText("Pantalla del catálogo")
+  await expect(dialog).not.toContainText("Otro proyecto")
+  await dialog.screenshot({path:test.info().outputPath("equipos-ocupan-carpeta.png")})
+  await dialog.getByRole("button",{name:"Detener todos estos equipos (2)",exact:true}).click()
+  await expect(dialog).toContainText("No hay otros equipos ocupando esta carpeta")
+  await expect(dialog).toContainText("Sus cambios y su historial se conservan")
+  expect(calls.find(c=>c.command==="team_runs_stop_conflicts")?.args.runIds).toEqual(["api","front"])
+  expect(store.chats[1].messages).toEqual(history)
+  expect(store.chats[3].runs[0].status).toBe("running")
+  await dialog.screenshot({path:test.info().outputPath("equipos-detenidos-con-historial.png")})
+})
+
 test("imágenes: adjuntar, quitar, enviar y recuperar del historial", async ({ page }) => {
   const { store, calls } = await setup(page)
   await createTeam(page)
@@ -821,4 +874,57 @@ test("un Lead bloqueado explica causa y ayuda sin comprimir el chat, y acepta co
   expect(chat.messages.find(m=>m.id==="busy-lead")!.status).toBe("pending")
   expect(chat.runs).toHaveLength(1)
   expect(calls.filter(c=>c.command==="team_chat_send")).toHaveLength(2)
+})
+
+
+test("chat legible pliega pedidos largos y amplía la conversación conservando el borrador", async ({page})=>{
+  const {store}=await setup(page)
+  await createTeam(page)
+  await page.setViewportSize({width:1100,height:760})
+  const composer=page.getByLabel("Mensaje para el equipo",{exact:true})
+  await composer.fill("Crear frontend y backend. ".repeat(25));await composer.press("Enter")
+  const run=store.chats[0].runs[0]
+  run.status="completed";run.finishedAt=Date.now();run.summary="Frontend y Backend integrados. Pruebas correctas."
+  run.chatSummary={done:"Creé la pantalla y la API.",tested:"Pasaron las pruebas de integración.",pending:"Listo para tu revisión."}
+  await page.evaluate(async()=>{const {refreshTeams}=await import(/* @vite-ignore */ "/src/state/teams.ts");await refreshTeams()})
+  const goal=page.locator(".team-goal-details").last()
+  await expect(goal).not.toHaveAttribute("open","")
+  await expect(page.locator(".lead-brief").last()).toContainText("Creé la pantalla y la API")
+  await composer.fill("Este borrador se conserva")
+  await page.getByRole("button",{name:"Ampliar chat del equipo",exact:true}).click()
+  await expect(page.locator(".team-chat-expanded")).toBeVisible()
+  const width=await page.locator(".team-chat").evaluate(el=>el.getBoundingClientRect().width)
+  expect(width).toBeGreaterThan(900)
+  await expect(composer).toHaveValue("Este borrador se conserva")
+  await expect(page.locator(".lead-details").last()).not.toHaveAttribute("open","")
+  await page.locator(".team-chat-body").evaluate(el=>{el.scrollTop=Math.max(0,el.scrollTop-90)})
+  await page.screenshot({path:test.info().outputPath("equipo-chat-ampliado.png")})
+  await page.getByRole("button",{name:"Restaurar tamaño del chat",exact:true}).click()
+  await expect(page.locator(".team-chat-expanded")).toHaveCount(0)
+  await expect(composer).toHaveValue("Este borrador se conserva")
+  await page.locator(".team-chat-body").evaluate(el=>{el.scrollTop=Math.max(0,el.scrollTop-90)})
+  await page.screenshot({path:test.info().outputPath("equipo-chat-legible.png")})
+})
+
+
+test("Actividad muestra al Solucionador y Supervisor y el cierre compara requisitos originales",async({page})=>{
+  const {store}=await setup(page);await createTeam(page)
+  const composer=page.getByLabel("Mensaje para el equipo",{exact:true});await composer.fill("Crear frontend y backend integrados");await composer.press("Enter")
+  const run=store.chats[0].runs[0]
+  const supervisor={...run.team.members[0],id:"support-supervisor",name:"Supervisor",role:"Supervisor"}
+  const solver={...supervisor,id:"support-solver",name:"Solucionador",role:"Solucionador"}
+  run.team.members.push(supervisor,solver)
+  run.supportReports=[{id:"solve",kind:"investigation",agent:solver,sessionId:"solver-session",repository:run.team.projectRoot,taskId:null,requestId:null,startedAt:Date.now(),finishedAt:Date.now(),status:"completed",summary:"Encontré el contrato que faltaba.",result:{findings:["La API existe y devuelve el saludo."],nextStep:"Reanudar Frontend con el contrato registrado."}},{id:"analysis",kind:"goal_analysis",agent:supervisor,sessionId:"supervisor-session",repository:run.team.projectRoot,taskId:null,requestId:null,startedAt:Date.now(),finishedAt:Date.now(),status:"completed",summary:"Pantalla y API integradas y comprobadas.",result:{criteriaSatisfied:true,criteria:[{requirement:"Frontend y backend integrados",status:"met",evidence:"Prueba HTTP conjunta registrada con código 0."}]}}]
+  run.status="completed";run.finishedAt=Date.now()
+  await page.evaluate(async()=>{const {refreshTeams}=await import(/* @vite-ignore */ "/src/state/teams.ts");await refreshTeams()})
+  await page.getByRole("button",{name:"Actividad",exact:true}).click()
+  await expect(page.locator(".team-support-report")).toHaveCount(2)
+  await expect(page.getByRole("button",{name:"Ver sesión de Solucionador",exact:true})).toBeVisible()
+  await page.getByRole("button",{name:"Resultados / Comportamientos",exact:true}).click()
+  const analysis=page.locator(".team-goal-analysis")
+  await expect(analysis).toContainText("confirmó su cumplimiento")
+  await analysis.locator("summary").click()
+  await expect(analysis).toContainText("Frontend y backend integrados · Comprobado")
+  await expect(analysis).toContainText("código 0")
+  await page.screenshot({path:test.info().outputPath("supervisor-objetivo-y-resultado.png")})
 })

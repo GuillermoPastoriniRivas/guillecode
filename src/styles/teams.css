@@ -151,3 +151,42 @@
 .team-problem-details { margin-top: 12px; }
 .team-problem-details summary { cursor: pointer; color: var(--fg-dim); }
 .team-problem-details[open] summary { margin-bottom: 12px; }
+.team-folder-conflicts-trigger { flex-shrink: 0; white-space: normal; margin: 6px 12px; text-align: left; }
+
+/* Chat spacing remains readable in a narrow panel; long requests fold away. */
+.team-chat-expanded { position: fixed; inset: 62px 24px 34px 64px; z-index: 150; background: var(--bg-side); border: 1px solid var(--border-strong); border-radius: 12px; box-shadow: 0 16px 60px #0008; }
+.team-chat-expanded .team-chat-body { padding: 24px max(24px, calc((100% - 880px) / 2)); }
+.team-header-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.team-chat-header .team-section-title { align-items: flex-start; gap: 12px; }
+.team-chat-header .team-section-title > strong { line-height: 1.6; }
+.team-chat-body { line-height: 1.65; font-size: 14px; padding: 20px 18px; }
+.team-chat-message { margin-bottom: 28px; }
+.team-chat-message > small { display: block; margin-bottom: 10px; }
+.team-lead-message { padding: 16px; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 10px; background: var(--bg-raised); }
+.team-lead-message > strong { display: block; line-height: 1.6; }
+.team-lead-message .lead-brief { gap: 16px; margin: 18px 0; }
+.team-lead-message .lead-brief dt { color: var(--fg-dim); font-size: 12px; margin-bottom: 5px; }
+.team-lead-message .lead-brief dd { line-height: 1.7; }
+.team-goal-details { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin: 10px 0 18px; }
+.team-goal-details > summary { cursor: pointer; line-height: 1.6; }
+.team-goal-details > summary small { display: block; color: var(--fg-dim); margin: 5px 0 0 14px; }
+.team-goal-details > p { white-space: pre-wrap; margin-top: 16px; }
+.team-problem-card { padding: 16px; }
+.team-problem-brief p + p { margin-top: 12px; }
+.team-chat .team-problem-actions { gap: 10px; margin-top: 16px; }
+.team-chat-nav button { font-size: 12px; padding: 12px 8px; }
+@media (max-width: 640px) { .team-chat-expanded { inset: 38px 8px 26px; } }
+
+@media (max-height: 720px) {
+  .team-chat-header { padding-top: 10px; padding-bottom: 8px; }
+  .team-chat-nav button { padding-top: 9px; padding-bottom: 9px; }
+  .team-composer { padding-top: 10px; padding-bottom: 10px; gap: 6px; }
+}
+
+.team-composer-actions { flex-wrap: wrap; }
+.team-composer-actions > button[type=submit] { margin-left: auto; }
+
+.team-goal-criteria { margin: 16px 0; display: grid; gap: 16px; }
+.team-goal-criteria dt { font-weight: 600; margin-bottom: 6px; }
+.team-goal-criteria dd { margin: 0; color: var(--fg-dim); line-height: 1.6; overflow-wrap: anywhere; }
+.team-support-report > * + *, .team-goal-analysis > * + * { margin-top: 12px; }

@@ -3,6 +3,7 @@ mod attachments;
 mod autonomy;
 mod capabilities;
 mod coordination;
+mod conflicts;
 mod conversation;
 pub mod domain;
 mod errors;
@@ -16,6 +17,7 @@ mod retention;
 mod runner;
 mod skills;
 mod staffing;
+mod support;
 
 use domain::*;
 use rusqlite::{params, Connection};
@@ -84,6 +86,7 @@ pub fn read(app: &AppHandle) -> Result<Store, String> {
 fn owns_session(c: &Chat, session: &str) -> bool {
     !session.is_empty() && (c.messages.iter().any(|m| m.session_id.as_deref() == Some(session)) || c.runs.iter().any(|r| {
                     r.plan_session_id.as_deref() == Some(session)
+                        || r.support_reports.iter().any(|s|s.session_id==session)
                         || r.closing_sessions.iter().any(|id| id == session)
                         || r.coordination
                             .iter()
@@ -106,6 +109,11 @@ pub(crate) fn browser_session(app: &AppHandle, session: &str) -> String {
     app.try_state::<TeamsState>().and_then(|state| state.store.lock().ok().and_then(|s|
         browser_owner(&s, session)))
         .unwrap_or_else(|| session.to_string())
+}
+
+pub(crate) fn browser_can_recover(app: &AppHandle, session: &str) -> bool {
+    app.try_state::<TeamsState>().and_then(|state| state.store.lock().ok().map(|s|
+        s.chats.iter().any(|c| c.messages.iter().any(|m| m.session_id.as_deref()==Some(session)) || c.runs.iter().flat_map(|r| &r.tasks).flat_map(|t| &t.attempts).any(|a| a.session_id.as_deref()==Some(session))))).unwrap_or(false)
 }
 
 fn browser_owner(store: &Store, session: &str) -> Option<String> {
@@ -482,16 +490,9 @@ fn start_run(app: AppHandle, chat_id: String, goal: String, images: Vec<ChatImag
             return Err("Pedido del Lead detenido o ya finalizado; no se inició una ejecución nueva".into());
         }
         validate_team(&c.team, &c.skills)?;
-        for r in s.chats.iter().flat_map(|c| &c.runs) {
-            if (active(&r.status) || runner::unsettled(r))
-                && (r
-                    .team
-                    .allowed_repositories
-                    .iter()
-                    .any(|a| c.team.allowed_repositories.iter().any(|b| overlaps(a, b))))
-            {
-                return Err(format!("Hay un equipo o una sesión pendiente en estos repositorios: {}. Reanudá o cancelá esa ejecución primero", r.id));
-            }
+        if let Some((owner,r)) = conflicts::first(s,c) {
+            let task = r.tasks.iter().find(|t| t.status != "completed").map(|t|t.title.as_str()).unwrap_or("Organizar y revisar el trabajo");
+            return Err(format!("La carpeta está ocupada por el equipo «{}» ({task}). Abrí «Ver equipos que ocupan la carpeta» para verlo o detenerlo; su trabajo se conserva.",owner.title));
         }
         let c = s
             .chats
@@ -509,6 +510,7 @@ fn start_run(app: AppHandle, chat_id: String, goal: String, images: Vec<ChatImag
             })
             .unwrap_or_default();
         c.runs.push(Run {
+            support_reports: vec![],
             images: images.clone(),
             guidance: vec![],
             chat_summary: None,
@@ -554,6 +556,11 @@ pub async fn team_runs_control(
         .map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+pub async fn team_runs_stop_conflicts(app: AppHandle, chat_id: String, run_ids: Vec<String>) -> Result<Vec<conflicts::StopResult>, String> {
+    tauri::async_runtime::spawn_blocking(move || conflicts::stop(&app,&chat_id,run_ids)).await.map_err(|e|e.to_string())?
+}
+
 fn control(app: &AppHandle, id: &str, action: &str) -> Result<(), String> {
     // Two retries must never launch two schedulers for the same run. Keep control
     // reconciliation serialized independently from short persistence checkpoints.
@@ -567,17 +574,15 @@ fn control(app: &AppHandle, id: &str, action: &str) -> Result<(), String> {
                 Ok(())
             })?;
         }
-        "cancel" if active(&r.status) || r.status == "blocked" => {
-            if r.status == "blocked" {
+        "cancel" if active(&r.status) || r.status == "blocked" || runner::unsettled(&r) => {
+            let was_active = active(&r.status);
+            let completed = matches!(r.status.as_str(),"completed"|"awaiting_manual_qa"|"qa_approved");
+            if !was_active {
                 runner::reconcile(app, &r, true)?;
             }
             update_run(app, id, |r| {
-                r.status = if r.status == "blocked" {
-                    "cancelled"
-                } else {
-                    "cancelling"
-                }
-                .into();
+                if was_active { r.status="cancelling".into(); }
+                else if !completed { r.status="cancelled".into(); }
                 if r.status == "cancelled" {
                     r.finished_at = Some(now());
                     for task in &mut r.tasks {
@@ -586,10 +591,10 @@ fn control(app: &AppHandle, id: &str, action: &str) -> Result<(), String> {
                         }
                     }
                 }
-                r.error = Some(
+                if !completed { r.error = Some(
                     "Cancelación solicitada. Los cambios ya aplicados se conservan; revisá los archivos y la evidencia."
                         .into(),
-                );
+                ); }
                 Ok(())
             })?;
         }

@@ -60,3 +60,10 @@ test("mensajes de equipos explican la causa y el siguiente paso sin mostrar erro
   assert.match(readableTeamError('{"error":{"code":"ECONNREFUSED","responseHeaders":{"authorization":"private"}}}'), /conexión|proveedor/i)
   assert.doesNotMatch(readableTeamError('{"error":{"code":"ECONNREFUSED","responseHeaders":{"authorization":"private"}}}'), /ECONNREFUSED|authorization|private/)
 })
+
+test("file edit denial and closed browser explain the actual access instead of blaming the AI account", () => {
+  assert.match(readableTeamError("permission denied when edit frontend/app.js"), /editar un archivo.*Lead.*asignación de escritura/)
+  assert.doesNotMatch(readableTeamError("permission denied when edit frontend/app.js"), /cuenta|modelo/)
+  assert.match(readableTeamError("La ventana del equipo se cerró"), /ventana nueva.*observarla/)
+  assert.match(readableTeamError("El control del navegador está pausado"), /apagado o pausado.*Control de la PC/)
+})

@@ -213,6 +213,8 @@ pub struct Artifact {
 #[serde(rename_all = "camelCase")]
 pub struct Run {
     #[serde(default)]
+    pub support_reports: Vec<SupportReport>,
+    #[serde(default)]
     pub images: Vec<ChatImage>,
     #[serde(default)]
     pub guidance: Vec<String>,
@@ -251,6 +253,24 @@ pub struct Run {
     pub session_usage: std::collections::BTreeMap<String, serde_json::Value>,
     #[serde(default)]
     pub evidence_expired_at: Option<i64>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+#[serde(rename_all="camelCase")]
+pub struct SupportReport {
+    pub id: String,
+    pub kind: String,
+    pub agent: Employee,
+    pub session_id: String,
+    pub repository: String,
+    pub task_id: Option<String>,
+    pub request_id: Option<String>,
+    pub started_at: i64,
+    pub finished_at: Option<i64>,
+    pub status: String,
+    pub summary: String,
+    #[serde(default)]
+    pub result: serde_json::Value,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]

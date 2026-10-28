@@ -32,8 +32,8 @@ try {
   const inventory = await ws.inventory(context)
   assert.ok(new Set(inventory.map(p => p.windowId)).size >= 2, `Need two distinct Chrome windows: ${JSON.stringify(inventory.map(({ id, windowId }) => ({ id, windowId })))}`)
   const origin = inventory[0]
-  await ws.scope(context, { session: 'test', action: 'assign', pageId: origin.id })
-  const scoped = await ws.scope(context, { session: 'test' })
+  await ws.scope(context, { session: 'team:recovery', action: 'assign', pageId: origin.id })
+  const scoped = await ws.scope(context, { session: 'team:recovery' })
   const personal = inventory.find(p => p.windowId !== origin.windowId)
   await personal.page.pptrPage.bringToFront() // agent window is not last active
   const created = await scoped.newPage(true)
@@ -42,5 +42,19 @@ try {
   assert.equal(createdEntry.windowId, origin.windowId, 'New tab must stay in assigned window, not last active')
   assert.equal(scoped.getSelectedMcpPage(), created)
   assert.throws(() => scoped.getPageById(personal.id), /no pertenece/)
-  console.log('Actual CDP newPage across two isolated browser windows: PASS')
+  // Closed team window: recovery creates exactly one new empty window, never
+  // claims a personal window, and simultaneous agents share the recovery.
+  for (const entry of after.filter(p=>p.windowId===origin.windowId)) await entry.page.pptrPage.close()
+  const personalUrl=personal.page.pptrPage.url()
+  const recovered=await Promise.all([1,2,3].map(actor=>ws.scope(context,{session:'team:recovery',actor:String(actor),autoRecover:true})))
+  const recoveredPages=recovered[0].getPages()
+  assert.equal(recoveredPages.length,1,'Concurrent recovery must create one new tab/window')
+  assert.equal(recoveredPages[0].pptrPage.url(),'about:blank','No previous action or form is replayed')
+  assert.equal(personal.page.pptrPage.url(),personalUrl,'Personal tab is unchanged')
+  assert.throws(()=>recovered[0].getPageById(personal.id),/no pertenece/)
+  const recoveredInventory=await ws.inventory(context)
+  assert.notEqual(recoveredInventory.find(p=>p.page===recoveredPages[0]).windowId,personal.windowId)
+  const restarted=new Workspaces(pathToFileURL(join(dir,'workspaces.json')))
+  assert.equal((await restarted.scope(context,{session:'team:recovery'})).getPages()[0],recoveredPages[0])
+  console.log('Actual CDP background tabs, closed-window recovery, concurrent recovery, personal-tab isolation and restart: PASS')
 } finally { await browser.close(); await rm(dir, { recursive: true, force: true }) }

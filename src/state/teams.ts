@@ -12,8 +12,8 @@ import type { Skill, Team, TeamChatRecord, TeamStore } from "../team/types"
 import { indexTeamSessions } from "../team/session-index"
 import { readableTeamError } from "../lib/provider-error"
 
-type State = TeamStore & { loaded: boolean; error: string | null; activeChatId: string | null; openChatIds: string[] }
-export const useTeams = create<State>(() => ({ schemaVersion: 1, teams: [], skills: [], chats: [], loaded: false, error: null, activeChatId: null, openChatIds: loadJson<string[]>("team.tabs", []) }))
+type State = TeamStore & { loaded: boolean; error: string | null; activeChatId: string | null; openChatIds: string[]; selectedRunIds: Record<string,string|null> }
+export const useTeams = create<State>(() => ({ schemaVersion: 1, teams: [], skills: [], chats: [], loaded: false, error: null, activeChatId: null, openChatIds: loadJson<string[]>("team.tabs", []), selectedRunIds:{} }))
 
 export async function refreshTeams() {
   if (!isTauri) return
@@ -49,8 +49,8 @@ export async function teamCall<T>(command: string, args?: Record<string, unknown
 }
 
 export function openTeam(id = `new:${crypto.randomUUID()}`) { openEditor({ kind: "team", id }) }
-export function selectTeamChat(id: string) {
-  useTeams.setState((s) => ({ activeChatId: id, openChatIds: [...new Set([...s.openChatIds, id])] }))
+export function selectTeamChat(id: string, runId?: string) {
+  useTeams.setState((s) => ({ activeChatId: id, openChatIds: [...new Set([...s.openChatIds, id])],...(runId ? {selectedRunIds:{...s.selectedRunIds,[id]:runId}} : {}) }))
   saveJson("team.tabs", useTeams.getState().openChatIds)
   useLayout.getState().toggleAgent(true)
 }

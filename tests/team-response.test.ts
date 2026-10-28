@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { compactTeamReply, decodeTeamResponse, readableTeamSummary } from "../src/lib/team-response.ts"
+import { compactTeamReply, decodeTeamResponse, readableTeamSummary, firstTeamSentence } from "../src/lib/team-response.ts"
 
 test("convierte el cierre del Lead sin perder reservas ni aprobar criterios falsos", () => {
   const result = decodeTeamResponse(JSON.stringify({ status: "approved", summary: "La integración HTTP pasó. La prueba visual sigue pendiente.", criteriaSatisfied: true, tasks: [] }))!
@@ -41,4 +41,15 @@ test("el resumen breve conserva pendientes y no inventa pruebas en el historial 
   const capped = compactTeamReply({ done: "dato ".repeat(300), tested: null }, brief)
   assert.ok(capped.done.length <= 200)
   assert.equal(capped.tested, brief.tested)
+})
+
+test("a generic completion opener retains the concrete result sentence",()=>{
+  assert.equal(firstTeamSentence("Terminamos. Implementé la pantalla y la API. Detalles largos."),"Terminamos. Implementé la pantalla y la API.")
+})
+
+test("informes de Solucionador y Supervisor se leen como chat y no confirman una entrega por sí solos",()=>{
+  const solver=decodeTeamResponse(JSON.stringify({summary:"Encontré el contrato pendiente.",findings:["La API expone el saludo."],nextStep:"Reanudar Frontend con el contrato."}))!
+  assert.equal(solver.title,"Informe del Solucionador");assert.match(solver.chatSummary.pending,/Propuesta al Lead/)
+  const analysis=decodeTeamResponse(JSON.stringify({summary:"Falta integrar",criteriaSatisfied:true,criteria:[{requirement:"Integración",status:"unverified",evidence:"Sin ejecución observada"}]}))!
+  assert.equal(analysis.title,"Análisis del Supervisor");assert.match(analysis.chatSummary.pending,/faltantes o sin verificar/)
 })

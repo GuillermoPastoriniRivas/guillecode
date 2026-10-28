@@ -345,7 +345,7 @@ pub fn deliver(run: &mut Run) -> Result<(), String> {
         "Team Lead + observaciones nativas",
         &summary,
     )?;
-    let result = json!({ "runId":run.id, "teamId":run.team.id, "goal":run.goal, "leadStatus":"completed", "manualQaStatus":"pending", "finishedAt":now(), "summary":run.summary, "tasks":{"total":run.tasks.len(),"completed":run.tasks.iter().filter(|t| t.status == "completed").count()},"checks":checks,"limitations":limitations,"observations":run.observations,"artifacts":run.artifacts,"usage":run.session_usage });
+    let result = json!({ "runId":run.id, "teamId":run.team.id, "goal":run.goal, "leadStatus":"completed", "manualQaStatus":"pending", "finishedAt":now(), "summary":run.summary, "tasks":{"total":run.tasks.len(),"completed":run.tasks.iter().filter(|t| t.status == "completed").count()},"checks":checks,"limitations":limitations,"observations":run.observations,"artifacts":run.artifacts,"usage":run.session_usage,"supportReports":run.support_reports });
     write(
         run,
         "resultado.json",

@@ -511,6 +511,8 @@ fn circular_team_scenario(handle: &tauri::AppHandle, repo: &str) {
         assert!(!backend.attempts[1].review.as_ref().unwrap().criteria_satisfied);
         assert!(frontend.attempts[0].finished_at.unwrap() <= backend.attempts[2].started_at, "Independent Frontend must finish while Backend is being repaired");
         assert!(result.coordination.iter().all(|c| c.kind == "technical_blocker"));
+        assert!(result.support_reports.iter().any(|r|r.kind=="investigation" && r.status=="completed" && r.agent.role=="Solucionador"));
+        assert!(result.support_reports.iter().any(|r|r.kind=="task_review" && r.agent.role=="Supervisor"));
         assert!(result.configuration_changes.iter().any(|c| c["kind"] == "automaticCloseoutRepair"), "A technical closeout cannot be delegated to the user");
         assert!(result.configuration_changes.iter().any(|c| c["kind"] == "automaticCoordinatorRecovery"), "The Lead must recover its own exhausted corrections without blocking the team");
     } else { assert!(result.tasks.iter().all(|t| t.attempts.len() == 1)); }
@@ -587,6 +589,8 @@ fn automatic_team_scenario(handle: &tauri::AppHandle, repo: &str) {
     let deadline = Instant::now() + Duration::from_secs(150);
     let result = loop {
         for permission in client.get("/permission").unwrap().as_array().into_iter().flatten() {
+            assert_ne!(permission["permission"],"edit","Owned source files must not ask the user for editing permission");
+            assert_ne!(permission["permission"],"external_directory","Assigned project files must remain in scope");
             client.post(&format!("/permission/{}/reply", permission["id"].as_str().unwrap()), serde_json::json!({"reply":"once"})).unwrap();
         }
         let r = run(handle, &id).unwrap();
@@ -595,18 +599,30 @@ fn automatic_team_scenario(handle: &tauri::AppHandle, repo: &str) {
         std::thread::sleep(Duration::from_millis(100));
     };
     assert_eq!(result.status, "completed", "{:?}", result);
-    assert_eq!(result.team.members.len(), 4);
+    assert_eq!(result.team.members.len(), 5);
+    assert!(result.team.members.iter().any(|m|m.role=="Supervisor"));
     assert_eq!(result.team.members.iter().filter(|m| m.role == "Backend").count(), 2);
-    assert_eq!(result.tasks.len(), 3);
+    let supervision=std::env::var("GUILLE_TEAM_TEST_SUPERVISION").as_deref()==Ok("1");
+    assert_eq!(result.tasks.len(), if supervision {4} else {3});
+    if supervision {
+        let reports:Vec<_>=result.support_reports.iter().filter(|s|s.kind=="goal_analysis").collect();
+        assert_eq!(reports.len(),2);assert_eq!(reports[0].result["criteriaSatisfied"],false);assert_eq!(reports[1].result["criteriaSatisfied"],true);
+        assert!(result.tasks.iter().any(|t|t.id=="integration" && t.status=="completed"));
+    }
     assert!(result.tasks.iter().all(|t| t.status == "completed" && t.attempts.len() == 1));
-    let attempts: Vec<_> = result.tasks.iter().map(|t| &t.attempts[0]).collect();
+    let attempts: Vec<_> = result.tasks.iter().filter(|t|t.id!="integration").map(|t| &t.attempts[0]).collect();
     assert!(attempts.iter().map(|a| a.started_at).max().unwrap() < attempts.iter().map(|a| a.finished_at.unwrap()).min().unwrap());
     assert!(attempts.iter().all(|a| !a.commands.is_empty()));
     assert_eq!(result.chat_summary.as_ref().unwrap().tested, "Las tres comprobaciones pasaron.");
     let persisted = read_db(&db(handle).unwrap()).unwrap();
     assert_eq!(persisted.chats[0].team.members.len(), 1, "chat seed stays automatic");
-    assert_eq!(persisted.chats[0].runs[0].team.members.len(), 4);
+    assert_eq!(persisted.chats[0].runs[0].team.members.len(), 5);
     assert_eq!(persisted.chats[0].runs[0].chat_summary.as_ref().unwrap().done, "Creé dos servicios y la pantalla.");
+    for report in &result.support_reports {
+        assert!(is_team_session(handle,&report.session_id), "Support sessions must remain owned by this team");
+        let history=client.get_resilient(&format!("/session/{}/message",report.session_id)).unwrap();
+        assert!(!history.as_array().unwrap().iter().flat_map(|m|m["parts"].as_array().into_iter().flatten()).any(|p|["write","edit","apply_patch","bash","desktop_execute","browser_navigate_page"].contains(&p["tool"].as_str().unwrap_or(""))), "Support agents must not write or bypass worker permissions");
+    }
     assert!(persisted.teams.is_empty());
     assert_eq!(persisted.chats[0].messages[0].images.len(), 1);
     assert_eq!(persisted.chats[0].runs[0].images.len(), 1);
@@ -618,6 +634,7 @@ fn automatic_team_scenario(handle: &tauri::AppHandle, repo: &str) {
     std::fs::write(&image_path, b"changed image").unwrap();
     assert!(team_image_read(handle.clone(), persisted.chats[0].runs[0].images[0].id.clone()).is_err());
     std::fs::write(&image_path, original_image).unwrap();
+    assert!(result.configuration_changes.iter().any(|c| c["kind"]=="automaticPlanFormatRepair"), "Wrapped provider plan must be repaired before dispatching workers");
     assert_eq!(persisted.chats[0].runs.len(), 1, "conversation must not duplicate runs");
     assert_eq!(persisted.chats[0].messages.len(), 10);
     let mut interrupted = persisted.clone();
@@ -626,6 +643,21 @@ fn automatic_team_scenario(handle: &tauri::AppHandle, repo: &str) {
     assert_eq!(interrupted.chats[0].messages[9].status, "interrupted");
     assert!(interrupted.chats[0].messages[9].text.contains("no se repitió"));
     assert_eq!(interrupted.chats[0].runs.len(), 1);
+    // A terminal run with an orphaned recorded session still owns the folder.
+    // The bulk-stop action must settle it using the real engine, preserving
+    // the completed delivery and its observed verification commands.
+    update_run(handle,&result.id,|run| {
+        run.tasks[0].attempts.last_mut().unwrap().finished_at=None;
+        Ok(())
+    }).unwrap();
+    assert!(conflicts::occupies(&run(handle,&result.id).unwrap()));
+    let stopped=conflicts::stop(handle,&chat.id,vec![result.id.clone()]).unwrap();
+    assert!(serde_json::to_value(stopped).unwrap()[0]["stopped"].as_bool().unwrap());
+    let settled=run(handle,&result.id).unwrap();
+    assert!(!conflicts::occupies(&settled));
+    assert_eq!(settled.status,"completed");
+    assert_eq!(settled.artifacts.len(),result.artifacts.len());
+    assert_eq!(settled.tasks[0].attempts[0].commands,result.tasks[0].attempts[0].commands);
     if std::env::var("GUILLE_TEAM_TEST_TRANSPORT").as_deref() == Ok("1") {
         // A real blocked task must not prevent a later independent task from
         // getting a worker when there is only one execution slot.

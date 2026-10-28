@@ -16,6 +16,8 @@ export function TeamResponse({ text, live }: { text: string; live: boolean }) {
     <strong>{live ? "Respuesta del equipo en preparación" : result.title}</strong>
     <LeadReply brief={result.chatSummary} fallback={result.chatSummary}>
     <Markdown text={result.summary} />
+    {result.findings?.length ? <ul>{result.findings.map((fact,i)=><li key={i}>{fact}</li>)}</ul> : null}
+    {result.criteria?.length ? <dl className="team-goal-criteria">{result.criteria.map((c,i)=><div key={i}><dt>{c.requirement} · {c.status==="met"?"Comprobado":c.status==="missing"?"Falta implementar":"Falta verificar"}</dt><dd>{c.evidence}</dd></div>)}</dl> : null}
     {result.tasks.length > 0 && <><strong>Tareas del equipo</strong><ul>{result.tasks.map((task, i) => <li key={i}><strong>{task.title}</strong><Markdown text={task.objective} /></li>)}</ul></>}
     {result.checks.length > 0 && <details><summary>Comprobaciones informadas por el agente</summary><p>La revisión del Lead y el estado del equipo determinan si la entrega está aprobada.</p><ul>{result.checks.map((check, i) => <li key={i}><code>{check}</code></li>)}</ul></details>}
     {result.request && <><strong>Pedido al Lead</strong><Markdown text={result.request} /></>}

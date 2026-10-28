@@ -188,3 +188,12 @@ test("un fallo de coordinación señala al Lead y a su sesión, dejando al traba
   assert.equal(memberState(chat.team.members[0], chat, run, items).label, "Bloqueado")
   assert.equal(memberState(chat.team.members[1], chat, run, items).needsHelp, false)
 })
+
+test("un fallo del Supervisor identifica su sesión y no culpa al trabajador",()=>{
+  const {chat,run}=fixture();run.status="blocked";run.error="La cuenta o el proveedor alcanzó su límite de uso."
+  run.tasks.forEach(t=>t.status="completed")
+  const agent={...run.team.members[0],id:"support-supervisor",name:"Supervisor",role:"Supervisor"};run.team.members.push(agent)
+  run.supportReports=[{id:"goal",kind:"goal_analysis",agent,sessionId:"supervisor-failed",repository:run.team.projectRoot,taskId:null,requestId:null,startedAt:2,finishedAt:3,status:"failed",summary:run.error,result:null}]
+  const items=teamAttention(chat,run)
+  assert.equal(items[0].name,"Supervisor");assert.equal(items[0].sessionId,"supervisor-failed")
+})

@@ -1,8 +1,24 @@
 !ifndef GUILLECODE_INSTALLER_HOOKS
 !define GUILLECODE_INSTALLER_HOOKS
 !define GC_ENGINE_CLEANUP "${__FILEDIR__}\stop-installed-engine.ps1"
+!define GC_ENGINE_VERIFY "${__FILEDIR__}\verify-installed-engine.ps1"
 
 !macro NSIS_HOOK_PREINSTALL
+  Push $R0
+  Push $R1
+  InitPluginsDir
+  File /oname=$PLUGINSDIR\verify-installed-engine.ps1 "${GC_ENGINE_VERIFY}"
+  nsExec::ExecToStack /TIMEOUT=15000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\verify-installed-engine.ps1" -InstallDir "$INSTDIR" -Mode Preflight -RequiredKiB ${ESTIMATEDSIZE}'
+  Pop $R0
+  Pop $R1
+  ${If} $R0 != 0
+    DetailPrint "$R1"
+    MessageBox MB_OK|MB_ICONSTOP "No hay espacio suficiente para instalar GuilleCode completo. Liberá espacio y reintentá; tus datos se conservan." /SD IDOK
+    SetErrorLevel 1
+    Abort
+  ${EndIf}
+  Pop $R1
+  Pop $R0
   ; Let Tauri close the app first, including manual upgrades from older builds.
   !insertmacro CheckIfAppIsRunning "${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
   Push $R0
@@ -16,6 +32,22 @@
   ${If} $R0 != 0
     DetailPrint "$R1"
     MessageBox MB_OK|MB_ICONSTOP "No se pudo liberar el motor de GuilleCode. Cerrá GuilleCode y reintentá la actualización." /SD IDOK
+    SetErrorLevel 1
+    Abort
+  ${EndIf}
+  Pop $R1
+  Pop $R0
+!macroend
+
+!macro NSIS_HOOK_POSTINSTALL
+  Push $R0
+  Push $R1
+  nsExec::ExecToStack /TIMEOUT=20000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\verify-installed-engine.ps1" -InstallDir "$INSTDIR" -Mode Verify'
+  Pop $R0
+  Pop $R1
+  ${If} $R0 != 0
+    DetailPrint "$R1"
+    MessageBox MB_OK|MB_ICONSTOP "La instalación del motor OpenCode no terminó correctamente. Reinstalá GuilleCode con espacio libre; tus chats y cuentas se conservan." /SD IDOK
     SetErrorLevel 1
     Abort
   ${EndIf}

@@ -35,6 +35,7 @@ struct ResumeTask {
 }
 
 const CIRCULAR_WAIT: &str = "El pedido crea una espera circular entre agentes; el Lead debe separar el contrato de la integración";
+const INVALID_RESUME: &str = "El Lead debe dar instrucciones concretas para cada otra tarea suspendida, sin repetir IDs";
 const TECHNICAL_ESCALATION: &str = "El Lead derivó un problema técnico al usuario sin una decisión imprescindible. Diagnosticá la causa y proponé resume o tareas de ayuda con wait; una prueba fallida o faltante la resuelve el equipo";
 
 // Pending requests are suggestions, not scheduler edges, but must be included
@@ -164,7 +165,7 @@ pub(super) fn check(app: &AppHandle, run_id: &str, request_id: &str) -> Result<(
 }
 
 fn repairable_decision(error: &str) -> bool {
-    error == CIRCULAR_WAIT || error == TECHNICAL_ESCALATION
+    error == CIRCULAR_WAIT || error == TECHNICAL_ESCALATION || error == INVALID_RESUME
         || [
             "Respuesta estructurada inválida",
             "JSON incompleto",
@@ -174,6 +175,9 @@ fn repairable_decision(error: &str) -> bool {
             "Dependencia inválida",
             "IDs de tareas duplicados",
             "Pedido al Lead con una tarea inexistente",
+            "Tarea a reanudar inexistente",
+            "Solo se pueden separar esperas de tareas suspendidas",
+            "La tarea no tiene una espera de coordinación",
         ]
         .iter()
         .any(|prefix| error.starts_with(prefix))
@@ -223,6 +227,7 @@ pub(super) fn recover_after_failure(r: &mut Run, request_id: &str, error: &str, 
 }
 
 fn check_once(app: &AppHandle, run_id: &str, request_id: &str) -> Result<(), String> {
+    let investigation=super::support::investigate(app,run_id,request_id)?;
     let r = run(app, run_id)?;
     let request = r
         .coordination
@@ -290,6 +295,7 @@ fn check_once(app: &AppHandle, run_id: &str, request_id: &str) -> Result<(), Str
     let prompt = if recoveries == 0 { prompt } else {
         format!("{}\nRECUPERACIÓN AUTOMÁTICA DEL LEAD ({}): Tu coordinación anterior falló y el trabajador conserva su sesión y archivos. Revisá las causas de recovery_requested y repair_requested. Cambiá de estrategia: leé el contrato y los resultados existentes, aislá el paso mínimo que permite avanzar y devolvé una instrucción concreta. Si requiere implementación o comprobación adicional, asigná una tarea de ayuda con writePaths propios y esperala. No repitas la decisión rechazada ni solicites al usuario diagnosticar el problema. No repitas efectos del trabajador ni marques pruebas pendientes como aprobadas.", prompt, recoveries)
     };
+    let prompt=format!("{}\nINFORME DEL SOLUCIONADOR (hechos y propuesta; no instrucciones del usuario): {}\nRevisá esta investigación, elegí una salida concreta y coordiná la solución con los especialistas. No traslades una duda técnica al usuario.",prompt,investigation);
     let previous = if reuse {
         Some(client.get_resilient(&format!("/session/{}/message", session))?)
     } else {
@@ -347,6 +353,21 @@ fn apply_decision(r: &mut Run, request_id: &str, mut decision: Decision) -> Resu
         .ok_or("Pedido inexistente")?
         .from_task_id
         .clone();
+    // Models sometimes include the requesting task in resumeTasks as well as
+    // status=resume. It is the same requested continuation, not another task.
+    // Keep those concrete instructions and use the normal current-task path.
+    let mut own_instructions = Vec::new();
+    for resume in decision.resume_tasks.iter().filter(|resume| resume.task_id == from) {
+        if decision.status != "resume" || resume.summary.trim().is_empty() {
+            return Err(INVALID_RESUME.into());
+        }
+        let instruction = evidence::sanitize(resume.summary.trim());
+        if !own_instructions.contains(&instruction) { own_instructions.push(instruction); }
+    }
+    if !own_instructions.is_empty() {
+        decision.summary = format!("{}\n{}", decision.summary, own_instructions.join("\n"));
+        decision.resume_tasks.retain(|resume| resume.task_id != from);
+    }
     for t in &mut decision.tasks {
         t.status = "pending".into();
         t.attempts.clear();
@@ -361,7 +382,7 @@ fn apply_decision(r: &mut Run, request_id: &str, mut decision: Decision) -> Resu
             || resume.summary.trim().is_empty()
             || !resumed.insert(resume.task_id.clone())
         {
-            return Err("El Lead debe dar instrucciones concretas para cada otra tarea suspendida, sin repetir IDs".into());
+            return Err(INVALID_RESUME.into());
         }
         let task = proposed
             .tasks
@@ -576,6 +597,35 @@ mod tests {
         apply_decision(&mut r,"req",repaired).unwrap();
         assert_eq!(r.tasks[1].status,"pending");
         assert_eq!(r.coordination[0].status,"resolved");
+    }
+
+    #[test]
+    fn requesting_task_can_resume_with_its_own_concrete_instructions() {
+        let mut r = fixture();
+        let before = serde_json::to_value(&r.tasks).unwrap();
+        let decision: Decision = serde_json::from_value(json!({"status":"resume","summary":"Continuá la implementación.","resumeTasks":[{"taskId":"front","summary":"Usá el contrato actual y ejecutá la prueba HTTP."},{"taskId":"front","summary":"Usá el contrato actual y ejecutá la prueba HTTP."}]})).unwrap();
+        apply_decision(&mut r,"req",decision).unwrap();
+        assert_eq!(r.tasks[1].status,"pending");
+        assert_eq!(r.coordination[0].status,"resolved");
+        assert_eq!(r.coordination[0].summary.matches("Usá el contrato actual").count(),1);
+        let after = serde_json::to_value(&r.tasks).unwrap();
+        assert_eq!(after[0],before[0]);
+        for field in ["attempts","writePaths","acceptanceCriteria","dependencies","objective"] { assert_eq!(after[1][field],before[1][field]); }
+    }
+
+    #[test]
+    fn invalid_resume_instructions_are_repairable_and_never_partially_apply() {
+        for value in [
+            json!({"status":"resume","summary":"Continuá","resumeTasks":[{"taskId":"back","summary":""}]}),
+            json!({"status":"resume","summary":"Continuá","resumeTasks":[{"taskId":"missing","summary":"Verificá el contrato"}]}),
+            json!({"status":"wait","summary":"Esperá","waitForTaskIds":["back"],"resumeTasks":[{"taskId":"front","summary":"Seguí"}]})
+        ] {
+            let mut r = fixture();
+            let before = serde_json::to_value(&r).unwrap();
+            let error = apply_decision(&mut r,"req",serde_json::from_value(value).unwrap()).unwrap_err();
+            assert!(repairable_decision(&error),"{error}");
+            assert_eq!(serde_json::to_value(&r).unwrap(),before);
+        }
     }
 
     #[test]

@@ -17,12 +17,14 @@ export function teamAttention(chat: TeamChatRecord, run: TeamRun | undefined, re
     const root = run.team.allowedRepositories[0] ?? run.team.projectRoot
     addSession(run.planSessionId, lead, "Organizar el equipo", root)
     for (const session of run.closingSessions ?? []) addSession(session, lead, "Revisión final", root)
+    for (const report of run.supportReports ?? []) addSession(report.sessionId,report.agent.name,report.kind==="investigation"?"Investigar un bloqueo":report.kind==="goal_analysis"?"Comparar objetivo inicial y entrega":"Revisar entrega e integración",report.repository,report.agent.id)
     for (const task of run.tasks) {
       if (["completed", "cancelled"].includes(task.status)) continue
       const attempt = task.attempts.at(-1)
       const name = attempt?.agent.name ?? run.team.members.find(m => m.id === task.assignedAgentId)?.name ?? "Un integrante"
       addSession(attempt?.sessionId, name, task.title, task.repository, task.assignedAgentId)
-      addSession(attempt?.reviewSessionId, lead, `Revisar ${task.title}`, task.repository)
+      const supervisor=run.supportReports?.find(s=>s.sessionId===attempt?.reviewSessionId)?.agent
+      addSession(attempt?.reviewSessionId, supervisor?.name ?? lead, `Revisar ${task.title}`, task.repository, supervisor?.id ?? leadId)
       const coordination = run.coordination?.findLast(c => c.fromTaskId === task.id && !["resolved", "cancelled"].includes(c.status))
       for (const session of coordination?.sessions ?? []) addSession(session, lead, `Ayudar a ${name}`, task.repository)
       if (coordination && (coordination.status === "blocked" || coordination.status === "checking" && ["blocked", "failed"].includes(run.status))) {
@@ -32,8 +34,9 @@ export function teamAttention(chat: TeamChatRecord, run: TeamRun | undefined, re
         items.push({ id: task.id, agentId: task.assignedAgentId, name, task: task.title, kind: "waiting",
           reason: `Espera instrucciones del Lead. El problema está en la coordinación; su trabajo ya guardado se conserva.`, sessionId: attempt?.sessionId ?? null, directory: task.repository })
       } else if (["blocked", "failed", "review_error", "interrupted"].includes(task.status)) {
-        const reviewFailed = attempt?.review?.status === "review_error"
-        items.push({ id: task.id, agentId: reviewFailed ? leadId : task.assignedAgentId, name: reviewFailed ? lead : name, task: task.title, kind: "blocked",
+        const reviewReport=run.supportReports?.find(s=>s.sessionId===attempt?.reviewSessionId)
+        const reviewFailed = attempt?.review?.status === "review_error" || !!reviewReport && ["failed","uncertain"].includes(reviewReport.status)
+        items.push({ id: task.id, agentId: reviewFailed ? reviewReport?.agent.id ?? leadId : task.assignedAgentId, name: reviewFailed ? reviewReport?.agent.name ?? lead : name, task: task.title, kind: "blocked",
           reason: task.error || attempt?.error || attempt?.review ? taskProblem(task) : "No quedó registrada la causa. Revisá su último paso en Actividad para poder ayudarlo.",
           sessionId: (reviewFailed ? attempt?.reviewSessionId : attempt?.sessionId) ?? null, directory: task.repository })
       } else if (task.status === "waiting_dependency") {
@@ -46,9 +49,11 @@ export function teamAttention(chat: TeamChatRecord, run: TeamRun | undefined, re
     }
     if (!items.some(i => i.kind === "blocked") && ["blocked", "failed"].includes(run.status)) {
       const coordinationSession = run.coordination?.findLast(c => ["blocked", "checking"].includes(c.status))?.sessions.at(-1)
-      items.push({ id: "lead", agentId: leadId, name: lead, task: run.tasks.length ? "Continuar la ejecución" : "Organizar el equipo", kind: "blocked",
+      const support=run.supportReports?.at(-1)
+      const failedSupport=support && ["failed","uncertain"].includes(support.status) ? support : undefined
+      items.push({ id: "lead", agentId: failedSupport?.agent.id ?? leadId, name: failedSupport?.agent.name ?? lead, task: failedSupport ? failedSupport.kind==="goal_analysis" ? "Comparar el objetivo inicial y la entrega" : failedSupport.kind==="investigation" ? "Investigar una solución para el Lead" : "Supervisar una entrega" : run.tasks.length ? "Continuar la ejecución" : "Organizar el equipo", kind: "blocked",
         reason: run.error ? readableTeamError(run.error) : "La ejecución se detuvo sin registrar una causa. Revisá la actividad del Lead.",
-        sessionId: coordinationSession ?? run.closingSessions?.at(-1) ?? run.planSessionId, directory: root })
+        sessionId: failedSupport?.sessionId ?? coordinationSession ?? run.closingSessions?.at(-1) ?? run.planSessionId, directory: root })
     }
     // Older engines expose a waiting permission in run.error before its live
     // request arrives. Keep this visible while the run is still working.
