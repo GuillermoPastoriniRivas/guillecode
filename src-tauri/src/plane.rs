@@ -9,7 +9,7 @@ use tauri::AppHandle;
 /// default empaquetado solo si faltan, para que las ediciones del usuario o del
 /// propio agente sobrevivan a los reinicios. El motor los lee al arrancar, así
 /// que un cambio se aplica reiniciando el motor (no hace falta recompilar).
-pub const INSTRUCTIONS: &str = "Plano del agente de GuilleCode: son los archivos que definen cómo trabajás (tu política y las guías de tus canales routines, terminal y worktrees). Usá `list` para verlos, `read` para leer uno por su clave y `write` para cambiarlo. Los cambios quedan guardados pero NO se aplican solos: el motor los lee al arrancar, así que después de editar hay que reiniciar el motor (pedile al usuario que los aplique desde «Plano del agente», o avisale que hace falta reiniciar). Sé conservador: cambiá solo lo que el usuario pidió, mantené lo que ya funciona y contale en qué archivo y por qué tocaste algo.";
+pub const INSTRUCTIONS: &str = "Plano del agente de Flufy: son los archivos que definen cómo trabajás (tu política y las guías de tus canales routines, terminal y worktrees). Usá `list` para verlos, `read` para leer uno por su clave y `write` para cambiarlo. Los cambios quedan guardados pero NO se aplican solos: el motor los lee al arrancar, así que después de editar hay que reiniciar el motor (pedile al usuario que los aplique desde «Plano del agente», o avisale que hace falta reiniciar). Sé conservador: cambiá solo lo que el usuario pidió, mantené lo que ya funciona y contale en qué archivo y por qué tocaste algo.";
 
 #[derive(Clone, Copy)]
 struct Entry {
@@ -165,7 +165,7 @@ pub fn tool_list() -> Vec<Value> {
         }),
         json!({
             "name": "reset",
-            "description": "Restaura un archivo de tu plano a la versión que trae GuilleCode.",
+            "description": "Restaura un archivo de tu plano a la versión que trae Flufy.",
             "inputSchema": { "type": "object", "properties": { "key": { "type": "string" } }, "required": ["key"] }
         }),
     ]

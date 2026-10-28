@@ -9,7 +9,7 @@ export function Logo({ size = 24, className }: { size?: number; className?: stri
       height={size}
       viewBox="0 0 1024 1024"
       role="img"
-      aria-label="GuilleCode"
+      aria-label="Flufy"
     >
       <defs>
         <linearGradient id={`${id}-bg`} x1="0" y1="0" x2="1" y2="1">

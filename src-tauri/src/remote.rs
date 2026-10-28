@@ -190,7 +190,7 @@ fn serve_static(app: &AppHandle, req: Request, path: &str) {
 
 fn proxy(app: &AppHandle, mut req: Request, target_path: &str) {
     if crate::updates::installing(app) && req.method().as_str() != "GET" {
-        return respond_json(req, 503, json!({ "error": "GuilleCode se está actualizando. Reintentá cuando vuelva a abrirse." }));
+        return respond_json(req, 503, json!({ "error": "Flufy se está actualizando. Reintentá cuando vuelva a abrirse." }));
     }
     let server = match ensure_server(app) {
         Ok(s) => s,
@@ -378,7 +378,7 @@ fn hub_api(app: &AppHandle, mut req: Request, url: &str, path: &str) {
         let mut audio = Vec::new();
         let _ = Read::take(req.as_reader(), voice::MAX_BYTES as u64 + 1).read_to_end(&mut audio);
         if !voice::ready(app) {
-            return respond_json(req, 409, json!({ "error": "Falta configurar la transcripción en la PC: GuilleCode → «Conectar el celular» → Audios" }));
+            return respond_json(req, 409, json!({ "error": "Falta configurar la transcripción en la PC: Flufy → «Conectar el celular» → Audios" }));
         }
         return match voice::transcribe(app, &audio, &mime) {
             Ok(text) => respond_json(req, 200, json!({ "text": text })),
@@ -405,7 +405,7 @@ fn hub_api(app: &AppHandle, mut req: Request, url: &str, path: &str) {
         let endpoint = body["endpoint"].as_str().unwrap_or_default().to_string();
         let notice = push::Notice {
             kind: push::Kind::Test,
-            title: "GuilleCode".into(),
+            title: "Flufy".into(),
             body: "Así te va a llegar el aviso cuando el agente termine o te necesite.".into(),
             tag: "test".into(),
             url: "/".into(),
@@ -441,7 +441,7 @@ fn handle(app: &AppHandle, req: Request) {
             .map(|h| h.value.as_str().trim_start_matches("Bearer ").to_string())
             .unwrap_or_default();
         if sent != token {
-            return respond_json(req, 401, json!({ "error": "token inválido: volvé a escanear el QR desde GuilleCode" }));
+            return respond_json(req, 401, json!({ "error": "token inválido: volvé a escanear el QR desde Flufy" }));
         }
     }
     if let Some(rest) = url.strip_prefix("/oc") {
@@ -616,7 +616,7 @@ pub async fn remote_push_test(app: AppHandle) -> Result<usize, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let notice = push::Notice {
             kind: push::Kind::Test,
-            title: "GuilleCode".into(),
+            title: "Flufy".into(),
             body: "Prueba desde la PC: así te llega el aviso cuando el agente termina o te necesita.".into(),
             tag: "test".into(),
             url: "/".into(),

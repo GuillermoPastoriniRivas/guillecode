@@ -224,7 +224,7 @@ export function Composer({
   const startRecording = () => {
     setError(null)
     if (voice === false) {
-      setError("Falta configurar la transcripción en la PC: GuilleCode → «Conectar el celular» → Audios.")
+      setError("Falta configurar la transcripción en la PC: Flufy → «Conectar el celular» → Audios.")
       return
     }
     setNow(Date.now())
@@ -281,7 +281,7 @@ export function Composer({
     try {
       const fresh = await loadModels(directory, zenFreeOnly)
       setModels(fresh)
-      if (fresh.length === 0) throw new Error("Conectá ChatGPT u OpenCode en Cuentas de IA de GuilleCode en la PC.")
+      if (fresh.length === 0) throw new Error("Conectá ChatGPT u OpenCode en Cuentas de IA de Flufy en la PC.")
       const available = chooseAvailableModel(fresh, model ?? { providerID: "", modelID: "" }, favorites)
       setPicked(available)
       await onSend({ text: message, attachments, model: available })
@@ -312,7 +312,7 @@ export function Composer({
       )}
       {noVision && <small className="warn-text">{info?.name} no ve imágenes: elegí otro modelo o la va a ignorar.</small>}
       {error && <div className="alert">{error}</div>}
-      {models?.length === 0 && <div className="alert">Conectá ChatGPT u OpenCode en Cuentas de IA de GuilleCode en la PC. Con uno alcanza.</div>}
+      {models?.length === 0 && <div className="alert">Conectá ChatGPT u OpenCode en Cuentas de IA de Flufy en la PC. Con uno alcanza.</div>}
       <textarea
         ref={textarea}
         value={text}

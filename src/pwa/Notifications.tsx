@@ -88,7 +88,7 @@ export function NotificationSettings({ push, onClose }: { push: PushControl; onC
         <div className="notice">
           <strong>Necesitan el link HTTPS</strong>
           <small>
-            Los celulares solo permiten notificaciones en sitios seguros. En GuilleCode (comando «Conectar el celular») elegí el link que empieza con https:// y termina en
+            Los celulares solo permiten notificaciones en sitios seguros. En Flufy (comando «Conectar el celular») elegí el link que empieza con https:// y termina en
             .ts.net, y escanealo de nuevo.
           </small>
         </div>
@@ -136,7 +136,7 @@ export function NotificationSettings({ push, onClose }: { push: PushControl; onC
             disabled={push.busy}
             onChange={(v) => void push.setPrefs({ ...status.prefs, error: v })}
           />
-          <small className="muted">No te llegan mientras estás usando GuilleCode en la PC.</small>
+          <small className="muted">No te llegan mientras estás usando Flufy en la PC.</small>
           <div className="row">
             <button
               type="button"

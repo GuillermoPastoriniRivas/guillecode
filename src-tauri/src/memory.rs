@@ -17,7 +17,7 @@ pub fn instructions() -> &'static str {
     INSTRUCTIONS
 }
 
-const INSTRUCTIONS: &str = "Memoria local de GuilleCode: conocimiento y trabajos compartidos entre chats, ventanas y modelos, guardados solo en esta PC. Usá `memory_search` para encontrar decisiones, convenciones o intentos fallidos antes de asumir; `memory_list` para ver notas y trabajos del proyecto; `memory_read` para leer el detalle; `memory_write` para dejar una decisión, convención o aprendizaje durable (no changelog); `memory_delete` para quitarlo. Si no sabés el `scope`, omitilo: se usa el proyecto de la ventana principal. La memoria se inyecta sola al empezar cada conversación; no hace falta pedirla.";
+const INSTRUCTIONS: &str = "Memoria local de Flufy: conocimiento y trabajos compartidos entre chats, ventanas y modelos, guardados solo en esta PC. Usá `memory_search` para encontrar decisiones, convenciones o intentos fallidos antes de asumir; `memory_list` para ver notas y trabajos del proyecto; `memory_read` para leer el detalle; `memory_write` para dejar una decisión, convención o aprendizaje durable (no changelog); `memory_delete` para quitarlo. Si no sabés el `scope`, omitilo: se usa el proyecto de la ventana principal. La memoria se inyecta sola al empezar cada conversación; no hace falta pedirla.";
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -302,7 +302,7 @@ fn render_digest(app: &AppHandle, scope: &str) {
     }
 
     let mut lines: Vec<String> = Vec::new();
-    lines.push("# Memoria local de GuilleCode".into());
+    lines.push("# Memoria local de Flufy".into());
     lines.push(String::new());
     lines.push(format!("- **Proyecto:** {} (workspace `{}`)", scope, slug(scope)));
     lines.push(String::new());
@@ -584,7 +584,7 @@ pub fn tool_list() -> Vec<Value> {
     vec![
         json!({
             "name": "search",
-            "description": "Busca en la memoria local de GuilleCode (notas, decisiones, convenciones, intentos fallidos y trabajos).",
+            "description": "Busca en la memoria local de Flufy (notas, decisiones, convenciones, intentos fallidos y trabajos).",
             "inputSchema": { "type": "object", "properties": { "query": { "type": "string" } }, "required": ["query"] }
         }),
         json!({

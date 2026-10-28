@@ -72,7 +72,7 @@ pub fn ensure_server(app: &tauri::AppHandle) -> Result<ServerConfig, String> {
     let mut config = {
         let mut cfg = state.config.lock().unwrap();
         if state.stopping.load(Ordering::SeqCst) {
-            return Err("GuilleCode se está cerrando".into());
+            return Err("Flufy se está cerrando".into());
         }
         if cfg.is_none() {
             *cfg = Some(spawn_server(app, &state, &fallback_cwd(app))?);

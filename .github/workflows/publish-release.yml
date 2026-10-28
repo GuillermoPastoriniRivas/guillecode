@@ -1,5 +1,5 @@
-name: Publicar versión de GuilleCode
-run-name: Publicar GuilleCode ${{ inputs.version }}
+name: Publicar versión de Flufy
+run-name: Publicar Flufy ${{ inputs.version }}
 on:
   workflow_dispatch:
     inputs:
@@ -15,7 +15,7 @@ on:
 permissions:
   contents: write
 concurrency:
-  group: guillecode-release
+  group: flufy-release
   cancel-in-progress: false
 jobs:
   publish:

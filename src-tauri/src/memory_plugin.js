@@ -1,4 +1,4 @@
-// Memoria local de GuilleCode: inyecta el contexto recordado antes de cada llamada
+// Memoria local de Flufy: inyecta el contexto recordado antes de cada llamada
 // al modelo y bloquea las herramientas de memoria cuando el toggle está apagado.
 // Se ejecuta dentro del motor de opencode y solo lee la carpeta local.
 import { existsSync, readFileSync } from "node:fs"
@@ -17,7 +17,7 @@ function slug(value) {
   return cleaned || "workspace"
 }
 
-export const GuilleCodeMemory = async ({ client, directory }, options) => {
+export const FlufyMemory = async ({ client, directory }, options) => {
   const root = options?.root
   if (!root) return {}
   const configPath = options?.config || join(root, "config.json")

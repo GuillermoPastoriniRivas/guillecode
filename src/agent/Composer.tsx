@@ -194,7 +194,7 @@ export function Composer({
       await submit(false, message)
     },
     onError: (message) => notify.error("No se pudo transcribir el audio", message),
-    unsupportedHint: "Para grabar voz abrí la app de escritorio de GuilleCode.",
+    unsupportedHint: "Para grabar voz abrí la app de escritorio de Flufy.",
   })
   const finishRecording = recorder.stop
   useEffect(() => registerPendingInput(draftKey, async () => {

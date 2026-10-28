@@ -1,11 +1,11 @@
-# Ejecuta GuilleCode en modo dev: Vite ( puerto 5173) + app.exe debug.
+# Ejecuta Flufy en modo dev: Vite ( puerto 5173) + app.exe debug.
 # Uso: .\run.ps1    (o clic derecho > Run with PowerShell)
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $root
 
-# Si hay una instancia de GuilleCode corriendo (app o su sidecar, SOLO las de
+# Si hay una instancia de Flufy corriendo (app o su sidecar, SOLO las de
 # esta carpeta), cerrarla: los builds fallan con el exe lockeado.
 Get-Process | Where-Object { $_.Path -like "$root\src-tauri\target*" } |
     ForEach-Object { Stop-Process -Id $_.Id -Force }
@@ -59,5 +59,5 @@ if ($LASTEXITCODE -ne 0) {
 }
 Pop-Location
 
-Write-Host "Abriendo GuilleCode..." -ForegroundColor Green
+Write-Host "Abriendo Flufy..." -ForegroundColor Green
 Start-Process -FilePath $exe

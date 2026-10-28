@@ -307,7 +307,7 @@ function FeatureRow({
     if (!active) void switchToFeature(feature)
   }
   const details: string[] = []
-  if (feature.kind === "external") details.push("creada fuera de GuilleCode")
+  if (feature.kind === "external") details.push("creada fuera de Flufy")
   if (feature.base && (feature.ahead || feature.behind)) {
     const parts = []
     if (feature.ahead) parts.push(`${feature.ahead} commit(s) propios`)

@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
-const REINSTALL: &str = "El motor OpenCode está incompleto o dañado. Liberá espacio y reinstalá GuilleCode; tus chats y cuentas se conservan.";
+const REINSTALL: &str = "El motor OpenCode está incompleto o dañado. Liberá espacio y reinstalá Flufy; tus chats y cuentas se conservan.";
 
 // Windows reports a truncated PE as error 193, which looks like an account
 // problem in the connection screen. Check section bounds before spawning it.

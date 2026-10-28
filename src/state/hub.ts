@@ -28,7 +28,7 @@ export function closeToTray(): boolean {
 export function setCloseToTray(on: boolean): void {
   saveJson("hub.closeToTray", on)
   notify.info(
-    on ? "Cerrar la ventana la manda a la bandeja" : "Cerrar la ventana sale de GuilleCode",
+    on ? "Cerrar la ventana la manda a la bandeja" : "Cerrar la ventana sale de Flufy",
     on ? "Las rutinas y el acceso desde el celular siguen andando. Para salir: ícono de la bandeja → Salir." : "Las rutinas y el acceso desde el celular se cortan al cerrar.",
   )
 }
@@ -44,7 +44,7 @@ export async function hideToTray(): Promise<void> {
   await getCurrentWindow().hide()
   if (loadJson("hub.trayHintShown", false)) return
   saveJson("hub.trayHintShown", true)
-  await desktopNotice("GuilleCode sigue en la bandeja", "Las rutinas y las sesiones siguen corriendo. Para salir, usá el ícono de la bandeja → Salir.")
+  await desktopNotice("Flufy sigue en la bandeja", "Las rutinas y las sesiones siguen corriendo. Para salir, usá el ícono de la bandeja → Salir.")
 }
 
 async function settleDirty(message: string): Promise<boolean> {
@@ -93,7 +93,7 @@ async function closeOtherWindows(): Promise<boolean> {
   if (others.length === 0) return true
   const ok = await confirmAction(
     others.length === 1 ? "Hay otra ventana abierta" : `Hay ${others.length} ventanas más abiertas`,
-    "Salir de GuilleCode las cierra también. Si alguna tiene archivos sin guardar, te pregunta en esa ventana.",
+    "Salir de Flufy las cierra también. Si alguna tiene archivos sin guardar, te pregunta en esa ventana.",
     "Cerrar todo y salir",
   )
   if (!ok) return false
@@ -114,7 +114,7 @@ async function closeOtherWindows(): Promise<boolean> {
     off()
   }
   await call<void>("window_quit_cancel").catch(() => undefined)
-  notify.info("No se salió de GuilleCode", "Una ventana quedó abierta con archivos sin guardar")
+  notify.info("No se salió de Flufy", "Una ventana quedó abierta con archivos sin guardar")
   return false
 }
 
@@ -124,7 +124,7 @@ export async function requestQuit(): Promise<void> {
     return
   }
   if (!(await closeOtherWindows())) return
-  if (!(await settleDirty("¿Querés guardarlos antes de cerrar GuilleCode?"))) {
+  if (!(await settleDirty("¿Querés guardarlos antes de cerrar Flufy?"))) {
     await call<void>("window_quit_cancel").catch(() => undefined)
     return
   }
@@ -143,7 +143,7 @@ export async function toggleAutostart(): Promise<void> {
     const next = !(await autostartEnabled())
     const enabled = await call<boolean>("autostart_set", { enabled: next })
     notify.info(
-      enabled ? "GuilleCode arranca con Windows" : "GuilleCode ya no arranca con Windows",
+      enabled ? "Flufy arranca con Windows" : "Flufy ya no arranca con Windows",
       enabled ? "Arranca oculto en la bandeja, así las rutinas corren aunque no lo abras." : "",
     )
   } catch (e) {

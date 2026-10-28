@@ -186,7 +186,7 @@ pub fn start(app: &AppHandle) {
 
 const PC_DESCRIPTION: &str = "Control de la PC: apps de Windows (Excel, el Explorador de archivos, instaladores) y tu Chrome con las sesiones iniciadas (Gmail, Meta Business, consolas web). Elegí este modo para tareas que necesiten ver la pantalla o una web donde ya iniciaste sesión.";
 
-const PC_PROMPT: &str = "Sos el agente de GuilleCode que maneja la PC del usuario. Tenés el control de la PC: podés usar las apps de Windows y su Chrome real con las sesiones iniciadas, siguiendo la guía de abajo. El usuario ve esta conversación y puede contestarte.
+const PC_PROMPT: &str = "Sos el agente de Flufy que maneja la PC del usuario. Tenés el control de la PC: podés usar las apps de Windows y su Chrome real con las sesiones iniciadas, siguiendo la guía de abajo. El usuario ve esta conversación y puede contestarte.
 
 - Antes de algo irreversible (enviar, pagar, borrar, publicar, comprar) que el usuario no te haya pedido de forma explícita, preguntale antes de hacerlo.
 - Si el control está apagado o pausado, decíselo y pará.
@@ -258,7 +258,7 @@ pub fn config(app: &AppHandle) -> DesktopConfig {
 pub fn gate(app: &AppHandle) -> Result<(), String> {
     let c = config(app);
     if !c.enabled {
-        return Err("El control de la PC está apagado. Pedile al usuario que lo active (en GuilleCode: comando «Control de la PC»; en el celular: tarjeta «Tu PC») y no intentes otra forma de manejar la interfaz.".into());
+        return Err("El control de la PC está apagado. Pedile al usuario que lo active (en Flufy: comando «Control de la PC»; en el celular: tarjeta «Tu PC») y no intentes otra forma de manejar la interfaz.".into());
     }
     if c.paused {
         return Err("El usuario pausó el control de la PC. Esperá a que lo reanude y no intentes otra forma de manejar la interfaz.".into());
@@ -277,7 +277,7 @@ fn own_exe() -> &'static str {
 pub fn blocked_reason(w: &win::WinInfo) -> Option<String> {
     let process = w.process.to_lowercase();
     if w.pid == std::process::id() || (!process.is_empty() && process == own_exe()) {
-        return Some("es GuilleCode: el agente no puede manejar su propia ventana".into());
+        return Some("es Flufy: el agente no puede manejar su propia ventana".into());
     }
     listed_reason(w)
 }
@@ -405,7 +405,7 @@ fn call_tool(app: &AppHandle, channel: Channel, name: &str, args: &Value) -> Val
                 }
                 Err(e) => {
                     record(app, "browser", name, &summary, false);
-                    json!({ "content": [{ "type": "text", "text": format!("El navegador no respondió: {}. Abrí Chrome 144+, habilitá chrome://inspect/#remote-debugging y aceptá el permiso de conexión en Chrome. Podés probarlo en GuilleCode → «Control de la PC».", e) }], "isError": true })
+                    json!({ "content": [{ "type": "text", "text": format!("El navegador no respondió: {}. Abrí Chrome 144+, habilitá chrome://inspect/#remote-debugging y aceptá el permiso de conexión en Chrome. Podés probarlo en Flufy → «Control de la PC».", e) }], "isError": true })
                 }
             }
         }
@@ -549,7 +549,7 @@ pub async fn desktop_browser_restart(app: AppHandle) -> Result<browser::BridgeSt
     tauri::async_runtime::spawn_blocking(move || {
         gate(&app)?;
         if !config(&app).browser {
-            return Err("Activá «Ofrecerle al agente las herramientas del navegador» y reiniciá GuilleCode.".into());
+            return Err("Activá «Ofrecerle al agente las herramientas del navegador» y reiniciá Flufy.".into());
         }
         browser::stop();
         let result = browser::connect();

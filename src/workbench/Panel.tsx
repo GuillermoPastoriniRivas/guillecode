@@ -112,7 +112,7 @@ function OutputPanel() {
   }, [entries])
   return (
     <div className="output" ref={ref}>
-      {entries.length === 0 && <div className="view-note">Acá aparece cada comando de git y gh que corre GuilleCode, con su resultado.</div>}
+      {entries.length === 0 && <div className="view-note">Acá aparece cada comando de git y gh que corre Flufy, con su resultado.</div>}
       {entries.map((e) => (
         <div key={e.id} className={`output-entry${e.ok ? "" : " failed"}`}>
           <div className="output-head">

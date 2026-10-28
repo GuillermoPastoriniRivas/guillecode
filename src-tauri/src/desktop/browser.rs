@@ -525,7 +525,7 @@ fn truncate(text: &str, limit: usize) -> Option<String> {
     }
     let kept = cut_at(text, limit);
     Some(format!(
-        "{}\n\n[GuilleCode] Resultado recortado: tenía {} bytes y se muestran los primeros {}. Usá browser_evaluate_script con pageId para leer solo la sección necesaria; en snapshots preferí verbose=false y en red usá pageSize.",
+        "{}\n\n[Flufy] Resultado recortado: tenía {} bytes y se muestran los primeros {}. Usá browser_evaluate_script con pageId para leer solo la sección necesaria; en snapshots preferí verbose=false y en red usá pageSize.",
         kept,
         text.len(),
         kept.len()

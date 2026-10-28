@@ -29,7 +29,7 @@ export function WelcomeEditor() {
       <div className="welcome-hero">
         <Logo size={64} className="welcome-logo-svg" />
         <div>
-          <h1>GuilleCode</h1>
+          <h1>Flufy</h1>
           <p>El agente y el código en la misma ventana: chateás, ves los cambios en vivo, los revisás y hacés el PR sin salir.</p>
         </div>
       </div>

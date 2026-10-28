@@ -142,7 +142,7 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
   } catch {
     throw unreachable()
   }
-  if (res.status === 401) throw new AuthError("El link venció o es de otra PC. Volvé a escanear el QR desde GuilleCode.")
+  if (res.status === 401) throw new AuthError("El link venció o es de otra PC. Volvé a escanear el QR desde Flufy.")
   const text = await res.text()
   if (!res.ok) {
     let parsed: ErrorBody | null = null
@@ -187,8 +187,8 @@ export async function screenshot(window: string | null, max: number): Promise<st
   } catch {
     throw unreachable()
   }
-  if (res.status === 401) throw new AuthError("El link venció o es de otra PC. Volvé a escanear el QR desde GuilleCode.")
-  if (res.status === 404) throw new Error("Tu GuilleCode todavía no tiene esta función: reinicialo en la PC.")
+  if (res.status === 401) throw new AuthError("El link venció o es de otra PC. Volvé a escanear el QR desde Flufy.")
+  if (res.status === 404) throw new Error("Tu Flufy todavía no tiene esta función: reinicialo en la PC.")
   if (!res.ok) {
     const body = (await res.json().catch(() => null)) as ErrorBody | null
     throw new Error(body?.error ?? `No se pudo capturar la pantalla (${res.status})`)

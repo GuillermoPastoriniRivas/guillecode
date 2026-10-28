@@ -11,7 +11,7 @@ using System;
 using System.Text;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
-public static class GuilleCodeInstallerPath {
+public static class FlufyInstallerPath {
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern uint GetFinalPathNameByHandle(SafeFileHandle file, StringBuilder path, uint length, uint flags);
 }
@@ -20,7 +20,7 @@ public static class GuilleCodeInstallerPath {
         $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, ([System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete))
         try {
             $buffer = New-Object System.Text.StringBuilder 32768
-            $length = [GuilleCodeInstallerPath]::GetFinalPathNameByHandle($stream.SafeFileHandle, $buffer, $buffer.Capacity, 0)
+            $length = [FlufyInstallerPath]::GetFinalPathNameByHandle($stream.SafeFileHandle, $buffer, $buffer.Capacity, 0)
             if ($length -eq 0 -or $length -ge $buffer.Capacity) {
                 throw (New-Object System.ComponentModel.Win32Exception)
             }

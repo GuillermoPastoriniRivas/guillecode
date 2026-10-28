@@ -95,7 +95,7 @@ fn notify(app: &AppHandle, r: &Run, done: bool) {
         return;
     }
     let title = format!(
-        "GuilleCode — {} {}",
+        "Flufy — {} {}",
         r.team.name,
         if done {
             "terminó"
@@ -658,7 +658,7 @@ pub fn observed_commands(messages: &Value) -> Vec<Value> {
             let Some(command) = p["state"]["input"]["command"].as_str() else { continue; };
             if command.trim().is_empty() || receipt["command"] != command.trim() || p["state"]["input"]["terminal"].as_str().is_some_and(|supplied| supplied != id) { continue; }
             let index = commands.len();
-            commands.push(json!({"command":evidence::sanitize(command),"exitCode":null,"output":evidence::sanitize(output),"source":"GuilleCode native terminal receipt","callId":p["callID"],"terminalId":id}));
+            commands.push(json!({"command":evidence::sanitize(command),"exitCode":null,"output":evidence::sanitize(output),"source":"Flufy native terminal receipt","callId":p["callID"],"terminalId":id}));
             pending.insert(id.into(), (executed.into(), index));
             index
         } else {

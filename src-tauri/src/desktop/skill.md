@@ -1,6 +1,6 @@
 ---
 name: escritorio
-description: Manejar la PC del usuario desde GuilleCode — apps de Windows (herramientas desktop_*) y su Chrome con las sesiones iniciadas (herramientas browser_*). Usala cuando la tarea necesita una app con interfaz gráfica, una web donde el usuario ya inició sesión, o ver la pantalla.
+description: Manejar la PC del usuario desde Flufy — apps de Windows (herramientas desktop_*) y su Chrome con las sesiones iniciadas (herramientas browser_*). Usala cuando la tarea necesita una app con interfaz gráfica, una web donde el usuario ya inició sesión, o ver la pantalla.
 ---
 
 # Manejar la PC del usuario
@@ -76,7 +76,7 @@ Cada vuelta del modelo tarda más que cualquier acción del navegador, y el snap
 
 ## Reglas
 
-- No manejes GuilleCode, consolas, administradores de contraseñas ni apps bloqueadas. Si una herramienta dice que algo está bloqueado o pausado, no busques otro camino.
+- No manejes Flufy, consolas, administradores de contraseñas ni apps bloqueadas. Si una herramienta dice que algo está bloqueado o pausado, no busques otro camino.
 - Antes de algo irreversible (enviar, pagar, borrar, publicar, comprar), confirmá con el usuario usando la herramienta de preguntas, salvo que te lo haya pedido explícitamente.
 - No escribas contraseñas ni datos de tarjetas. Si una web o app pide iniciar sesión, pedile al usuario que lo haga.
 - Si algo falla dos veces de la misma forma, pará y contale al usuario qué ves.

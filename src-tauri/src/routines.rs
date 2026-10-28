@@ -138,7 +138,7 @@ fn load(app: &AppHandle) -> Vec<Routine> {
             if run.finished_at.is_none() {
                 run.finished_at = Some(now_ms());
                 run.status = "interrumpida".into();
-                run.error = Some("GuilleCode se cerró mientras corría".into());
+                run.error = Some("Flufy se cerró mientras corría".into());
             }
         }
     }
@@ -152,7 +152,7 @@ fn persist(app: &AppHandle, items: &[Routine]) {
 }
 
 fn persist_checked(app: &AppHandle, items: &[Routine]) -> Result<(), String> {
-    let path = app_data_file(app, "routines.json").ok_or("no se pudo localizar la carpeta de datos de GuilleCode")?;
+    let path = app_data_file(app, "routines.json").ok_or("no se pudo localizar la carpeta de datos de Flufy")?;
     let data = serde_json::to_vec_pretty(items).map_err(|e| e.to_string())?;
     std::fs::write(path, data).map_err(|e| format!("no se pudieron guardar las rutinas: {}", e))
 }
@@ -257,7 +257,7 @@ fn execute(app: &AppHandle, routine: &Routine, run_id: &str) -> Result<Outcome, 
         if busy && !warned && waiting_on_user(&client, &session_id) {
             warned = true;
             update_run(app, &routine.id, run_id, |run| run.status = "esperando".into());
-            notify(app, &format!("La rutina «{}» espera tu respuesta", routine.name), "Pide un permiso o te hace una pregunta. Abrí GuilleCode o el celular para contestar.");
+            notify(app, &format!("La rutina «{}» espera tu respuesta", routine.name), "Pide un permiso o te hace una pregunta. Abrí Flufy o el celular para contestar.");
         }
         if !busy && (seen_busy || now_ms() - started > 20_000) {
             break;
@@ -283,7 +283,7 @@ pub fn launch(app: &AppHandle, id: &str, manual: bool) -> Result<(), String> {
         let state = app.state::<RoutinesState>();
         let mut items = state.items.lock().unwrap();
         if crate::updates::installing(app) {
-            return Err("GuilleCode se está actualizando; intentá cuando vuelva a abrirse".into());
+            return Err("Flufy se está actualizando; intentá cuando vuelva a abrirse".into());
         }
         let routine = items.iter_mut().find(|r| r.id == id).ok_or("no existe esa rutina")?;
         if is_running(routine) {

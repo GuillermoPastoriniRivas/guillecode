@@ -11,7 +11,7 @@ import { watchingSession } from "./unseen"
 
 type PendingSource = Parameters<typeof pendingRequests>[0]
 
-let baseTitle = "GuilleCode"
+let baseTitle = "Flufy"
 const TITLE_FLASH_MS = 1100
 const SOUND_MS = 5000
 const SOUND_REPEATS = 3
@@ -166,15 +166,15 @@ async function notifyDesktop(body: string, stillPending = () => true): Promise<v
   try {
     let granted = await isPermissionGranted()
     if (!granted) granted = (await requestPermission()) === "granted"
-    if (granted && stillPending()) sendNotification({ title: "GuilleCode necesita tu respuesta", body })
+    if (granted && stillPending()) sendNotification({ title: "Flufy necesita tu respuesta", body })
   } catch {
     try {
       if (!stillPending()) return
       if (!("Notification" in window)) return
-      if (Notification.permission === "granted") new Notification("GuilleCode necesita tu respuesta", { body })
+      if (Notification.permission === "granted") new Notification("Flufy necesita tu respuesta", { body })
       else if (Notification.permission !== "denied")
         void Notification.requestPermission().then((p) => {
-          if (p === "granted" && stillPending()) new Notification("GuilleCode necesita tu respuesta", { body })
+          if (p === "granted" && stillPending()) new Notification("Flufy necesita tu respuesta", { body })
         })
     } catch {
       return
@@ -274,7 +274,7 @@ function disengage(): void {
 export function testAlert(): void {
   playChime()
   void escalateWindow()
-  void notifyDesktop("Prueba del aviso: así te llama GuilleCode cuando el agente espera tu respuesta.")
+  void notifyDesktop("Prueba del aviso: así te llama Flufy cuando el agente espera tu respuesta.")
   let on = false
   let ticks = 0
   const timer = setInterval(() => {

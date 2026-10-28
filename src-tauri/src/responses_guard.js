@@ -1,4 +1,4 @@
-// Runs inside GuilleCode's engine, so desktop, PWA and routines use the same
+// Runs inside Flufy's engine, so desktop, PWA and routines use the same
 // transport protection. Do not turn a truncated Responses stream into a finish.
 import { createProviderDiagnostics } from "./provider-diagnostics.js"
 import { budgetChatGPTRequest } from "./responses-budget.js"
@@ -118,7 +118,7 @@ async function bufferFailure(response) {
   return terminalFailure("guillecode_upstream_buffer_limit", `HTTP 507: ${body}`, response.headers)
 }
 
-export const GuilleCodeResponses = async (_input, options = {}) => {
+export const FlufyResponses = async (_input, options = {}) => {
   if (globalThis[installed]) return {}
   globalThis[installed] = true
   const diagnostics = createProviderDiagnostics(options.diagnosticsPath, { appVersion: options.appVersion })

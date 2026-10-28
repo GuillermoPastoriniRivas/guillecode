@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "guillecode",
-  "version": "0.14.14",
+  "productName": "flufy",
+  "version": "0.15.0",
   "identifier": "com.guillecode.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "GuilleCode",
+        "title": "Flufy",
         "width": 1480,
         "height": 920,
         "minWidth": 980,

@@ -13,7 +13,7 @@
   Pop $R1
   ${If} $R0 != 0
     DetailPrint "$R1"
-    MessageBox MB_OK|MB_ICONSTOP "No hay espacio suficiente para instalar GuilleCode completo. Liberá espacio y reintentá; tus datos se conservan." /SD IDOK
+    MessageBox MB_OK|MB_ICONSTOP "No hay espacio suficiente para instalar Flufy completo. Liberá espacio y reintentá; tus datos se conservan." /SD IDOK
     SetErrorLevel 1
     Abort
   ${EndIf}
@@ -31,7 +31,7 @@
   Pop $R1
   ${If} $R0 != 0
     DetailPrint "$R1"
-    MessageBox MB_OK|MB_ICONSTOP "No se pudo liberar el motor de GuilleCode. Cerrá GuilleCode y reintentá la actualización." /SD IDOK
+    MessageBox MB_OK|MB_ICONSTOP "No se pudo liberar el motor de Flufy. Cerrá Flufy y reintentá la actualización." /SD IDOK
     SetErrorLevel 1
     Abort
   ${EndIf}
@@ -47,7 +47,7 @@
   Pop $R1
   ${If} $R0 != 0
     DetailPrint "$R1"
-    MessageBox MB_OK|MB_ICONSTOP "La instalación del motor OpenCode no terminó correctamente. Reinstalá GuilleCode con espacio libre; tus chats y cuentas se conservan." /SD IDOK
+    MessageBox MB_OK|MB_ICONSTOP "La instalación del motor OpenCode no terminó correctamente. Reinstalá Flufy con espacio libre; tus chats y cuentas se conservan." /SD IDOK
     SetErrorLevel 1
     Abort
   ${EndIf}

@@ -305,7 +305,7 @@ fn load(app: &AppHandle) -> Registry {
 
 fn save(app: &AppHandle, reg: &mut Registry) -> Result<(), String> {
     reg.version = 1;
-    let path = app_data_file(app, REGISTRY).ok_or("no se pudo localizar la carpeta de datos de GuilleCode")?;
+    let path = app_data_file(app, REGISTRY).ok_or("no se pudo localizar la carpeta de datos de Flufy")?;
     let data = serde_json::to_vec_pretty(reg).map_err(|e| e.to_string())?;
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, data).map_err(|e| format!("no se pudo guardar el registro de features: {}", e))?;
@@ -1311,7 +1311,7 @@ pub struct WorkspaceCreateResult {
 
 /// Crea el mismo trabajo en todos los repositorios indicados (o en todos los del
 /// proyecto) con una rama y una base por repositorio, y los agrupa bajo un id
-/// común. El humano pide un trabajo; GuilleCode resuelve el worktree de cada repo.
+/// común. El humano pide un trabajo; Flufy resuelve el worktree de cada repo.
 pub(crate) fn workspace_create_sync(app: &AppHandle, args: WorkspaceCreateArgs) -> Result<WorkspaceCreateResult, String> {
     let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let label = args.label.trim().to_string();

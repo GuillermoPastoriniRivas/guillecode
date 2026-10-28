@@ -5,7 +5,7 @@ export const INTERNAL_SCREENSHOT_FILENAME = "aplicacion-actual.jpg"
 export async function desktopCaptureMarker(url: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(url))
   const hash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")
-  return `[GuilleCode desktop capture sha256:${hash}]`
+  return `[Flufy desktop capture sha256:${hash}]`
 }
 
 export function isInternalScreenshot(part: { type: string; filename?: string }): boolean {

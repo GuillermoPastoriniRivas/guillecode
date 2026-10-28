@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test"
 
 async function setup(page: Page) {
-  await page.route("**/attention-test", (route) => route.fulfill({ contentType: "text/html", body: "<!doctype html><title>GuilleCode</title>" }))
+  await page.route("**/attention-test", (route) => route.fulfill({ contentType: "text/html", body: "<!doctype html><title>Flufy</title>" }))
   await page.goto("/attention-test")
   await page.clock.install()
   await page.evaluate(async () => {
@@ -81,7 +81,7 @@ test("activar Aprueba solo corta la alerta; un fallo o una pregunta vuelven a re
   await page.evaluate(() => (window as any).qa.approvals.setApprovalForSession("auto", true))
   await page.clock.runFor(6000)
   expect(await snapshot(page)).toMatchObject({ count: 0, alerting: false, mark: "idle", toasts: [], tones: 2 })
-  await expect(page).toHaveTitle("GuilleCode")
+  await expect(page).toHaveTitle("Flufy")
 
   await page.evaluate(() => (window as any).qa.approvals.markApprovalFailed("p1"))
   expect(await snapshot(page)).toMatchObject({ count: 1, alerting: true, target: "child", mark: "attention", tones: 4 })

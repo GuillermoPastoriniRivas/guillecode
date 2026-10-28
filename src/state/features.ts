@@ -211,7 +211,7 @@ export async function openFeatureCreate(repo?: string): Promise<void> {
   const group = repo ? findGroup(repo, list) : null
   useLayout.getState().toggleAgent(true)
   newSession()
-  focusComposer(`Quiero trabajar en un trabajo separado (worktree) que incluya la copia de trabajo de todos los repositorios del proyecto${group ? `, empezando por ${group.name} (${group.path})` : ""}. Crealo con la herramienta worktree_create de GuilleCode, que hace un worktree por repositorio con la misma etiqueta; elegí por repo la base real (no asumas main) y registrala. Después prepará el entorno completo de cada repo siguiendo la receta del proyecto y verificá que la app arranca; no inventes un entorno reducido ni me pidas configurar ramas, carpetas o entornos. Trabajá con las rutas y el cwd que devuelva el tool.\n\nLo que quiero hacer: `)
+  focusComposer(`Quiero trabajar en un trabajo separado (worktree) que incluya la copia de trabajo de todos los repositorios del proyecto${group ? `, empezando por ${group.name} (${group.path})` : ""}. Crealo con la herramienta worktree_create de Flufy, que hace un worktree por repositorio con la misma etiqueta; elegí por repo la base real (no asumas main) y registrala. Después prepará el entorno completo de cada repo siguiendo la receta del proyecto y verificá que la app arranca; no inventes un entorno reducido ni me pidas configurar ramas, carpetas o entornos. Trabajá con las rutas y el cwd que devuelva el tool.\n\nLo que quiero hacer: `)
 }
 
 export async function openFeatureCreateForm(repo?: string): Promise<void> {

@@ -1,8 +1,8 @@
-// Política de ejecución de GuilleCode, independiente del modelo y de la memoria.
+// Política de ejecución de Flufy, independiente del modelo y de la memoria.
 // El mismo plugin puede instalarse en el motor actual sin recompilar la app.
-const POLICY = `# GuilleCode: directo al objetivo
+const POLICY = `# Flufy: directo al objetivo
 
-Esta es la política predeterminada de alcance y verificación de GuilleCode. Aplicá las instrucciones genéricas de autonomía, exploración y validación con este criterio: cada paso debe ayudar a completar el pedido, no ejecutar una ceremonia estándar porque hay herramientas disponibles. Si el usuario pide una revisión exhaustiva, pruebas, un build o una entrega publicada, esos pasos sí forman parte del objetivo. Respetá los requisitos explícitos del proyecto.
+Esta es la política predeterminada de alcance y verificación de Flufy. Aplicá las instrucciones genéricas de autonomía, exploración y validación con este criterio: cada paso debe ayudar a completar el pedido, no ejecutar una ceremonia estándar porque hay herramientas disponibles. Si el usuario pide una revisión exhaustiva, pruebas, un build o una entrega publicada, esos pasos sí forman parte del objetivo. Respetá los requisitos explícitos del proyecto.
 
 ## Alcance y criterio de cierre
 - Identificá el resultado pedido y la condición concreta para darlo por terminado. Hacelo internamente; no agregues un plan o preguntas preparatorias a una tarea que ya está clara.
@@ -27,9 +27,9 @@ Esta es la política predeterminada de alcance y verificación de GuilleCode. Ap
 - Cerrá con el resultado, la comprobación relevante y cualquier bloqueo real, de forma breve. No agregues auditorías, propuestas o tareas siguientes que el usuario no pidió.
 `
 
-export const GuilleCodePolicy = async () => {
+export const FlufyPolicy = async () => {
   // La instalación de compatibilidad es global, pero solo actúa en el motor
-  // lanzado por GuilleCode; el CLI independiente conserva su comportamiento.
+  // lanzado por Flufy; el CLI independiente conserva su comportamiento.
   let config
   try {
     config = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT || "{}")
@@ -44,7 +44,7 @@ export const GuilleCodePolicy = async () => {
       // Team sessions carry explicit orchestration instructions; ordinary chats keep POLICY.
       if (output.system.some((text) => text.includes("[GUILLECODE_TEAM_RUN]"))) return
       // Evita duplicar la política si la app y la instalación actual la cargan.
-      if (!output.system.some((text) => text.includes("# GuilleCode: directo al objetivo"))) {
+      if (!output.system.some((text) => text.includes("# Flufy: directo al objetivo"))) {
         output.system.push(POLICY)
       }
     },

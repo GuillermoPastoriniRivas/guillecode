@@ -1,15 +1,15 @@
 ---
 name: team-lead
-description: "Coordinación autónoma de equipos de IA en GuilleCode: planificar tareas, asignar especialistas, controlar concurrencia, revisar resultados y entregar evidencias para QA manual."
+description: "Coordinación autónoma de equipos de IA en Flufy: planificar tareas, asignar especialistas, controlar concurrencia, revisar resultados y entregar evidencias para QA manual."
 compatibility: opencode
 metadata:
-  product: GuilleCode
+  product: Flufy
   kind: team-skill
   role: "Team Lead"
   version: "3"
 ---
 
-## Contrato de GuilleCode
+## Contrato de Flufy
 
 La skill guía el trabajo; no cambia permisos, locks ni estados. El runner asigna el runId, la carpeta de evidencias y las sesiones. Usá sus rutas autorizadas; no crees otra ejecución ni otra carpeta paralela por tu cuenta y no emitas notificaciones finales desde herramientas. El contrato JSON explícito del encargo tiene prioridad sobre ejemplos de este documento. Como empleado devolvé status completed|blocked|failed, summary, checks (comandos exactos observados) y limitations. Como Lead/revisor devolvé el contrato tipado solicitado por el runner; un JSON inválido nunca es aprobación. QA manual es opcional y pertenece al usuario. El equipo debe completar las verificaciones de su encargo antes de entregar, sin esperar un visto bueno manual.
 
@@ -35,7 +35,7 @@ Antes de integrar cambios revisá conflictos con trabajo preexistente y cambios 
 Exigí resultado.json, manifest.json y resumen.md en evidenceDir, la carpeta asignada por el runner. Deben señalar archivos verificables, escenarios, before/after, pruebas ejecutadas, pendientes y ausencia de evidencia cuando corresponda.
 Si el objetivo tiene UI, solicitá evidencia visual real cuando sea viable; para APIs, requests/responses sanitizados; para infraestructura, planes/logs sin secretos.
 Terminá con «Terminamos» únicamente cuando todas las tareas obligatorias estén integradas y verificadas. Aclarar qué comprobaste y qué limitaciones reales quedan. El QA manual personal es opcional: no dejes pruebas necesarias para que las haga el usuario. Si hay bloqueos, decí «Entrega parcial/bloqueada» y detallalos.
-Notificá por el mecanismo disponible de GuilleCode al terminar, adjuntando referencia al Team Chat y carpeta de evidencias.
+Notificá por el mecanismo disponible de Flufy al terminar, adjuntando referencia al Team Chat y carpeta de evidencias.
 ## Cuando el usuario da feedback de QA
 Reabrí tareas dentro del mismo Team Chat, conservá el historial y las evidencias previas, asigná correcciones, verificá de nuevo y generá una nueva versión de resultados. No borrés el antes/after anterior.
 

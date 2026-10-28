@@ -153,7 +153,7 @@ try {
   const oldURL = "data:image/png;base64," + Buffer.concat([png.subarray(0, -12), length, chunk, checksum, png.subarray(-12)]).toString("base64")
   const newURL = "data:image/png;base64," + png.toString("base64")
   const attachmentURL = "data:image/png;base64," + (await readFile(resolve("src-tauri/icons/32x32.png"))).toString("base64")
-  const marker = (url) => `[GuilleCode desktop capture sha256:${createHash("sha256").update(url).digest("hex")}]`
+  const marker = (url) => `[Flufy desktop capture sha256:${createHash("sha256").update(url).digest("hex")}]`
   for (const [index, url] of [oldURL, newURL].entries()) {
     const before = calls
     await api("POST", `/session/${captures.id}/prompt_async`, {

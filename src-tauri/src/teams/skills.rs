@@ -201,7 +201,7 @@ mod tests {
         let skills = catalog();
         assert_eq!(skills.len(), 13);
         for s in skills {
-            assert!(s.instructions.contains("Contrato de GuilleCode"));
+            assert!(s.instructions.contains("Contrato de Flufy"));
             assert!(!s.verification_guidelines.is_empty());
             assert!(s.instructions.len() > 1000 && s.instructions.len() < 32_000);
         }

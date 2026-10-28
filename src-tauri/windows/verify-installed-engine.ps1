@@ -10,7 +10,7 @@ try {
         $drive = New-Object IO.DriveInfo ([IO.Path]::GetPathRoot($root))
         $required = [Math]::Max(512MB, ($RequiredKiB * 1024 + 128MB))
         if ($drive.AvailableFreeSpace -lt $required) {
-            throw 'No hay espacio libre suficiente para instalar GuilleCode completo. Liberá espacio y reintentá; no se reemplazaron los archivos.'
+            throw 'No hay espacio libre suficiente para instalar Flufy completo. Liberá espacio y reintentá; no se reemplazaron los archivos.'
         }
         exit 0
     }
