@@ -233,7 +233,7 @@ pub(super) fn pending(session: &str, actor: &str) -> Vec<Page> {
 #[tauri::command]
 pub async fn browser_internal_open(
     app: tauri::AppHandle,
-    window: tauri::WebviewWindow,
+    window: tauri::Window,
     session: String,
     url: Option<String>,
     label: Option<String>,
@@ -289,7 +289,7 @@ pub fn browser_internal_pages(app: tauri::AppHandle, session: String) -> Result<
 #[tauri::command]
 pub async fn browser_internal_view(
     app: tauri::AppHandle,
-    window: tauri::WebviewWindow,
+    window: tauri::Window,
     session: String,
     label: Option<String>,
     bounds: Option<Bounds>,
@@ -462,6 +462,10 @@ mod tests {
                     1,
                     "browser pages must not create external windows"
                 );
+                // Adding a child changes a WebviewWindow into a multi-webview Window.
+                // IPC commands must accept Window; WebviewWindow extraction now fails.
+                assert!(app_handle.get_webview_window("main").is_none());
+                assert!(app_handle.get_window("main").is_some());
                 let jobs = (0..10)
                     .map(|n| {
                         std::thread::spawn(move || {
@@ -538,7 +542,7 @@ mod tests {
                 );
                 tauri::async_runtime::block_on(browser_internal_view(
                     app_handle.clone(),
-                    host.clone(),
+                    app_handle.get_window(host.label()).unwrap(),
                     session.into(),
                     Some(views[0].label.clone()),
                     Some(Bounds {
@@ -552,7 +556,7 @@ mod tests {
                 .unwrap();
                 tauri::async_runtime::block_on(browser_internal_view(
                     app_handle.clone(),
-                    host.clone(),
+                    app_handle.get_window(host.label()).unwrap(),
                     session.into(),
                     None,
                     None,

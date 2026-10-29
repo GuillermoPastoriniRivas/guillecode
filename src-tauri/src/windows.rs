@@ -237,7 +237,7 @@ pub async fn window_new(app: AppHandle, path: Option<String>) -> Result<String, 
 #[tauri::command]
 pub fn windows_list(app: AppHandle) -> Vec<WindowInfo> {
     let mut out = Vec::new();
-    for (label, window) in app.webview_windows() {
+    for (label, window) in app.windows() {
         if label.starts_with("internal-") { continue; }
         out.push(WindowInfo {
             project: project_of(&app, &label),
@@ -254,7 +254,7 @@ pub fn windows_list(app: AppHandle) -> Vec<WindowInfo> {
 
 #[tauri::command]
 pub fn window_focus(app: AppHandle, label: String) -> Result<(), String> {
-    let window = app.get_webview_window(&label).ok_or("esa ventana ya no está abierta")?;
+    let window = app.get_window(&label).ok_or("esa ventana ya no está abierta")?;
     let _ = window.unminimize();
     let _ = window.show();
     window.set_focus().map_err(|e| e.to_string())
@@ -277,7 +277,7 @@ pub fn window_quit_cancel(app: AppHandle) {
 #[tauri::command]
 pub async fn window_bubble(
     app: AppHandle,
-    window: tauri::WebviewWindow,
+    window: tauri::Window,
     session: String,
     title: Option<String>,
 ) -> Result<String, String> {
@@ -289,6 +289,6 @@ pub async fn window_bubble(
 }
 
 #[tauri::command]
-pub fn window_bubble_info(app: AppHandle, window: tauri::WebviewWindow) -> Option<BubbleInfo> {
+pub fn window_bubble_info(app: AppHandle, window: tauri::Window) -> Option<BubbleInfo> {
     bubble_of(&app, window.label()).map(|b| BubbleInfo { session: b.session, origin: b.origin })
 }

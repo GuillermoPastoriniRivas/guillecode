@@ -511,7 +511,7 @@ pub fn terminal_shells() -> Vec<ShellInfo> {
 }
 
 #[tauri::command]
-pub async fn terminal_spawn(app: AppHandle, window: tauri::WebviewWindow, args: TermSpawnArgs, on_event: Channel<TermEvent>) -> Result<(), String> {
+pub async fn terminal_spawn(app: AppHandle, window: tauri::Window, args: TermSpawnArgs, on_event: Channel<TermEvent>) -> Result<(), String> {
     let result = spawn(&app, window.label(), &args, on_event);
     if let Some(waiter) = app.state::<TermState>().pending.lock().unwrap().remove(&args.id) {
         let _ = waiter.send(result.clone());
@@ -549,7 +549,7 @@ pub async fn terminal_kill(state: tauri::State<'_, TermState>, id: String) -> Re
 }
 
 #[tauri::command]
-pub async fn terminal_kill_all(app: AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
+pub async fn terminal_kill_all(app: AppHandle, window: tauri::Window) -> Result<(), String> {
     let label = window.label().to_string();
     let _ = tauri::async_runtime::spawn_blocking(move || kill_owned(&app, &label)).await;
     Ok(())

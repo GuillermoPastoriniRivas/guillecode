@@ -117,14 +117,14 @@ fn current_project(app: &tauri::AppHandle) -> String {
 }
 
 #[tauri::command]
-async fn server_config(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Result<ServerConfig, String> {
+async fn server_config(app: tauri::AppHandle, window: tauri::Window) -> Result<ServerConfig, String> {
     let mut config = ensure_server(&app)?;
     config.worktree = windows::project_of(&app, window.label());
     Ok(config)
 }
 
 #[tauri::command]
-async fn set_server_worktree(app: tauri::AppHandle, window: tauri::WebviewWindow, path: String) -> Result<ServerConfig, String> {
+async fn set_server_worktree(app: tauri::AppHandle, window: tauri::Window, path: String) -> Result<ServerConfig, String> {
     if !Path::new(&path).is_dir() {
         return Err(format!("la carpeta no existe: {}", path));
     }

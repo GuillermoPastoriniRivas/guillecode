@@ -166,7 +166,7 @@ fn inside(root: &str, path: &str) -> bool {
 fn window_for(app: &AppHandle, cwd: &str) -> String {
     let target = norm(cwd);
     let mut best: Option<(usize, String)> = None;
-    for label in app.webview_windows().keys() {
+    for label in app.windows().keys() {
         // Bubbles have no terminal host/listener. Selecting one here would
         // time out spawning, or tie a long-lived process to an ephemeral view.
         if label.starts_with("bubble-") { continue; }

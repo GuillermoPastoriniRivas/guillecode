@@ -6,7 +6,7 @@ use tauri_plugin_autostart::ManagerExt;
 pub const HIDDEN_ARG: &str = "--hidden";
 
 pub fn show_main(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
+    if let Some(window) = app.get_window("main") {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
@@ -14,7 +14,7 @@ pub fn show_main(app: &AppHandle) {
 }
 
 fn request_quit(app: &AppHandle) {
-    if app.get_webview_window("main").is_none() {
+    if app.get_window("main").is_none() {
         app.exit(0);
         return;
     }
