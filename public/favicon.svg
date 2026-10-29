@@ -17,6 +17,6 @@
   </defs>
   <rect x="48" y="48" width="928" height="928" rx="216" fill="url(#gc-bg)"/>
   <rect x="48" y="48" width="928" height="928" rx="216" fill="url(#gc-shine)"/>
-  <path d="M 644 398 A 232 232 0 1 0 712 562 L 530 562" fill="none" stroke="#ffffff" stroke-width="112" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 356 296 L 356 728 M 356 296 L 668 296 M 356 520 L 580 520" fill="none" stroke="#ffffff" stroke-width="112" stroke-linecap="round" stroke-linejoin="round"/>
   <path d="M 800 172 C 810 236 832 258 896 268 C 832 278 810 300 800 364 C 790 300 768 278 704 268 C 768 258 790 236 800 172 Z" fill="url(#gc-gold)"/>
 </svg>

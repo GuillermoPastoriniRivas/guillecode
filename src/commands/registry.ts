@@ -39,14 +39,25 @@ export async function executeCommand(id: string, ...args: unknown[]): Promise<vo
 
 type ParsedKey = { ctrl: boolean; shift: boolean; alt: boolean; key: string }
 
+// El mismo símbolo llega con distinto nombre según el layout y el teclado
+// numérico: "+" y "=" comparten tecla en varios layouts, y el "+" del bloque
+// numérico no tiene alias de código. Se igualan para que acentos como Ctrl+= o
+// Ctrl+- funcionen en cualquier teclado.
+const SYMBOL_EQUIVALENTS: Record<string, string> = { "+": "=", "_": "-" }
+
+// El símbolo que produce una tecla depende del layout (y de Shift), así que no
+// se exige Shift exacto cuando la acción se define por el símbolo.
+const SHIFT_AGNOSTIC = new Set(["=", "-"])
+
 function parseKey(spec: string): ParsedKey {
   const parts = spec.toLowerCase().split("+")
-  const key = parts.pop() ?? ""
+  const raw = parts.pop() ?? ""
+  const key = raw === "space" ? " " : raw
   return {
     ctrl: parts.includes("ctrl") || parts.includes("mod"),
     shift: parts.includes("shift"),
     alt: parts.includes("alt"),
-    key: key === "space" ? " " : key,
+    key: SYMBOL_EQUIVALENTS[key] ?? key,
   }
 }
 
@@ -61,21 +72,33 @@ const CODE_ALIASES: Record<string, string> = {
   Semicolon: ";",
   Equal: "=",
   Minus: "-",
+  NumpadAdd: "+",
+  NumpadSubtract: "-",
+  NumpadMultiply: "*",
+  NumpadDivide: "/",
+  NumpadDecimal: ".",
+  NumpadEqual: "=",
 }
 
 function eventKeys(e: KeyboardEvent): string[] {
   const keys = new Set<string>()
-  keys.add(e.key.toLowerCase())
-  if (e.code.startsWith("Key")) keys.add(e.code.slice(3).toLowerCase())
-  else if (e.code.startsWith("Digit")) keys.add(e.code.slice(5))
-  else if (CODE_ALIASES[e.code]) keys.add(CODE_ALIASES[e.code])
+  const add = (value: string) => {
+    if (!value) return
+    keys.add(value)
+    const equivalent = SYMBOL_EQUIVALENTS[value]
+    if (equivalent) keys.add(equivalent)
+  }
+  add(e.key.toLowerCase())
+  if (e.code.startsWith("Key")) add(e.code.slice(3).toLowerCase())
+  else if (e.code.startsWith("Digit")) add(e.code.slice(5))
+  else if (CODE_ALIASES[e.code]) add(CODE_ALIASES[e.code])
   return [...keys]
 }
 
 export function matchesKey(e: KeyboardEvent, spec: string): boolean {
   const k = parseKey(spec)
   if (k.ctrl !== (e.ctrlKey || e.metaKey)) return false
-  if (k.shift !== e.shiftKey) return false
+  if (!SHIFT_AGNOSTIC.has(k.key) && k.shift !== e.shiftKey) return false
   if (k.alt !== e.altKey) return false
   return eventKeys(e).includes(k.key)
 }
