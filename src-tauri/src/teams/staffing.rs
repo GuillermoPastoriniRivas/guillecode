@@ -1,7 +1,7 @@
 use super::domain::*;
 use std::collections::HashSet;
 
-pub const MAX_WORKERS: usize = 8;
+pub const MAX_WORKERS: usize = 10;
 
 pub fn validate_assignments(proposals: &[AgentProposal], tasks: &[Task]) -> Result<(), String> {
     if proposals.iter().any(|p|super::support::reserved(&p.id)) || tasks.iter().any(|t|super::support::reserved(&t.assigned_agent_id)) { return Err("El Solucionador y el Supervisor se administran por sus sesiones de apoyo, sin tareas de escritura".into()); }
@@ -145,7 +145,7 @@ mod tests {
         invalid = proposals.clone();
         invalid[0].id = "lead".into();
         assert!(with_agents(&team, &invalid, &[]).is_err());
-        let overflow: Vec<_> = (0..9)
+        let overflow: Vec<_> = (0..MAX_WORKERS + 1)
             .map(|n| AgentProposal {
                 id: format!("back-{}", n),
                 role: "Backend".into(),
@@ -153,6 +153,7 @@ mod tests {
                 skill_ids: vec![],
             })
             .collect();
+        assert!(with_agents(&team, &overflow[..MAX_WORKERS], &[]).is_ok());
         assert!(with_agents(&team, &overflow, &[]).is_err());
     }
 }

@@ -143,10 +143,10 @@ pub fn validate_scene(session: &str, id: &str) -> Result<Scene, String> {
 
 /// Hide only overlays we own and restore without activation, including on error.
 /// A capture exclusion flag alone does not make the underlying pixels clickable.
-pub struct Overlays(Vec<tauri::WebviewWindow>);
+pub struct Overlays(Vec<tauri::Window>);
 impl Overlays {
     pub fn hide(app: &AppHandle) -> Self {
-        let windows: Vec<_> = app.webview_windows().into_iter()
+        let windows: Vec<_> = app.windows().into_iter()
             .filter(|(label, w)| label.starts_with("bubble-") && w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(false))
             .filter_map(|(_, w)| w.hide().ok().map(|_| w)).collect();
         if !windows.is_empty() { std::thread::sleep(std::time::Duration::from_millis(40)); }

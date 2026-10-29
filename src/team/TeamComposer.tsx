@@ -4,11 +4,10 @@ import { teamCall } from "../state/teams"
 import { openImage } from "../state/lightbox"
 import { IMAGE_TYPES, readTeamImages } from "./ChatImages"
 import type { TeamImageInput } from "./types"
-import { BrowserWorkspace } from "../agent/BrowserWorkspace"
 
 export type TeamComposerHandle = { write: (text: string) => void }
 
-export function TeamComposer({ chatId, label, pending, onSent, ref }: { ref?: Ref<TeamComposerHandle>; chatId: string; label: string; pending: boolean; onSent: () => void }) {
+export function TeamComposer({ chatId, label, pending, onSent, onBrowser, ref }: { ref?: Ref<TeamComposerHandle>; chatId: string; label: string; pending: boolean; onSent: () => void; onBrowser: () => void }) {
   const [text, setText] = useState("")
   const [images, setImages] = useState<TeamImageInput[]>([])
   const [sending, setSending] = useState(false)
@@ -51,6 +50,6 @@ export function TeamComposer({ chatId, label, pending, onSent, ref }: { ref?: Re
       onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void submit() } }} />
     <input ref={fileInput} type="file" accept={IMAGE_TYPES} multiple hidden aria-label="Imágenes para el equipo" onChange={e => { if (e.target.files) void addImages(Array.from(e.target.files)); e.target.value = "" }} />
     {error && <p className="team-error" role="alert">{error}</p>}
-    <div className="team-composer-actions"><BrowserWorkspace sessionId={`team:${chatId}`} shared /><button className="btn btn-sm" type="button" disabled={locked} onClick={() => fileInput.current?.click()}><Icon name="file-media" /> {loading ? "Cargando imágenes…" : "Adjuntar imagen"}</button><button className="btn btn-primary" type="submit" disabled={locked || (!text.trim() && !images.length)}>{sending ? "Enviando…" : "Enviar"}</button></div>
+    <div className="team-composer-actions"><button className="btn btn-sm" type="button" onClick={onBrowser}><Icon name="globe" /> Navegador</button><button className="btn btn-sm" type="button" disabled={locked} onClick={() => fileInput.current?.click()}><Icon name="file-media" /> {loading ? "Cargando imágenes…" : "Adjuntar imagen"}</button><button className="btn btn-primary" type="submit" disabled={locked || (!text.trim() && !images.length)}>{sending ? "Enviando…" : "Enviar"}</button></div>
   </form>
 }

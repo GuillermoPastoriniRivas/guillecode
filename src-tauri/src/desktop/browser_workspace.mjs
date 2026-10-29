@@ -30,14 +30,14 @@ export class Workspaces {
     })
     await this.writes
   }
-  async inventory(context) {
+  async inventory(context, isolated = false) {
     await context.createPagesSnapshot()
     return (await Promise.all(context.getPages().map(async page => {
       try {
         const client = await page.pptrPage.createCDPSession()
         try {
           const { targetInfo } = await client.send('Target.getTargetInfo')
-          const { windowId } = await client.send('Browser.getWindowForTarget', { targetId: targetInfo.targetId })
+          const { windowId } = await client.send('Browser.getWindowForTarget', { targetId: targetInfo.targetId }).catch(error => { if (!isolated) throw error; return {windowId: 0} })
           return { page, id: page.id, target: targetInfo.targetId, windowId, url: page.pptrPage.url() }
         } finally { await client.detach() }
       } catch { return null }
@@ -45,10 +45,27 @@ export class Workspaces {
   }
   async scope(context, meta) {
     await this.load()
-    let pages = await this.inventory(context)
-    if (!meta.action && meta.autoRecover && meta.session.startsWith('team:')) {
+    let pages = await this.inventory(context, meta.isolated)
+    if (meta.isolated) {
+      // This MCP connection is attached only to this team's own WebView2 profile.
+      this.sessions[meta.session] ??= { actors: {} }
+      const w = this.sessions[meta.session]
+      w.owners ??= {}
+      w.actors ??= {}
+      if (meta.actor && meta.claimUrl) {
+        const created = pages.find(p => p.url === meta.claimUrl)
+        if (created) {
+          if (w.owners[created.target] && w.owners[created.target] !== meta.actor) throw new Error('Esta página pertenece a otro agente.')
+          w.owners[created.target] = meta.actor
+          w.actors[meta.actor] = created.target
+        }
+      }
+      w.windowId = 0; w.targets = pages.map(p => p.target)
+      if (!w.targets.includes(w.selected)) w.selected = w.targets[0]
+    }
+    if (!meta.isolated && !meta.action && meta.autoRecover && meta.session.startsWith('team:')) {
       await this.createTab(meta.session, async () => {
-        pages = await this.inventory(context)
+        pages = await this.inventory(context, meta.isolated)
         const prior = this.sessions[meta.session]
         if (prior?.targets?.some(target => pages.some(p => p.target === target && p.windowId === prior.windowId))) return
         const source = pages[0]?.page.pptrPage
@@ -57,7 +74,7 @@ export class Workspaces {
         let targetId
         try { ({ targetId } = await client.send('Target.createTarget', { url: 'about:blank', newWindow: true, background: true })) }
         finally { await client.detach() }
-        pages = await this.inventory(context)
+        pages = await this.inventory(context, meta.isolated)
         const created = pages.find(p => p.target === targetId)
         if (!created || pages.some(p => p.target !== targetId && p.windowId === created.windowId)) throw new Error('No pude confirmar una ventana nueva exclusiva del equipo. No se tomó control de otra ventana.')
         this.sessions[meta.session] = { windowId: created.windowId, targets: [targetId], selected: targetId, recovered: true }
@@ -86,15 +103,15 @@ export class Workspaces {
       while (Object.keys(workspace.actors).length > 128) delete workspace.actors[Object.keys(workspace.actors)[0]]
     }
     // A recycled windowId is not identity on its own: a target must survive.
-    const survives = () => !!workspace && Array.isArray(workspace.targets) && pages.some(p => workspace.targets.includes(p.target) && p.windowId === workspace.windowId)
+    const survives = () => !!workspace && Array.isArray(workspace.targets) && pages.some(p => workspace.targets.includes(p.target) && (meta.isolated || p.windowId === workspace.windowId))
     const valid = survives()
-    const owned = () => valid ? pages.filter(p => p.windowId === workspace.windowId) : []
+    const owned = () => valid ? pages.filter(p => meta.isolated ? !meta.actor || workspace.owners?.[p.target] === meta.actor : p.windowId === workspace.windowId) : []
     if (valid) {
       workspace.targets = owned().map(p => p.target)
       if (!workspace.targets.includes(selectedTarget())) select(workspace.targets[0])
       await this.save()
     }
-    meta.state = { assigned: valid, missing: !!workspace && !valid, windowId: valid ? workspace.windowId : null,
+    meta.state = { claimed: !!meta.claimUrl && pages.some(p => p.url === meta.claimUrl && workspace?.owners?.[p.target] === meta.actor), assigned: valid, missing: !!workspace && !valid, windowId: valid ? workspace.windowId : null,
       pages: (meta.action ? pages : owned()).map(({ id, windowId, url }) => ({ id, windowId, url })) }
     if (meta.action) return context
     if (!valid) throw new Error(meta.session.startsWith('team:') ? 'La ventana del equipo se cerró o todavía no existe. Usá browser_list_pages: se abrirá una ventana nueva del equipo. Volvé a observar y navegar antes de actuar; no repitas clics sobre la pantalla anterior.' : 'Chrome sin ventana asignada o ventana cerrada. Elegí una ventana desde el chat. No uses otra ventana ni Windows como sustituto.')
@@ -104,7 +121,7 @@ export class Workspaces {
     }
     const selected = () => check(owned().find(p => p.target === selectedTarget())?.page)
     const refresh = async () => {
-      pages = await this.inventory(context)
+      pages = await this.inventory(context, meta.isolated)
       if (!survives()) throw new Error('Se cerró la ventana de Chrome asignada. Elegí otra desde el chat.')
       workspace.targets = owned().map(p => p.target)
       if (!workspace.targets.includes(selectedTarget())) select(workspace.targets[0])

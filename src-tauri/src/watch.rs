@@ -76,7 +76,7 @@ fn classify(root: &Path, path: &Path) -> Classified {
 }
 
 #[tauri::command]
-pub fn watch_start(app: AppHandle, window: tauri::WebviewWindow, state: tauri::State<WatchState>, root: String) -> Result<(), String> {
+pub fn watch_start(app: AppHandle, window: tauri::Window, state: tauri::State<WatchState>, root: String) -> Result<(), String> {
     let label = window.label().to_string();
     let emit_label = label.clone();
     let root_path = Path::new(&root).to_path_buf();
@@ -189,7 +189,7 @@ fn classify_git_dir(dirs: &[PathBuf], path: &Path) -> Option<bool> {
 }
 
 #[tauri::command]
-pub fn watch_stop(window: tauri::WebviewWindow, state: tauri::State<WatchState>, root: Option<String>) {
+pub fn watch_stop(window: tauri::Window, state: tauri::State<WatchState>, root: Option<String>) {
     let mut watchers = state.watchers.lock().unwrap();
     let label = window.label();
     if let (Some(requested), Some((watching, _))) = (root.as_deref(), watchers.get(label)) {

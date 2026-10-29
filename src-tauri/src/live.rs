@@ -299,7 +299,7 @@ fn last_reply(app: &AppHandle, id: &str, directory: &str) -> Option<String> {
 }
 
 fn desktop_focused(app: &AppHandle) -> bool {
-    app.get_webview_window("main")
+    app.get_window("main")
         .map(|w| w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false) && !w.is_minimized().unwrap_or(false))
         .unwrap_or(false)
 }

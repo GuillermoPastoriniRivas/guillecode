@@ -65,18 +65,36 @@ struct Bridge {
     starting: Mutex<()>,
 }
 
-fn bridge() -> &'static Bridge {
-    static BRIDGE: OnceLock<Bridge> = OnceLock::new();
-    BRIDGE.get_or_init(|| Bridge {
-        inner: Mutex::new(Inner { child: None, tree: None, stdin: None, tools: Vec::new(), state: "off", error: None, connected: false, connecting: false, generation: 0 }),
-        pending: Arc::new(Mutex::new(HashMap::new())),
-        next: Mutex::new(0),
-        starting: Mutex::new(()),
-    })
+thread_local! { static ROUTE: std::cell::RefCell<Option<(Arc<Bridge>, PathBuf)>> = const { std::cell::RefCell::new(None) }; }
+fn new_bridge() -> Arc<Bridge> { Arc::new(Bridge {
+    inner: Mutex::new(Inner { child: None, tree: None, stdin: None, tools: Vec::new(), state: "off", error: None, connected: false, connecting: false, generation: 0 }),
+    pending: Arc::new(Mutex::new(HashMap::new())), next: Mutex::new(0), starting: Mutex::new(()),
+}) }
+fn internal_bridges() -> &'static Mutex<HashMap<PathBuf, Arc<Bridge>>> {
+    static MAP: OnceLock<Mutex<HashMap<PathBuf, Arc<Bridge>>>> = OnceLock::new();
+    MAP.get_or_init(Default::default)
+}
+fn bridge() -> Arc<Bridge> {
+    if let Some(b) = ROUTE.with(|r| r.borrow().as_ref().map(|(b,_)| b.clone())) { return b; }
+    static BRIDGE: OnceLock<Arc<Bridge>> = OnceLock::new();
+    BRIDGE.get_or_init(new_bridge).clone()
+}
+fn with_profile<T>(profile: PathBuf, action: impl FnOnce() -> T) -> T {
+    let b = internal_bridges().lock().unwrap().entry(profile.clone()).or_insert_with(new_bridge).clone();
+    struct Reset(Option<(Arc<Bridge>, PathBuf)>);
+    impl Drop for Reset { fn drop(&mut self) { ROUTE.with(|r| *r.borrow_mut() = self.0.take()); } }
+    let _reset = Reset(ROUTE.with(|r| r.replace(Some((b, profile)))));
+    action()
+}
+pub fn stop_all() {
+    stop();
+    let entries: Vec<_> = internal_bridges().lock().unwrap().keys().cloned().collect();
+    for profile in entries { with_profile(profile, stop); }
 }
 
 pub fn status() -> BridgeStatus {
-    let inner = bridge().inner.lock().unwrap();
+    let current_bridge = bridge();
+    let inner = current_bridge.inner.lock().unwrap();
     BridgeStatus { state: inner.state, error: inner.error.clone(), tools: inner.tools.len(), connected: inner.connected, connecting: inner.connecting }
 }
 
@@ -105,7 +123,8 @@ pub fn stop() {
 }
 
 fn send_line(message: &Value) -> Result<(), String> {
-    let mut inner = bridge().inner.lock().unwrap();
+    let current_bridge = bridge();
+    let mut inner = current_bridge.inner.lock().unwrap();
     let stdin = inner.stdin.as_mut().ok_or("el puente del navegador no está corriendo")?;
     let mut line = serde_json::to_string(message).map_err(|e| e.to_string())?;
     line.push('\n');
@@ -200,6 +219,12 @@ fn bridge_command() -> Result<Command, String> {
         .env("CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS", "1")
         .env("CHROME_DEVTOOLS_MCP_NO_CONFIG_DISCOVERY", "1")
         .env_remove("PLAYWRIGHT_MCP_EXTENSION_TOKEN");
+    ROUTE.with(|r| {
+        if let Some((_, profile)) = r.borrow().as_ref() {
+            cmd.arg(format!("--user-data-dir={}", profile.join("profile/EBWebView").display()));
+            cmd.env("GUILLECODE_WORKSPACES_FILE", profile.join("workspaces.json"));
+        }
+    });
     cmd.current_dir(dir);
     Ok(cmd)
 }
@@ -235,6 +260,7 @@ fn launch() -> Result<(), String> {
         inner.stdin = Some(stdin);
     }
     let pending = b.pending.clone();
+    let reader_bridge = b.clone();
     std::thread::spawn(move || {
         for line in BufReader::new(stdout).lines() {
             let Ok(line) = line else { break };
@@ -247,7 +273,7 @@ fn launch() -> Result<(), String> {
                 let _ = tx.send(message);
             }
         }
-        let b = bridge();
+        let b = reader_bridge;
         let mut inner = b.inner.lock().unwrap();
         if inner.generation == generation {
             inner.state = "error";
@@ -260,6 +286,7 @@ fn launch() -> Result<(), String> {
             b.pending.lock().unwrap().clear();
         }
     });
+    let error_bridge = b.clone();
     std::thread::spawn(move || {
         for line in BufReader::new(stderr).lines() {
             let Ok(line) = line else { break };
@@ -268,7 +295,7 @@ fn launch() -> Result<(), String> {
                 continue;
             }
             log::info!("[browser] {}", line);
-            let b = bridge();
+            let b = &error_bridge;
             let mut inner = b.inner.lock().unwrap();
             if inner.generation == generation && inner.state != "ready" {
                 inner.error = Some(line);
@@ -320,7 +347,8 @@ fn ensure() -> Result<(), String> {
 }
 
 fn stop_process_only() {
-    let mut inner = bridge().inner.lock().unwrap();
+    let current_bridge = bridge();
+    let mut inner = current_bridge.inner.lock().unwrap();
     inner.stdin = None;
     let tree = inner.tree.take();
     if let Some(mut child) = inner.child.take() {
@@ -417,7 +445,8 @@ pub fn call(name: &str, arguments: Value) -> Result<Value, String> {
     ensure()?;
     let tool = original_name(name);
     let generation = {
-        let mut inner = bridge().inner.lock().unwrap();
+        let current_bridge = bridge();
+        let mut inner = current_bridge.inner.lock().unwrap();
         if !inner.tools.iter().any(|t| t["name"].as_str() == Some(&tool)) {
             return Err(format!("Chrome DevTools no ofrece la herramienta {}", tool));
         }
@@ -428,7 +457,8 @@ pub fn call(name: &str, arguments: Value) -> Result<Value, String> {
     // No repetir automáticamente una acción: un timeout puede ocurrir después del clic.
     let result = request("tools/call", json!({ "name": tool, "arguments": arguments }), CALL_TIMEOUT);
     {
-        let mut inner = bridge().inner.lock().unwrap();
+        let current_bridge = bridge();
+        let mut inner = current_bridge.inner.lock().unwrap();
         if inner.generation == generation {
             inner.connecting = false;
             match &result {
@@ -465,10 +495,56 @@ pub fn call_session_recovery(session: &str, workspace: &str, name: &str, mut arg
     if !SCOPED_TOOLS.contains(&original_name(name).as_str()) { return Err("Esta herramienta no está limitada a la ventana Chrome asignada".into()); }
     if !args.is_object() { return Err("Los argumentos del navegador deben ser un objeto".into()); }
     args["_guillecode"] = json!({ "session": workspace, "actor": session, "autoRecover": recover && workspace.starts_with("team:") && original_name(name) == "list_pages" });
+    if workspace.starts_with("team:") && recover && original_name(name)=="list_pages" {
+        super::internal_browser::open_actor(crate::proc::app().ok_or("Flufy no está iniciado")?,workspace,session,None,false)?;
+    }
+    if super::internal_browser::selected(workspace) {
+        let profile = super::internal_browser::profile(workspace)?;
+        let app = crate::proc::app().ok_or("GuilleCode no está iniciado")?;
+        if original_name(name) == "list_pages" && recover {
+            super::internal_browser::open_actor(app, workspace, session, None, false)?;
+        }
+        if original_name(name) == "new_page" {
+            super::internal_browser::open_actor(app, workspace, session, args["url"].as_str(), true)?;
+            claim_internal(workspace, session)?;
+            return with_profile(profile, || call("list_pages", json!({"_guillecode":{"session":workspace,"actor":session,"isolated":true}})));
+        }
+        claim_internal(workspace, session)?;
+        args["_guillecode"]["isolated"] = json!(true);
+        return with_profile(profile, || call(name, args));
+    }
     call(name, args)
 }
 
+pub(super) fn claim_internal(workspace: &str, actor: &str) -> Result<(),String> {
+    let profile=super::internal_browser::profile(workspace)?;
+    let app=crate::proc::app().ok_or("Flufy no está iniciado")?;
+    for page in super::internal_browser::pending(workspace,actor) {
+        with_profile(profile.clone(), || {
+            let deadline=Instant::now()+Duration::from_secs(15);
+            loop {
+                let result=call("list_pages",json!({"_guillecode":{"session":workspace,"actor":actor,"isolated":true,"action":"inspect","claimUrl":page.marker}}))?;
+                if failed(&result) {return Err(text_of(&result));}
+                let state:Value=serde_json::from_str(&text_of(&result)).map_err(|e|e.to_string())?;
+                if state["claimed"]==true {return super::internal_browser::claim(app,&page.label);}
+                if Instant::now()>=deadline {return Err("La página está abriendo. Consultá el listado de nuevo; no repitas acciones anteriores.".into());}
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        })?;
+    }
+    Ok(())
+}
+
 pub fn workspace(session: &str, page_id: Option<u64>) -> Result<Value, String> {
+    if super::internal_browser::selected(session) {
+        return with_profile(super::internal_browser::profile(session)?, || {
+            let result = call("list_pages", json!({"_guillecode":{"session":session,"action":"inspect","isolated":true}}))?;
+            if failed(&result) { return Err(text_of(&result)); }
+            let mut value: Value = serde_json::from_str(&text_of(&result)).map_err(|e| e.to_string())?;
+            value["internal"] = json!(true);
+            Ok(value)
+        });
+    }
     let result = call("list_pages", json!({ "_guillecode": {
         "session": session, "action": if page_id.is_some() { "assign" } else { "inspect" }, "pageId": page_id
     }}))?;
