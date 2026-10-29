@@ -48,23 +48,20 @@
   display: block;
 }
 .brand-logo {
-  filter: drop-shadow(0 2px 8px rgba(16, 185, 129, 0.35));
+  filter: drop-shadow(0 2px 8px rgba(139, 132, 255, 0.25));
 }
 .welcome-logo-svg {
-  filter: drop-shadow(0 12px 32px rgba(16, 185, 129, 0.35));
+  filter: drop-shadow(0 12px 32px rgba(139, 132, 255, 0.25));
 }
-.welcome-logo-svg.pulse .logo-spark {
-  transform-origin: 800px 268px;
-  animation: spark 1.6s ease-in-out infinite;
+.welcome-logo-svg.pulse {
+  animation: logo-pulse 1.6s ease-in-out infinite;
 }
-@keyframes spark {
+@keyframes logo-pulse {
   0%,
   100% {
-    transform: scale(1) rotate(0deg);
     opacity: 1;
   }
   50% {
-    transform: scale(0.72) rotate(45deg);
     opacity: 0.7;
   }
 }

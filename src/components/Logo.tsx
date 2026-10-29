@@ -1,47 +1,25 @@
-import { useId } from "react"
-
 export function Logo({ size = 24, className }: { size?: number; className?: string }) {
-  const id = useId().replace(/:/g, "")
   return (
     <svg
       className={`logo${className ? ` ${className}` : ""}`}
       width={size}
       height={size}
-      viewBox="0 0 1024 1024"
+      viewBox="0 0 32 32"
       role="img"
       aria-label="Flufy"
     >
-      <defs>
-        <linearGradient id={`${id}-bg`} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#34d399" />
-          <stop offset="0.58" stopColor="#10b981" />
-          <stop offset="1" stopColor="#047857" />
-        </linearGradient>
-        <linearGradient id={`${id}-shine`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#ffffff" stopOpacity="0.22" />
-          <stop offset="0.5" stopColor="#ffffff" stopOpacity="0" />
-        </linearGradient>
-        <linearGradient id={`${id}-gold`} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#fde68a" />
-          <stop offset="0.5" stopColor="#f5c542" />
-          <stop offset="1" stopColor="#b8860b" />
-        </linearGradient>
-      </defs>
-      <rect x="48" y="48" width="928" height="928" rx="216" fill={`url(#${id}-bg)`} />
-      <rect x="48" y="48" width="928" height="928" rx="216" fill={`url(#${id}-shine)`} />
-      <path
-        d="M 356 296 L 356 728 M 356 296 L 668 296 M 356 520 L 580 520"
-        fill="none"
-        stroke="#ffffff"
-        strokeWidth="112"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        className="logo-spark"
-        d="M 800 172 C 810 236 832 258 896 268 C 832 278 810 300 800 364 C 790 300 768 278 704 268 C 768 258 790 236 800 172 Z"
-        fill={`url(#${id}-gold)`}
-      />
+      <rect width="32" height="32" rx="7" fill="#05070d" />
+      <g stroke="#8b84ff" strokeWidth="1.7" strokeLinecap="round">
+        <line x1="8.67" y1="8.64" x2="23.97" y2="7.1" />
+        <line x1="8.67" y1="8.64" x2="24.67" y2="23.68" />
+        <line x1="8.67" y1="8.64" x2="9.6" y2="26.2" />
+      </g>
+      <g fill="#8b84ff">
+        <circle cx="8.67" cy="8.64" r="5.3" />
+        <circle cx="23.97" cy="7.1" r="2.56" />
+        <circle cx="24.67" cy="23.68" r="2.47" />
+        <circle cx="9.6" cy="26.2" r="2.47" />
+      </g>
     </svg>
   )
 }
