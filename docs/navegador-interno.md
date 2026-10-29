@@ -10,6 +10,6 @@ Las páginas remotas no reciben capacidades IPC de Tauri. Se conserva el control
 
 Prueba nativa real: diez vistas WebView2 hijas de una sola ventana, diez sesiones del puente MCP, clic y lectura de resultados por página, rechazo de navegación cruzada, cambio de vista, retirada de la vista y reconexión. Pruebas UI con estado controlado: conversación breve con respuesta completa plegada; navegador dentro del chat y retirada al volver a conversar. Los flujos externos de autenticación que requieren window.opener necesitan verificación por sitio.
 
-Repositorio principal y próximos PR: https://github.com/fluws-labs/flufy (main). La marca 0.15.0 y el origen de actualizaciones proceden de esa base. El remoto anterior se conserva únicamente como referencia histórica.
+Repositorio principal y próximos PR: https://github.com/fluws-labs/flufy (main). La versión 0.15.2 y el origen de actualizaciones proceden de esa base. El remoto anterior se conserva únicamente como referencia histórica.
 
 Los comandos IPC y la administración de ventanas usan Window para mantener terminales, observadores de archivos, enfoque y bandeja operativos después de agregar vistas hijas; WebviewWindow deja de representar al host cuando contiene varias vistas.
