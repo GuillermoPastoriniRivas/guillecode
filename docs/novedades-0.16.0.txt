@@ -1,0 +1,7 @@
+Flufy 0.16.0 incorpora el navegador dentro del chat de Equipos IA. La nueva vista Navegador se abre ampliada, con la dirección editable y los controles arriba. Podés ver la página de cada agente y volver a conversar mientras las demás páginas siguen trabajando en segundo plano.
+
+Cada agente tiene sus propias páginas: no puede leer, navegar ni cerrar las de otro integrante. Las cuentas web se comparten dentro del equipo, con un perfil separado de otros chats y de tu navegador personal. Al volver al chat, la página se retira y recuperás el cuadro de mensajes.
+
+La conversación con el Lead es más breve y clara. Las respuestas extensas y los informes técnicos quedan plegados, con acceso al contenido completo, la actividad y las evidencias. Los equipos automáticos ahora admiten hasta diez especialistas.
+
+Las terminales, los observadores de archivos, el foco y la bandeja siguen operativos con el navegador interno abierto. Se conservan los datos de la app y el canal oficial de actualizaciones firmadas. Algunos accesos web que dependen de ventanas emergentes requieren comprobación según el sitio.
