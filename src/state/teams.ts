@@ -15,13 +15,24 @@ import { readableTeamError } from "../lib/provider-error"
 type State = TeamStore & { loaded: boolean; error: string | null; activeChatId: string | null; openChatIds: string[]; selectedRunIds: Record<string,string|null> }
 export const useTeams = create<State>(() => ({ schemaVersion: 1, teams: [], skills: [], chats: [], loaded: false, error: null, activeChatId: null, openChatIds: loadJson<string[]>("team.tabs", []), selectedRunIds:{} }))
 
+let refreshRequested = 0
+let refreshApplied = 0
 export async function refreshTeams() {
   if (!isTauri) return
+  const request = ++refreshRequested
   try {
     const data = await call<TeamStore | null>("teams_state")
     // Older test hosts do not implement this command. Never invent native data.
-    if (data) { indexTeamSessions(data.chats); useTeams.setState({ ...data, loaded: true, error: null }) }
-  } catch (e) { useTeams.setState({ loaded: true, error: errorMessage(e) }) }
+    if (data && request >= refreshApplied) {
+      const current = useTeams.getState()
+      for (const chat of data.chats) chat.runs = chat.runs.map(run => {
+        const previous = current.chats.find(c => c.id === chat.id)?.runs.find(r => r.id === run.id)
+        return previous && (previous.planV2?.sequence ?? 0) > (run.planV2?.sequence ?? 0) ? previous : run
+      })
+      refreshApplied = request
+      indexTeamSessions(data.chats); useTeams.setState({ ...data, loaded: true, error: null })
+    }
+  } catch (e) { if (request >= refreshApplied) useTeams.setState({ loaded: true, error: errorMessage(e) }) }
 }
 
 let listening = false
@@ -45,7 +56,13 @@ export function startTeams() {
 
 export async function teamCall<T>(command: string, args?: Record<string, unknown>): Promise<T | null> {
   try { const result = await call<T>(command, args); await refreshTeams(); return result }
-  catch (e) { notify.error("Equipos IA", readableTeamError(e)); return null }
+  catch (e) {
+    if (/REVISION_CONFLICT/.test(errorMessage(e))) {
+      await refreshTeams()
+      notify.error("El plan cambió", "Actualicé el tablero. Revisá el estado vigente antes de volver a aplicar el cambio.")
+    } else notify.error("Equipos IA", readableTeamError(e))
+    return null
+  }
 }
 
 export function openTeam(id = `new:${crypto.randomUUID()}`) { openEditor({ kind: "team", id }) }

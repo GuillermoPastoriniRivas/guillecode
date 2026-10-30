@@ -18,6 +18,15 @@ mod runner;
 mod skills;
 mod staffing;
 mod support;
+pub mod routing;
+pub mod remote;
+pub mod plan_v2;
+#[cfg(test)]
+mod plan_v2_tests;
+#[cfg(test)]
+mod benchmarks;
+#[cfg(test)]
+mod routing_tests;
 
 use domain::*;
 use rusqlite::{params, Connection};
@@ -27,12 +36,13 @@ use tauri::{AppHandle, Emitter, Manager};
 pub struct TeamsState {
     store: Mutex<Store>,
     controls: Mutex<()>,
+    runners: Mutex<std::collections::HashSet<String>>,
     error: Option<String>,
 }
 
 fn empty() -> Store {
     Store {
-        schema_version: 2,
+        schema_version: 3,
         teams: vec![],
         skills: catalog(),
         chats: vec![],
@@ -59,10 +69,16 @@ fn read_db(db: &Connection) -> Result<Store, String> {
         Err(rusqlite::Error::QueryReturnedNoRows) => empty(),
         Err(e) => return Err(e.to_string()),
     };
-    if ![1, 2].contains(&store.schema_version) {
+    if ![1, 2, 3].contains(&store.schema_version) {
         return Err("Versión de Equipos IA no compatible. Se preservó el archivo original".into());
     }
-    store.schema_version = 2;
+    if store.schema_version < 3 {
+        // Keep the exact original document in the same SQLite database. Never
+        // copy a live WAL database as a plain file or overwrite earlier backups.
+        db.execute_batch("CREATE TABLE IF NOT EXISTS team_store_migration_backup (schema_version INTEGER PRIMARY KEY, document TEXT NOT NULL)").map_err(|e| e.to_string())?;
+        db.execute("INSERT OR IGNORE INTO team_store_migration_backup(schema_version,document) SELECT ?1,document FROM team_store WHERE id=1",params![store.schema_version]).map_err(|e| e.to_string())?;
+    }
+    store.schema_version = 3;
     skills::upgrade(&mut store);
     Ok(store)
 }
@@ -144,10 +160,17 @@ pub fn update<T>(
     let mut guard = state.store.lock().map_err(|e| e.to_string())?;
     let mut next = guard.clone();
     let result = f(&mut next)?;
+    for run in next.chats.iter_mut().flat_map(|c| &mut c.runs) {
+        let previous = guard.chats.iter().flat_map(|c| &c.runs).find(|r| r.id == run.id);
+        if previous.is_none_or(|p| serde_json::to_value(p).ok() != serde_json::to_value(&*run).ok()) {
+            run.plan_v2.sequence = previous.map_or(1, |p| p.plan_v2.sequence.saturating_add(1));
+        }
+    }
     write_db(&mut db(app)?, &next)?;
     *guard = next;
     drop(guard);
     let _ = app.emit("team://changed", ());
+    crate::live::teams_changed(app);
     Ok(result)
 }
 
@@ -189,6 +212,7 @@ pub fn start(app: &AppHandle) {
     app.manage(TeamsState {
         store: Mutex::new(store),
         controls: Mutex::new(()),
+        runners: Mutex::new(Default::default()),
         error,
     });
     if let Err(e) = update(app, |_| Ok(())) {
@@ -213,7 +237,7 @@ fn recover(store: &mut Store) {
             }
         }
         for r in &mut chat.runs {
-            if active(&r.status) {
+            if active(&r.status) && r.status != "plan_ready" {
                 r.status = "blocked".into();
                 r.error = Some("El proceso se interrumpió. Inspeccioná las sesiones y reanudá para reconciliar el motor sin repetir operaciones automáticamente.".into());
             }
@@ -359,6 +383,7 @@ pub fn team_chats_auto(
             })
             .collect();
         let team = Team {
+            plan_v2: Default::default(),
             autonomous: true,
             id: id(),
             name: "Modo equipo".into(),
@@ -510,6 +535,7 @@ fn start_run(app: AppHandle, chat_id: String, goal: String, images: Vec<ChatImag
             })
             .unwrap_or_default();
         c.runs.push(Run {
+            plan_v2: plan_v2::PlanV2State { enabled: c.team.plan_v2.enabled, review_before_start: c.team.plan_v2.review_before_start, stage: "discovery".into(), ..Default::default() },
             support_reports: vec![],
             images: images.clone(),
             guidance: vec![],
@@ -574,8 +600,8 @@ fn control(app: &AppHandle, id: &str, action: &str) -> Result<(), String> {
                 Ok(())
             })?;
         }
-        "cancel" if active(&r.status) || r.status == "blocked" || runner::unsettled(&r) => {
-            let was_active = active(&r.status);
+        "cancel" if active(&r.status) || ["blocked","planning_blocked","plan_ready"].contains(&r.status.as_str()) || runner::unsettled(&r) => {
+            let was_active = active(&r.status) && r.status != "plan_ready";
             let completed = matches!(r.status.as_str(),"completed"|"awaiting_manual_qa"|"qa_approved");
             if !was_active {
                 runner::reconcile(app, &r, true)?;
@@ -609,8 +635,26 @@ fn control(app: &AppHandle, id: &str, action: &str) -> Result<(), String> {
                 Ok(())
             })?;
         }
-        "retry" if r.status == "blocked" || r.status == "failed" => {
+        "start_plan" if r.status == "plan_ready" => {
+            if plan_v2::discover(&r)?.iter().zip(&r.plan_v2.discovery).any(|(a,b)| a.digest != b.digest) {
+                return Err("STALE_BASELINE: los archivos cambiaron desde la validación del plan".into());
+            }
+            update_run(app,id,|r| {
+                if !r.plan_v2.validation.as_ref().is_some_and(|v| v.valid) || plan_v2::plan_digest(r) != r.plan_v2.digest {
+                    return Err("REVISION_CONFLICT: revisá el plan vigente antes de iniciar".into());
+                }
+                r.status = "running".into(); Ok(())
+            })?;
+            runner::launch(app,id);
+        }
+        "retry" if ["blocked","failed","planning_blocked"].contains(&r.status.as_str()) => {
             runner::reconcile(app, &r, false)?;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while state.runners.lock().map_err(|e| e.to_string())?.contains(id) {
+                if std::time::Instant::now() >= deadline { return Err("El scheduler todavía está cerrando las sesiones anteriores; esperá antes de continuar".into()); }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            if r.plan_v2.enabled && r.plan_v2.pending_change { plan_v2::apply_guidance(app,id)?; }
             update(app, |s| {
                 let current = s
                     .chats
@@ -638,7 +682,7 @@ fn control(app: &AppHandle, id: &str, action: &str) -> Result<(), String> {
                     .find(|v| v.id == id)
                     .ok_or("Ejecución inexistente")?;
                 for t in &mut r.tasks {
-                    if t.status != "completed" {
+                    if t.status != "completed" && (!r.plan_v2.enabled || t.status != "cancelled") {
                         t.status = if r
                             .coordination
                             .iter()
@@ -664,6 +708,7 @@ fn control(app: &AppHandle, id: &str, action: &str) -> Result<(), String> {
                 }
                 .into();
                 r.error = None;
+                if r.tasks.is_empty() { r.recovered_plan = None; }
                 Ok(())
             })?;
             runner::launch(app, id);
@@ -688,6 +733,9 @@ pub fn team_tasks_reassign(
     employee: Employee,
 ) -> Result<(), String> {
     update_run(&app, &run_id, |r| {
+        if r.plan_v2.enabled {
+            return Err("Usá el tablero y apply_plan_patch para reasignar pendientes del Plan V2; los intentos anteriores no se alteran".into());
+        }
         if r.status != "blocked" || runner::unsettled(r) {
             return Err("Solo se reasignan tareas bloqueadas sin sesiones pendientes".into());
         }
@@ -715,6 +763,41 @@ pub fn team_tasks_reassign(
 }
 
 #[tauri::command]
+pub fn team_chats_planner(app: AppHandle, chat_id: String, config: plan_v2::PlanV2Config) -> Result<(),String> {
+    routing::validate(&config.routing)?;
+    update(&app,|s| {
+        let chat = s.chats.iter_mut().find(|c| c.id == chat_id).ok_or("Chat inexistente")?;
+        if chat.messages.iter().any(|m| m.status == "pending") { return Err("Esperá a que termine el mensaje del Lead".into()); }
+        chat.team.plan_v2 = config;
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub async fn team_routing_catalog(app: AppHandle, chat_id: String) -> Result<Vec<routing::AvailableModel>,String> {
+    crate::proc::blocking(move || {
+        let chat = read(&app)?.chats.into_iter().find(|c| c.id == chat_id).ok_or("Chat inexistente")?;
+        let client = runner::client(&app,&chat.team.allowed_repositories[0])?;
+        Ok(routing::catalog(&client.get_resilient("/config/providers")?))
+    }).await
+}
+
+#[tauri::command]
+pub fn preview_plan_patch(app: AppHandle, patch: plan_v2::PlanPatch) -> Result<plan_v2::PlanRevision,String> {
+    let current = run(&app,&patch.run_id)?;
+    plan_v2::simulate_patch(&current,&patch,"user").map(|(_,receipt)| receipt)
+}
+
+#[tauri::command]
+pub fn apply_plan_patch(app: AppHandle, patch: plan_v2::PlanPatch) -> Result<plan_v2::PlanRevision,String> {
+    update_run(&app,&patch.run_id,|current| {
+        let (next,receipt) = plan_v2::simulate_patch(current,&patch,"user")?;
+        *current = next;
+        Ok(receipt)
+    })
+}
+
+#[tauri::command]
 pub fn team_runs_model(
     app: AppHandle,
     run_id: String,
@@ -738,6 +821,7 @@ pub fn team_runs_model(
         r.configuration_changes.push(serde_json::json!({"at":now(),"agentId":agent_id,"beforeModel":employee.model,"model":model,"variant":variant}));
         employee.model = model;
         employee.variant = variant;
+        if r.plan_v2.enabled && !r.team.plan_v2.routing.pinned_agents.contains(&agent_id) { r.team.plan_v2.routing.pinned_agents.push(agent_id); }
         Ok(())
     })
 }
@@ -873,17 +957,22 @@ mod tests {
         let mut team = serde_json::to_value(domain::tests::team()).unwrap();
         team.as_object_mut().unwrap().remove("evidenceTargets");
         team.as_object_mut().unwrap().remove("limits");
+        team.as_object_mut().unwrap().remove("planV2");
         let legacy = serde_json::json!({"schemaVersion":1,"teams":[team.clone()],"skills":catalog(),"chats":[{"id":"chat","title":"Original","team":team,"skills":[],"archived":false,"createdAt":12,"runs":[{"id":"original-run","goal":"Original goal","team":team,"skills":[],"status":"awaiting_manual_qa","startedAt":12,"finishedAt":13,"planSessionId":null,"tasks":[],"summary":"Entrega original","error":null,"evidenceDir":"original","artifacts":[],"baseline":[],"notified":true}]}]});
         db.execute("INSERT INTO team_store VALUES(1,?1)", [legacy.to_string()])
             .unwrap();
         let migrated = read_db(&db).unwrap();
-        assert_eq!(migrated.schema_version, 2);
+        assert_eq!(migrated.schema_version, 3);
+        let backup: String = db.query_row("SELECT document FROM team_store_migration_backup WHERE schema_version=1",[],|r| r.get(0)).unwrap();
+        assert_eq!(backup,legacy.to_string());
         assert!(migrated.teams[0].evidence_targets.is_empty());
+        assert!(!migrated.teams[0].plan_v2.enabled);
         let run = &migrated.chats[0].runs[0];
         assert_eq!(run.summary, "Entrega original");
         assert_eq!(run.status, "awaiting_manual_qa");
         assert!(run.notified);
         assert!(run.observations.is_empty());
+        assert!(!run.plan_v2.enabled);
         assert!(run.session_usage.is_empty());
         write_db(&mut db, &migrated).unwrap();
         assert_eq!(read_db(&db).unwrap().chats[0].runs[0].id, "original-run");

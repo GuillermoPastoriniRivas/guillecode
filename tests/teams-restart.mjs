@@ -8,6 +8,8 @@ import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 
 const delay=(ms)=>new Promise((done)=>setTimeout(done,ms))
+const planV2=process.argv.includes('--plan-v2')
+const routed=process.argv.includes('--routing')
 const noGit=process.argv.includes('--no-git')
 const coordination=process.argv.includes('--coordination')
 const autonomous=process.argv.includes('--auto')
@@ -31,8 +33,12 @@ const mock=createServer(async(request,response)=>{
   const engine=text.includes('engine-crash'),outputs=body.input.filter((i)=>i.type==='function_call_output')
   const isReview=text.includes('Sos el Lead revisor')||text.includes('Sos el Lead de cierre')
   let item
-  const message=(value)=>({type:'message',id:`msg-${randomUUID()}`,role:'assistant',content:[{type:'output_text',text:JSON.stringify(value),annotations:[]}],status:'completed'})
-  if(coordination&&(body.model==='qa-recovery-front'||autonomous&&text.includes('Frontend 1 (Frontend)'))){
+  const message=(value)=>{
+    if(planV2&&value.tasks?.length){value.requirements=[{id:'R1',description:'Aplicar el efecto una sola vez y verificarlo después de reiniciar',limitation:null}];for(const task of value.tasks){task.requirementIds=['R1'];task.risk='low';task.verificationPlan=[{kind:'command',command:engine?verify:verifyApp,expected:'exitCode=0 y exactamente un efecto observado'}]}}
+    return ({type:'message',id:`msg-${randomUUID()}`,role:'assistant',content:[{type:'output_text',text:JSON.stringify(value),annotations:[]}],status:'completed'})
+  }
+  if(latestPrompt.includes('Sos el Supervisor de planificación.'))item=message({covered:true,summary:'El plan cubre el efecto único y su verificación observada después del reinicio',missingRequirements:[]})
+  else if(coordination&&(body.model==='qa-recovery-front'||autonomous&&text.includes('Frontend 1 (Frontend)'))){
     const continuing=text.includes('COORDINACIÓN ACTUAL DEL LEAD')
     if(!continuing)item=message({status:'waiting_dependency',summary:'Preparación independiente terminada; necesito el efecto del backend',checks:[],limitations:[],request:{message:'Lead, revisá la entrega effect antes de integrar',taskIds:['effect']}})
     else if(outputs.length)item=message({status:'completed',summary:'Integración comprobada tras respuesta del Lead',checks:[verifyApp],limitations:[]})
@@ -61,7 +67,8 @@ const mock=createServer(async(request,response)=>{
     // A persisted call can have been interrupted before its result arrived.
     // Only claim verification after that exact call has a successful output.
     const verified=body.input.some((i)=>i.type==='function_call'&&i.arguments?.includes('readFileSync')&&outputs.some((o)=>o.call_id===i.call_id&&!/error|abort|interrupt|cancel|timed? ?out/i.test(JSON.stringify(o.output))))
-    if((outputs.length>0&&!engine)||(engine&&verified))item=message({status:'completed',summary:'El efecto existe una sola vez; verificado',checks:[engine?verify:command(false)],limitations:[]})
+    if(planV2&&outputs.length&&!verified)item={type:'function_call',id:`fc-${randomUUID()}`,call_id:`call-${randomUUID()}`,name:'bash',arguments:JSON.stringify({command:engine?verify:verifyApp,description:'Verificar el efecto sin repetirlo',timeout:10000}),status:'completed'}
+    else if((outputs.length>0&&!engine)||(engine&&verified))item=message({status:'completed',summary:'El efecto existe una sola vez; verificado',checks:[planV2?(engine?verify:verifyApp):engine?verify:command(false)],limitations:[]})
     else {
       const replayingInterruptedEngine=engine&&engineCalls>1&&!continuing
       if(replayingInterruptedEngine)engineOriginalRetries++
@@ -75,7 +82,7 @@ await new Promise((done)=>mock.listen(0,'127.0.0.1',done))
 const reserve=tcpServer();await new Promise((done)=>reserve.listen(0,'127.0.0.1',done));const port=reserve.address().port;await new Promise((done)=>reserve.close(done))
 const origin=`http://127.0.0.1:${port}`
 const env=Object.fromEntries(['PATH','SystemRoot','WINDIR','COMSPEC','TEMP','TMP'].filter((k)=>process.env[k]).map((k)=>[k,process.env[k]]))
-Object.assign(env,{USERPROFILE:profile,HOME:profile,APPDATA:profile,LOCALAPPDATA:profile,XDG_DATA_HOME:join(profile,'data'),XDG_CONFIG_HOME:join(profile,'config'),XDG_CACHE_HOME:join(profile,'cache'),XDG_STATE_HOME:join(profile,'state'),OPENCODE_CONFIG_DIR:join(profile,'config','opencode'),OPENCODE_DISABLE_EXTERNAL_SKILLS:'true',OPENCODE_DISABLE_PROJECT_CONFIG:'true',OPENCODE_SERVER_PASSWORD:'qa-password',OPENCODE_CONFIG_CONTENT:JSON.stringify({enabled_providers:['openai'],provider:{openai:{options:{apiKey:'test-fake',baseURL:`http://127.0.0.1:${mock.address().port}/v1`},models:Object.fromEntries(['qa-recovery-lead','qa-recovery-worker','qa-recovery-front'].map((id)=>[id,{name:id,limit:{context:200000,output:16000}}]))}},agent:{title:{disable:true},summary:{disable:true}}})})
+Object.assign(env,{USERPROFILE:profile,HOME:profile,APPDATA:profile,LOCALAPPDATA:profile,XDG_DATA_HOME:join(profile,'data'),XDG_CONFIG_HOME:join(profile,'config'),XDG_CACHE_HOME:join(profile,'cache'),XDG_STATE_HOME:join(profile,'state'),OPENCODE_CONFIG_DIR:join(profile,'config','opencode'),OPENCODE_DISABLE_EXTERNAL_SKILLS:'true',OPENCODE_DISABLE_PROJECT_CONFIG:'true',OPENCODE_SERVER_PASSWORD:'qa-password',OPENCODE_CONFIG_CONTENT:JSON.stringify({enabled_providers:['openai'],provider:{openai:{options:{apiKey:'test-fake',baseURL:`http://127.0.0.1:${mock.address().port}/v1`},models:Object.fromEntries(['qa-recovery-lead','qa-recovery-worker','qa-recovery-front'].map((id)=>[id,{name:id,tool_call:true,reasoning:true,limit:{context:200000,output:16000}}]))}},agent:{title:{disable:true},summary:{disable:true}}})})
 await mkdir(env.OPENCODE_CONFIG_DIR,{recursive:true})
 let engine,app,dataDir,appLog='',engineLog=''
 async function startEngine(){
@@ -104,7 +111,7 @@ try{
   async function phase(name,terminate=false){
     const signal=join(profile,`${name}.json`)
     appLog=''
-    app=spawn(executable,['teams::restart_tests::restart_phase','--ignored','--exact','--nocapture','--test-threads=1'],{env:{...process.env,GUILLE_RESTART_AUTO:autonomous?'1':'0',GUILLE_RESTART_REPO:repo,GUILLE_RESTART_COORDINATION:coordination?'1':'0',GUILLE_RESTART_NO_GIT:noGit?'1':'0',GUILLE_RESTART_PHASE:name,GUILLE_RESTART_SIGNAL:signal,GUILLE_RESTART_APP:identifier,GUILLE_RESTART_ENGINE:origin},windowsHide:true,stdio:'pipe'})
+    app=spawn(executable,['teams::restart_tests::restart_phase','--ignored','--exact','--nocapture','--test-threads=1'],{env:{...process.env,GUILLE_RESTART_ROUTING:routed?'1':'0',GUILLE_RESTART_PLAN_V2:planV2?'1':'0',GUILLE_RESTART_AUTO:autonomous?'1':'0',GUILLE_RESTART_REPO:repo,GUILLE_RESTART_COORDINATION:coordination?'1':'0',GUILLE_RESTART_NO_GIT:noGit?'1':'0',GUILLE_RESTART_PHASE:name,GUILLE_RESTART_SIGNAL:signal,GUILLE_RESTART_APP:identifier,GUILLE_RESTART_ENGINE:origin},windowsHide:true,stdio:'pipe'})
     const exited=new Promise((done)=>app.once('exit',done))
     for(const stream of [app.stdout,app.stderr])stream.on('data',(b)=>{appLog=(appLog+b).slice(-15000)})
     let report
@@ -140,6 +147,8 @@ try{
   }
   const count=workerCalls
   const resumed=await phase('resume')
+  if(planV2){assert.equal(resumed.planRevision,first.planRevision);assert.equal(resumed.planDigest,first.planDigest);assert.ok(resumed.planRevision>0)}
+  if(routed){assert.ok(first.routing);assert.deepEqual(resumed.routing,first.routing)}
   assert.equal(resumed.sessionId,first.sessionId);assert.equal(workerCalls,count,'A completed worker must not receive another implementation prompt')
   await phase('reopen');assert.equal(workerCalls,count)
   if(coordination){
@@ -155,6 +164,7 @@ try{
   kill(engine);await killFixtureTool('engine');await delay(500);await startEngine()
   const recovered=await phase('resume_engine')
   assert.equal(recovered.sessionId,second.sessionId)
+  if(routed){assert.ok(second.routing);assert.deepEqual(recovered.routing,second.routing)}
   assert.ok(continuationCalls>0||engineOriginalRetries>0,'Recovery must continue explicitly or verify an engine-resumed request')
   assert.equal(await readFile(join(repo,'app-effects.log'),'utf8'),'once\n')
   assert.equal(await readFile(join(repo,'engine-effects.log'),'utf8'),'once\n')

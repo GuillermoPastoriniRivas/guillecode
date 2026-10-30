@@ -1,0 +1,53 @@
+name: Plan Vivo V2
+on:
+  pull_request:
+    paths:
+      - 'src-tauri/src/teams/**'
+      - 'src/team/**'
+      - 'src/agent/TeamChat.tsx'
+      - 'src/state/teams.ts'
+      - 'src/styles/teams.css'
+      - 'src-tauri/src/lib.rs'
+      - 'src-tauri/src/live.rs'
+      - 'src-tauri/src/remote.rs'
+      - 'src/pwa/**'
+      - 'benchmarks/plan-v2/**'
+      - 'src-tauri/Cargo.*'
+      - 'package*.json'
+      - 'tests/**'
+      - '.github/workflows/plan-v2.yml'
+  workflow_dispatch:
+jobs:
+  contracts-and-board:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - run: npm run build:pwa
+      - run: npm run release:engine
+      - run: npm run release:whisper
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --release --lib --features desktop-e2e teams:: -- --test-threads=2
+      - run: npx playwright install msedge
+      - run: npx playwright test tests/e2e/teams.spec.ts tests/e2e/pwa-teams.spec.ts tests/e2e/pwa-live.spec.ts --workers=1
+      - run: npm run benchmark:plan-v2
+      - run: node tests/teams-engine.mjs --plan-v2 --routing
+      - run: node tests/teams-engine.mjs --invalid-plan-v2
+      - run: node tests/teams-engine.mjs --plan-v2 --routing --no-git
+      - run: node tests/teams-restart.mjs --plan-v2 --routing
+      - run: npx tauri build --no-bundle --ci
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: plan-v2-ui-evidence
+          path: test-results

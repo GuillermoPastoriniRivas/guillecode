@@ -48,6 +48,8 @@ fn restart_phase() {
             let mut ready = false;
             if phase.starts_with("prepare") {
                 let mut team = super::domain::tests::team();
+                team.plan_v2.enabled = std::env::var("GUILLE_RESTART_PLAN_V2").as_deref() == Ok("1");
+                team.plan_v2.routing.enabled = std::env::var("GUILLE_RESTART_ROUTING").as_deref() == Ok("1");
                 team.project_root = repo.clone();
                 team.allowed_repositories = vec![repo.clone()];
                 team.members[0].model.model_id = "qa-recovery-lead".into();
@@ -138,7 +140,7 @@ fn restart_phase() {
                         .exists()
                 {
                     let attempt = r.tasks[0].attempts[0].clone();
-                    std::fs::write(&signal,serde_json::json!({"status":"ready","pid":std::process::id(),"runId":r.id,"sessionId":attempt.session_id,"frontSessionId":r.tasks.get(1).and_then(|t|t.attempts.last()).and_then(|a|a.session_id.as_ref()),"coordinationId":r.coordination.first().map(|c|&c.id),"dataDir":handle.path().app_data_dir().unwrap()}).to_string()).unwrap();
+                    std::fs::write(&signal,serde_json::json!({"status":"ready","pid":std::process::id(),"runId":r.id,"planRevision":r.plan_v2.revision_number,"planDigest":r.plan_v2.digest,"routing":attempt.routing,"sessionId":attempt.session_id,"frontSessionId":r.tasks.get(1).and_then(|t|t.attempts.last()).and_then(|a|a.session_id.as_ref()),"coordinationId":r.coordination.first().map(|c|&c.id),"dataDir":handle.path().app_data_dir().unwrap()}).to_string()).unwrap();
                     ready = true;
                 }
                 if !active(&r.status) {
@@ -177,7 +179,7 @@ fn restart_phase() {
                             .join("cambios/cambios.diff")
                             .is_file());
                     }
-                    std::fs::write(&signal,serde_json::json!({"status":"recovered","sessionId":r.tasks[0].attempts[0].session_id,"frontSessionId":r.tasks.get(1).and_then(|t|t.attempts.last()).and_then(|a|a.session_id.as_ref()),"coordinationId":r.coordination.first().map(|c|&c.id),"runId":r.id,"attempts":r.tasks[0].attempts.len(),"dataDir":handle.path().app_data_dir().unwrap()}).to_string()).unwrap();
+                    std::fs::write(&signal,serde_json::json!({"status":"recovered","planRevision":r.plan_v2.revision_number,"planDigest":r.plan_v2.digest,"routing":r.tasks[0].attempts[0].routing,"sessionId":r.tasks[0].attempts[0].session_id,"frontSessionId":r.tasks.get(1).and_then(|t|t.attempts.last()).and_then(|a|a.session_id.as_ref()),"coordinationId":r.coordination.first().map(|c|&c.id),"runId":r.id,"attempts":r.tasks[0].attempts.len(),"dataDir":handle.path().app_data_dir().unwrap()}).to_string()).unwrap();
                     break;
                 }
                 assert!(

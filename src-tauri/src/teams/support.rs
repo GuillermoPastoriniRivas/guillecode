@@ -58,11 +58,19 @@ pub fn begin(
     task: Option<&str>,
     request: Option<&str>,
 ) -> Result<(Employee, String, String), String> {
-    let a = ensure(app, id, kind == "investigation")?;
+    let mut a = ensure(app, id, kind == "investigation")?;
     if run(app, id)?.support_reports.len() >= 500 {
         return Err("Se alcanzó el límite de informes de apoyo de esta ejecución".into());
     }
     let client = runner::client(app, repository)?;
+    let current = run(app,id)?;
+    let routing = if current.plan_v2.enabled && current.team.plan_v2.routing.enabled {
+        let models = super::routing::catalog(&client.get_resilient("/config/providers")?);
+        let category = if kind == "investigation" { "deep" } else { "review" };
+        let (selected,receipt) = super::routing::select(&current.team.plan_v2.routing,&models,&a,category,!current.images.is_empty(),&[])
+            .map_err(|e| match e { super::routing::RouteError::Unavailable(e)=>e,super::routing::RouteError::Capacity=>"No hay capacidad para la revisión".into() })?;
+        a = selected; Some(receipt)
+    } else { None };
     let session = runner::create_session(
         &client,
         &a,
@@ -82,6 +90,7 @@ pub fn begin(
     let report = id_from_domain();
     update_run(app, id, |r| {
         r.support_reports.push(SupportReport {
+            routing,
             id: report.clone(),
             kind: kind.into(),
             agent: a.clone(),

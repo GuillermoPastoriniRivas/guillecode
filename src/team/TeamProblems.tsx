@@ -29,7 +29,7 @@ export function TeamProblems({ items, run, pending, onInspect, onSettings, onAsk
     {!blocked.length && <p className="team-problem-intro">Los integrantes conservan su trabajo mientras el Lead organiza cómo continuar. No necesitás intervenir ahora.</p>}
     <div className="team-attention-list">{blocked.map(item => render(item))}</div>
     {waiting.length > 0 && (blocked.length ? <details className="team-waiting-details"><summary>{waiting.length} {waiting.length === 1 ? "integrante en espera" : "integrantes en espera"}</summary>{waiting.map(item => render(item))}</details> : <div className="team-attention-list">{waiting.map(item => render(item))}</div>)}
-    <div className="team-problem-actions"><button className="btn btn-sm" onClick={onAsk}>Preguntarle al Lead qué pasó</button>{run && ["blocked", "failed"].includes(run.status) && <button className="btn btn-primary" disabled={pending} onClick={onContinue}>Continuar lo pendiente</button>}</div>
+    <div className="team-problem-actions"><button className="btn btn-sm" onClick={onAsk}>Preguntarle al Lead qué pasó</button>{run && ["blocked", "failed", "planning_blocked"].includes(run.status) && <button className="btn btn-primary" disabled={pending} onClick={onContinue}>Continuar lo pendiente</button>}</div>
     {run?.status === "running" && blocked.length > 0 && run.tasks.some(t => ["running", "verifying"].includes(t.status) && !items.some(i => i.id === t.id)) && <p className="team-note">Las tareas independientes siguen trabajando.</p>}
   </section>
     <dialog ref={dialog} className="team-problem-dialog" aria-label="Diagnóstico del equipo">

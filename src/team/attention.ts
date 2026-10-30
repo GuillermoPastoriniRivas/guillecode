@@ -27,7 +27,7 @@ export function teamAttention(chat: TeamChatRecord, run: TeamRun | undefined, re
       addSession(attempt?.reviewSessionId, supervisor?.name ?? lead, `Revisar ${task.title}`, task.repository, supervisor?.id ?? leadId)
       const coordination = run.coordination?.findLast(c => c.fromTaskId === task.id && !["resolved", "cancelled"].includes(c.status))
       for (const session of coordination?.sessions ?? []) addSession(session, lead, `Ayudar a ${name}`, task.repository)
-      if (coordination && (coordination.status === "blocked" || coordination.status === "checking" && ["blocked", "failed"].includes(run.status))) {
+      if (coordination && (coordination.status === "blocked" || coordination.status === "checking" && ["blocked", "failed", "planning_blocked"].includes(run.status))) {
         items.push({ id: `coordination-${coordination.id}`, agentId: leadId, name: lead, task: `Destrabar a ${name} · ${task.title}`, kind: "blocked",
           reason: readableTeamError(coordination.summary || run.error || "El Lead no pudo terminar de revisar el pedido de este integrante."),
           sessionId: coordination.sessions.at(-1) ?? null, directory: task.repository })
@@ -47,7 +47,7 @@ export function teamAttention(chat: TeamChatRecord, run: TeamRun | undefined, re
           sessionId: attempt?.sessionId ?? null, directory: task.repository })
       }
     }
-    if (!items.some(i => i.kind === "blocked") && ["blocked", "failed"].includes(run.status)) {
+    if (!items.some(i => i.kind === "blocked") && ["blocked", "failed", "planning_blocked"].includes(run.status)) {
       const coordinationSession = run.coordination?.findLast(c => ["blocked", "checking"].includes(c.status))?.sessions.at(-1)
       const support=run.supportReports?.at(-1)
       const failedSupport=support && ["failed","uncertain"].includes(support.status) ? support : undefined
@@ -57,7 +57,7 @@ export function teamAttention(chat: TeamChatRecord, run: TeamRun | undefined, re
     }
     // Older engines expose a waiting permission in run.error before its live
     // request arrives. Keep this visible while the run is still working.
-    if (run.error && !["blocked", "failed"].includes(run.status) && /espera un permiso/i.test(run.error)) {
+    if (run.error && !["blocked", "failed", "planning_blocked"].includes(run.status) && /espera un permiso/i.test(run.error)) {
       const owner = run.team.members.find(m => m.name && run.error!.includes(m.name))
       items.push({ id: "permission-pending", agentId: owner?.id ?? null, name: owner?.name ?? "Un integrante", task: "Permiso pendiente", kind: "permission", reason: readableTeamError(run.error), sessionId: null, directory: root })
     }

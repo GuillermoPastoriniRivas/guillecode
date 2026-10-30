@@ -36,6 +36,7 @@ export function memberState(member: Employee, chat: TeamChatRecord, run: TeamRun
     if (run.tasks.some(t => t.status === "verifying")) return run.team.members.some(m=>m.id==="support-supervisor") ? state("Coordinando revisiones", "El Supervisor comprueba las entregas y le informa los faltantes.", "working") : state("Revisando", "Está comprobando las entregas de los especialistas.", "working")
   }
   const tasks = run.tasks.filter(t => t.assignedAgentId === member.id)
+  if (tasks.some(t => t.attempts.at(-1)?.status === "waiting_model")) return state("Esperando modelo", "Espera capacidad del proveedor sin iniciar una sesión nueva.", "waiting")
   const working = tasks.filter(t => t.status === "running")
   if (working.length) return state("Trabajando", working.map(t => t.title).join(" · "), "working")
   if (tasks.some(t => t.status === "verifying")) return state("Esperando revisión", "Terminó su parte; se está revisando el resultado y su integración.", "waiting")

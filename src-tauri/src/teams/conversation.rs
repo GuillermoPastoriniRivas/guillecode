@@ -114,7 +114,7 @@ pub(super) fn diagnosis(run: Option<&Run>) -> String {
         })
         .take(3)
         .collect();
-    let coordination = run.coordination.iter().rev().find(|c| c.status == "blocked" || c.status == "checking" && matches!(run.status.as_str(), "blocked" | "failed"));
+    let coordination = run.coordination.iter().rev().find(|c| c.status == "blocked" || c.status == "checking" && matches!(run.status.as_str(), "blocked" | "failed" | "planning_blocked"));
     if let Some(request) = coordination {
         let task = run.tasks.iter().find(|t| t.id == request.from_task_id);
         let worker = task.and_then(|t| run.team.members.iter().find(|m| m.id == t.assigned_agent_id)).map(|m| m.name.as_str()).unwrap_or("un integrante");
@@ -195,12 +195,14 @@ pub(super) fn diagnosis(run: Option<&Run>) -> String {
             "paused" => "El equipo está pausado. Las tareas terminadas se conservan.",
             "cancelled" => "La ejecución se canceló. Los cambios ya hechos se conservan.",
             "planning" => "El Lead está organizando las tareas y eligiendo los especialistas.",
+            "planning_blocked" => "El plan sigue siendo inválido después de repararlo. No se inició ningún trabajador; podés reintentar la planificación desde el tablero.",
+            "plan_ready" => "El contrato está validado y espera que inicies el plan desde el tablero.",
             "blocked" | "failed" => "El equipo se detuvo. No quedó una causa confirmada en el registro; abrí la última actividad del Lead antes de reintentar.",
             _ => "El equipo sigue trabajando; todavía no terminó la revisión final.",
         }.into());
         }
     }
-    if matches!(run.status.as_str(), "blocked" | "failed") {
+    if matches!(run.status.as_str(), "blocked" | "failed" | "planning_blocked") {
         if coordination.is_none() { lines.push(help_hint(run.error.as_deref().unwrap_or("")).into()); }
     }
     lines.join("\n\n")
@@ -502,7 +504,7 @@ fn respond(
             .map(|r| {
                 matches!(
                     r.status.as_str(),
-                    "blocked" | "failed" | "running" | "planning" | "paused"
+                    "blocked" | "failed" | "planning_blocked" | "plan_ready" | "running" | "planning" | "paused"
                 )
             })
             .unwrap_or(false)
@@ -682,20 +684,26 @@ fn work(
     if let Some(run) = chat.runs.last().filter(|r| {
         matches!(
             r.status.as_str(),
-            "blocked" | "failed" | "running" | "planning" | "paused"
+            "blocked" | "failed" | "planning_blocked" | "plan_ready" | "running" | "planning" | "paused"
         )
     }) {
         let status = update_run(app, &run.id, |r| {
             if matches!(
                 r.status.as_str(),
-                "blocked" | "failed" | "running" | "planning" | "paused"
+                "blocked" | "failed" | "planning_blocked" | "plan_ready" | "running" | "planning" | "paused"
             ) {
                 super::attachments::merge(&mut r.images, images)?;
                 r.guidance.push(text.into());
+                if r.plan_v2.enabled && r.plan_v2.revision_number > 0 { r.plan_v2.pending_change = true; }
             }
             Ok(r.status.clone())
         })?;
-        if matches!(status.as_str(), "blocked" | "failed") {
+        if run.plan_v2.enabled && run.plan_v2.revision_number > 0 {
+            let summary = super::plan_v2::apply_guidance(app,&run.id)?;
+            if ["blocked","failed"].contains(&status.as_str()) { super::control(app,&run.id,"retry")?; }
+            return Ok(summary);
+        }
+        if matches!(status.as_str(), "blocked" | "failed" | "planning_blocked") {
             super::control(app, &run.id, "retry")?;
             return Ok("Voy a corregir y revisar lo pendiente con tu indicación. Las tareas terminadas se conservan.".into());
         }

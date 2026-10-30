@@ -31,6 +31,27 @@ async function setup(page: Page) {
     let result: unknown = null
     if (["recent_projects", "routines_list", "auth_entries", "live_busy_sessions", "fs_read_dir", "fs_list_files", "term_shells", "windows_list", "git_subrepos"].includes(command)) result = []
     if (command === "teams_state") result = store
+    if (command === "team_routing_catalog") result = ["lead", "worker"].map(modelId => ({ runtimeId: "opencode", providerId: "openai", modelId, capabilityScope: "provider:openai", variant: null, name: `${modelId} habilitado`, tools: true, vision: true, reasoning: true, variants: ["high"] }))
+    if (command === "team_chats_planner") {
+      const chat = store.chats.find(c => c.id === args.chatId)!
+      chat.team.planV2 = structuredClone(args.config as NonNullable<Team["planV2"]>)
+      result = true
+    }
+    if (command === "apply_plan_patch") {
+      const patch = args.patch as { operationId: string; runId: string; expectedRevision: number; expectedDigest: string; reason: string; operations: { type: string; taskId: string; priority?: number; agentId?: string }[] }
+      const run = store.chats.flatMap(c => c.runs).find(r => r.id === patch.runId)!
+      if (run.planV2?.revisionNumber === patch.expectedRevision && run.planV2.digest === patch.expectedDigest) {
+        for (const op of patch.operations) {
+          const task = run.tasks.find(t => t.id === op.taskId)!
+          if (task.status === "pending" && !task.attempts.length) {
+            if (op.type === "REPRIORITIZE_PENDING") task.priority = op.priority
+            if (op.type === "REASSIGN_PENDING") task.assignedAgentId = op.agentId!
+          }
+        }
+        run.planV2.revisionNumber++; run.planV2.sequence++; run.planV2.digest = `digest-${run.planV2.revisionNumber}`
+        result = { operationId: patch.operationId, number: run.planV2.revisionNumber }
+      }
+    }
     if (command === "browser_internal_pages") result=browserPages
     if (command === "browser_internal_open") {
       const next={label:"embedded-user",actor:"user",url:String(args.url||"about:blank")};browserPages.splice(0,browserPages.length,next);result=next
@@ -955,4 +976,143 @@ test("Actividad muestra al Solucionador y Supervisor y el cierre compara requisi
   await expect(analysis).toContainText("Frontend y backend integrados · Comprobado")
   await expect(analysis).toContainText("código 0")
   await page.screenshot({path:test.info().outputPath("supervisor-objetivo-y-resultado.png")})
+})
+
+
+async function boardSetup(page: Page) {
+  const fixture = await setup(page)
+  await createTeam(page)
+  await page.getByLabel("Mensaje para el equipo").fill("Implementar y comprobar el contrato de autenticación")
+  await page.getByLabel("Mensaje para el equipo").press("Enter")
+  const run = fixture.store.chats[0].runs[0]
+  run.planV2 = { enabled: true, reviewBeforeStart: false, stage: "validated", revisionNumber: 1, digest: "digest-1", sequence: 1, revisions: [], validation: { valid: true, issues: [] }, discovery: [] }
+  const worker = run.team.members.find(a => a.id !== run.team.leadAgentId)!
+  run.tasks = ["api", "ui", "integration"].map(id => ({ id, title: id === "api" ? "Crear API" : id === "ui" ? "Crear pantalla" : "Verificar integración", objective: "Implementar y comprobar entradas inválidas", assignedAgentId: worker.id, repository: run.team.projectRoot, dependencies: id === "integration" ? ["api", "ui"] : [], expectedFiles: [`${id}/main.ts`], writePaths: [`${id}/`], acceptanceCriteria: ["La entrada inválida es rechazada"], verificationPlan: [{ kind: "command" as const, command: "node --test", expected: "exitCode=0" }], status: "pending", attempts: [], error: null }))
+  const refresh = () => page.evaluate(async () => { const { refreshTeams } = await import(/* @vite-ignore */ "/src/state/teams.ts"); await refreshTeams() })
+  await refresh()
+  await page.getByRole("navigation", { name: "Vistas del equipo" }).getByRole("button", { name: "Tablero", exact: true }).click()
+  await page.getByRole("button", { name: "Ampliar chat del equipo" }).click()
+  await expect(page.getByRole("region", { name: "Tablero de tareas" })).toBeVisible()
+  return { ...fixture, run, refresh }
+}
+
+test("Plan Vivo: las tarjetas siguen sesiones y evidencia, rechazan falsos completados y reconstruyen el snapshot", async ({ page }) => {
+  const { run, refresh } = await boardSetup(page)
+  const card = page.locator('.team-board-card[data-task-id="api"]')
+  await expect(card).toHaveAttribute("data-column", "ready")
+  run.tasks[0].status = "running"
+  run.tasks[0].attempts = [{ id: "attempt-1", agent: run.team.members[1], sessionId: "worker-session", reviewSessionId: null, startedAt: Date.now(), finishedAt: null, status: "running", summary: "", error: null, review: null, commands: [] }]
+  run.planV2!.sequence++
+  await refresh(); await refresh()
+  await expect(card).toHaveAttribute("data-column", "running")
+  await expect(card).toHaveCount(1)
+  run.tasks[0].status = "completed"
+  run.tasks[0].attempts[0].summary = "Terminé y todo pasó"
+  run.planV2!.sequence++
+  await refresh()
+  await expect(card).toHaveAttribute("data-column", "verifying")
+  const attempt = run.tasks[0].attempts[0]
+  attempt.finishedAt = Date.now(); attempt.status = "completed"
+  attempt.reviewSessionId = "supervisor-session"
+  attempt.review = { status: "approved", criteriaSatisfied: true, summary: "Entrada inválida y test comprobados" }
+  attempt.declaredChecks = ["node --test"]
+  attempt.commands = [{ command: "node --test", exitCode: 0, output: "PASS" }]
+  run.planV2!.sequence++
+  await refresh()
+  await expect(card).toHaveAttribute("data-column", "verified")
+  const pendingCard = page.locator('.team-board-card[data-task-id="integration"]')
+  await expect(pendingCard).toHaveCSS("display", "block")
+  expect((await pendingCard.boundingBox())!.width).toBeGreaterThan(150)
+  await page.getByRole("combobox", { name: "Agrupar", exact: true }).selectOption("agent")
+  await expect(card).toHaveAttribute("data-column", "verified")
+  await page.screenshot({ path: test.info().outputPath("plan-vivo-por-agente.png"), fullPage: true, animations: "disabled" })
+  await page.reload()
+  await page.getByTitle("Equipos IA", { exact: true }).click()
+  await page.getByText("Team Backend", { exact: true }).first().click()
+  await page.getByRole("navigation", { name: "Vistas del equipo" }).getByRole("button", { name: "Tablero", exact: true }).click()
+  await expect(page.locator('.team-board-card[data-task-id="api"]')).toHaveAttribute("data-column", "verified")
+})
+
+test("Plan Vivo: priorizar por teclado envía una revisión y nunca escribe estados de verificación", async ({ page }) => {
+  const { run, calls } = await boardSetup(page)
+  const button = page.getByRole("button", { name: "Abrir tarea ui: Crear pantalla" })
+  await button.focus(); await page.keyboard.press("Enter")
+  const detail = page.getByRole("complementary", { name: "Detalle de ui" })
+  await expect(detail).toBeVisible()
+  await detail.getByRole("button", { name: "Priorizar tarea pendiente" }).click()
+  await expect.poll(() => run.planV2!.revisionNumber).toBe(2)
+  const call = calls.find(c => c.command === "apply_plan_patch")!
+  const patch = call.args.patch as { expectedRevision: number; operationId: string; operations: {type: string}[] }
+  expect(patch.expectedRevision).toBe(1)
+  expect(patch.operationId).toBeTruthy()
+  expect(patch.operations[0].type).toBe("REPRIORITIZE_PENDING")
+  expect(JSON.stringify(patch)).not.toContain('"status"')
+  expect(run.tasks.find(t => t.id === "ui")!.status).toBe("pending")
+  await detail.getByRole("button", { name: "Cerrar detalle" }).click()
+  await expect(button).toBeFocused()
+})
+
+test("Plan Vivo: móvil y movimiento reducido muestran el bloqueo real y los criterios accesibles", async ({ page }) => {
+  const { run, refresh } = await boardSetup(page)
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.emulateMedia({ reducedMotion: "reduce" })
+  run.status = "planning_blocked"; run.tasks = []; run.planV2!.stage = "plan_invalid"
+  run.planV2!.validation = { valid: false, issues: [{ code: "CYCLE", taskIds: ["api", "ui"], message: "Las dependencias contienen un ciclo" }] }
+  run.planV2!.sequence++
+  await refresh()
+  await expect(page.getByRole("alert")).toContainText("No se inició ningún trabajador")
+  await expect(page.getByRole("alert")).toContainText("CYCLE")
+  await expect(page.getByRole("button", { name: "Reintentar planificación", exact: true })).toBeVisible()
+  await page.screenshot({ path: test.info().outputPath("plan-vivo-movil-bloqueado.png"), fullPage: true })
+})
+
+
+test("Plan Vivo: arrastrar pendientes prioriza por patch y un conflicto refresca el snapshot sin cambiar estados", async ({ page }) => {
+  const { run, calls } = await boardSetup(page)
+  const source = page.locator('.team-board-card[data-task-id="ui"]')
+  const target = page.locator('.team-board-card[data-task-id="api"]')
+  await source.dragTo(target)
+  await expect.poll(() => run.planV2!.revisionNumber).toBe(2)
+  expect(calls.filter(c => c.command === "apply_plan_patch")).toHaveLength(1)
+  expect(run.tasks.every(t => t.status === "pending")).toBe(true)
+  run.planV2!.revisionNumber = 3; run.planV2!.digest = "changed-by-another-window"; run.planV2!.sequence++
+  await page.evaluate(() => {
+    const api = (window as unknown as { __TAURI_INTERNALS__: { invoke: (command: string, args?: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__
+    const original = api.invoke
+    api.invoke = (command, args) => command === "apply_plan_patch" ? Promise.reject("REVISION_CONFLICT: el plan cambió") : original(command, args)
+  })
+  await source.getByRole("button", { name: "Abrir tarea ui: Crear pantalla" }).click()
+  await page.getByRole("button", { name: "Priorizar tarea pendiente" }).click()
+  await expect(page.getByText("El plan cambió", { exact: true })).toBeVisible()
+  await expect(page.getByText("PLAN VIVO · v3", { exact: true })).toBeVisible()
+  expect(run.tasks.every(t => t.status === "pending")).toBe(true)
+})
+
+test("Plan Vivo: ruteo opt-in guarda catálogo habilitado, alternativa y pin sin alterar ejecuciones", async ({ page }) => {
+  const { store, calls } = await setup(page)
+  await createTeam(page)
+  await page.getByRole("button", { name: "Configuración del equipo", exact: true }).click()
+  await page.getByText("Ruteo automático de modelos", { exact: true }).click()
+  await expect(page.getByLabel("Elegir modelos automáticamente")).toBeDisabled()
+  await page.getByLabel("Activar Plan Vivo V2", { exact: true }).click()
+  await expect(page.getByLabel("Activar Plan Vivo V2", { exact: true })).toBeChecked()
+  await page.getByLabel("Elegir modelos automáticamente").check()
+  const code = page.locator(".team-routing").getByRole("group", { name: "Código", exact: true })
+  await expect(code).toHaveCount(1)
+  await code.getByRole("combobox", { name: "Modelo principal", exact: true }).selectOption({ label: "openai · lead habilitado" })
+  await code.getByRole("combobox", { name: "Alternativa 1", exact: true }).selectOption({ label: "openai · worker habilitado" })
+  await page.getByLabel("Trabajadores simultáneos por proveedor").fill("1")
+  const lead = store.chats[0].team.members[0]
+  await page.getByLabel(`Fijar el modelo de ${lead.name}`, { exact: true }).check()
+  await page.getByRole("button", { name: "Guardar ruteo para próximos objetivos" }).click()
+  await expect.poll(() => store.chats[0].team.planV2?.routing?.enabled).toBe(true)
+  const routing = store.chats[0].team.planV2!.routing!
+  expect(routing.maxWorkersPerProvider).toBe(1)
+  expect(routing.pinnedAgents).toContain(lead.id)
+  expect(routing.routes[0].candidates.map(c => c.modelId)).toEqual(["lead", "worker"])
+  expect(calls.some(c => c.command === "team_routing_catalog")).toBe(true)
+  await page.getByLabel("Activar Plan Vivo V2", { exact: true }).click()
+  await expect(page.getByLabel("Activar Plan Vivo V2", { exact: true })).not.toBeChecked()
+  await expect.poll(() => store.chats[0].team.planV2?.enabled).toBe(false)
+  expect(store.chats[0].team.planV2!.routing!.routes).toEqual(routing.routes)
 })

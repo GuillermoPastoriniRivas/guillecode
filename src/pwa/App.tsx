@@ -3,11 +3,13 @@ import { readToken, hub, oc, AuthError, type HubInfo, type Permission, type Ques
 import { Home, type Route } from "./Home"
 import { SessionScreen } from "./Session"
 import { Icon } from "./ui"
+import { TeamsScreen } from "./Teams"
 
 type Toast = { title: string; body: string; url: string }
 
 function routeFromUrl(raw: string): Route | null {
   const url = new URL(raw, window.location.origin)
+  if (url.searchParams.has("teams")) return { kind: "teams", chatId: url.searchParams.get("chat") ?? undefined, runId: url.searchParams.get("run") ?? undefined }
   const project = url.searchParams.get("p")
   const id = url.searchParams.get("s")
   return project && id ? { kind: "session", project, id, title: "" } : null
@@ -16,6 +18,7 @@ function routeFromUrl(raw: string): Route | null {
 function initialRoute(): Route {
   const deep = routeFromUrl(window.location.href)
   if (!deep) return { kind: "home" }
+  if (deep.kind === "teams") return deep
   window.history.replaceState(null, "", "/")
   window.history.pushState({ session: true }, "")
   return deep
@@ -75,7 +78,8 @@ export function App() {
 
   const open = useCallback(
     (r: Route) => {
-      if (current.current.kind === "home") window.history.pushState({ session: true }, "")
+      const query = r.kind === "teams" ? new URLSearchParams({ teams: "1", ...(r.chatId ? { chat: r.chatId } : {}), ...(r.runId ? { run: r.runId } : {}) }) : r.kind === "session" ? new URLSearchParams({ p: r.project, s: r.id }) : new URLSearchParams()
+      window.history.pushState({ session: true }, "", `/${query.size ? `?${query}` : ""}`)
       go(r)
       setToast(null)
     },
@@ -86,12 +90,14 @@ export function App() {
     const last = current.current
     if (last.kind === "session") setViewed(last.id)
     go({ kind: "home" })
+    window.history.replaceState(null, "", "/")
   }, [go])
 
   useEffect(() => {
-    window.addEventListener("popstate", goHome)
-    return () => window.removeEventListener("popstate", goHome)
-  }, [goHome])
+    const pop = () => { const route = routeFromUrl(window.location.href); if (route) go(route); else goHome() }
+    window.addEventListener("popstate", pop)
+    return () => window.removeEventListener("popstate", pop)
+  }, [go, goHome])
 
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return
@@ -142,6 +148,8 @@ export function App() {
             else goHome()
           }}
         />
+      ) : route.kind === "teams" ? (
+        <TeamsScreen route={route} back={goHome} open={open} />
       ) : (
         <Home open={open} viewed={viewed} />
       )}

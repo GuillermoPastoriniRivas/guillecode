@@ -46,6 +46,8 @@ pub struct Employee {
 #[serde(rename_all = "camelCase")]
 pub struct Team {
     #[serde(default)]
+    pub plan_v2: super::plan_v2::PlanV2Config,
+    #[serde(default)]
     pub autonomous: bool,
     pub id: String,
     pub name: String,
@@ -140,6 +142,8 @@ pub struct Review {
 #[serde(rename_all = "camelCase")]
 pub struct Attempt {
     #[serde(default)]
+    pub routing: Option<super::routing::RoutingReceipt>,
+    #[serde(default)]
     pub resume_after_message_ids: Vec<String>,
     #[serde(default)]
     pub observations: Vec<serde_json::Value>,
@@ -163,6 +167,8 @@ pub struct Attempt {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Task {
+    #[serde(default, flatten)]
+    pub contract: super::plan_v2::TaskContract,
     pub id: String,
     pub title: String,
     pub objective: String,
@@ -188,6 +194,8 @@ fn pending() -> String {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Plan {
+    #[serde(default, flatten)]
+    pub contract: super::plan_v2::PlanContract,
     #[serde(default)]
     pub agents: Vec<AgentProposal>,
     pub tasks: Vec<Task>,
@@ -212,6 +220,8 @@ pub struct Artifact {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Run {
+    #[serde(default)]
+    pub plan_v2: super::plan_v2::PlanV2State,
     #[serde(default)]
     pub support_reports: Vec<SupportReport>,
     #[serde(default)]
@@ -258,6 +268,8 @@ pub struct Run {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all="camelCase")]
 pub struct SupportReport {
+    #[serde(default)]
+    pub routing: Option<super::routing::RoutingReceipt>,
     pub id: String,
     pub kind: String,
     pub agent: Employee,
@@ -426,7 +438,7 @@ pub fn overlaps(a: &str, b: &str) -> bool {
 pub fn active(status: &str) -> bool {
     matches!(
         status,
-        "planning" | "running" | "paused" | "delivering" | "cancelling"
+        "planning" | "plan_ready" | "running" | "paused" | "delivering" | "cancelling"
     )
 }
 
@@ -450,6 +462,7 @@ pub fn validate_limits(limits: &Limits) -> Result<(), String> {
     Ok(())
 }
 pub fn validate_team(t: &Team, skills: &[Skill]) -> Result<(), String> {
+    super::routing::validate(&t.plan_v2.routing)?;
     super::capture::validate_targets(&t.evidence_targets)?;
     validate_limits(&t.limits)?;
     if t.name.trim().is_empty()
@@ -612,6 +625,7 @@ pub(super) mod tests {
     use super::*;
     pub fn team() -> Team {
         Team {
+            plan_v2: Default::default(),
             autonomous: false,
             id: id(),
             name: "Team 1".into(),
@@ -641,6 +655,7 @@ pub(super) mod tests {
     }
     fn task(id: &str, deps: &[&str]) -> Task {
         Task {
+            contract: Default::default(),
             id: id.into(),
             title: id.into(),
             objective: "Objetivo".into(),
@@ -659,6 +674,7 @@ pub(super) mod tests {
     fn validates_dag_and_assignments() {
         assert!(validate_plan(
             &Plan {
+                contract: Default::default(),
                 agents: vec![],
                 evidence_targets: vec![],
                 tasks: vec![task("a", &[]), task("b", &["a"])]
@@ -673,6 +689,7 @@ pub(super) mod tests {
         ] {
             assert!(validate_plan(
                 &Plan {
+                    contract: Default::default(),
                     agents: vec![],
                     tasks,
                     evidence_targets: vec![]
@@ -685,6 +702,7 @@ pub(super) mod tests {
         t.repository = "D:/other".into();
         assert!(validate_plan(
             &Plan {
+                contract: Default::default(),
                 agents: vec![],
                 tasks: vec![t],
                 evidence_targets: vec![]

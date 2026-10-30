@@ -8,6 +8,10 @@ import { tmpdir } from "node:os"
 
 // A real bundled OpenCode and the real Rust scheduler edit a disposable folder.
 // Only inference is deterministic/loopback; no account, paid tokens or user repo.
+const planV2 = process.argv.includes("--plan-v2") || process.argv.includes("--invalid-plan-v2")
+const routed = process.argv.includes("--routing")
+const invalidPlanV2 = process.argv.includes("--invalid-plan-v2")
+let invalidPlanCalls = 0
 const noGit = process.argv.includes("--no-git")
 const autonomous = process.argv.includes("--auto")
 const supervision=process.argv.includes("--supervision")
@@ -74,6 +78,8 @@ const mock = createServer(async (request, response) => {
   const text = JSON.stringify(body.input)
   const latestUserPrompt = JSON.stringify([...body.input].reverse().find((item) => item.role === "user") ?? body.input.at(-1) ?? "")
   const leadPhase = [
+    ["plan-change", "Sos el Lead del Plan Vivo V2."],
+    ["plan-review", "Sos el Supervisor de planificación."],
     ["plan", "Actuás como Team Lead."],
     ["review", "Sos el Lead revisor"],
     ["review", "Sos el Supervisor revisor"],
@@ -84,8 +90,28 @@ const mock = createServer(async (request, response) => {
   ].map(([phase, marker]) => [phase, latestUserPrompt.indexOf(marker)]).filter(([, index]) => index >= 0).sort((a, b) => a[1] - b[1])[0]?.[0]
   if (autonomous) assert.ok(JSON.stringify(body.input).includes("data:image/png;base64,"), "User image must reach Lead conversation, planning, workers and review as an actual image part")
   let item
-  const message = (value) => ({ type: "message", id: `msg-${Date.now()}`, role: "assistant", content: [{ type: "output_text", text: JSON.stringify(value), annotations: [] }], status: "completed" })
-  if (leadPhase === 'solver') {
+  const message = (value) => {
+    if (planV2 && value?.tasks?.length) {
+      value.requirements = [{id:"R1",description:"Crear backend y frontend con versión 2 y comprobaciones observadas",limitation:null}]
+      for (const task of value.tasks) {
+        task.requirementIds = ["R1"]; task.risk = "low"; task.category = task.id === "frontend" ? "visual" : "code"
+        task.verificationPlan = [{kind:"command",command:commands[task.id] ?? commands.backend,expected:"exitCode=0 y archivo observado"}]
+      }
+    }
+    return ({ type: "message", id: `msg-${Date.now()}`, role: "assistant", content: [{ type: "output_text", text: JSON.stringify(value), annotations: [] }], status: "completed" })
+  }
+  if (leadPhase === "plan-review") {
+    const missing = latestUserPrompt.includes("Requisito omitido de cobertura")
+    item = message({covered:!missing,summary:missing ? "La propuesta omitió el criterio de refresh expirado que pidió el usuario." : "Backend y Frontend tienen criterios y comandos pertinentes que cubren el objetivo completo.",missingRequirements:missing?["Validar refresh expirado"]:[]})
+  }
+  else if (leadPhase === "plan-change") {
+    const latest = [...body.input].reverse().find(i => i.role === "user")
+    const prompt = typeof latest?.content === "string" ? latest.content : (latest?.content ?? []).map(p => p.text ?? "").join("\n")
+    const current = JSON.parse(prompt.split("PLAN VIGENTE: ")[1].split("\nREQUISITOS ACORDADOS:")[0])
+    item = message({ action:"PLAN_PATCH",summary:"Prioricé Backend mediante una revisión validada, sin cambiar tareas activas.",patch:{operationId:`guidance-${Date.now()}`,runId:current.runId,expectedRevision:current.expectedRevision,expectedDigest:current.expectedDigest,reason:"El usuario pidió priorizar Backend antes de comenzar",operations:[{type:"REPRIORITIZE_PENDING",taskId:"backend",priority:5}]}})
+  }
+  else if (invalidPlanV2 && leadPhase === "plan") { invalidPlanCalls++; item = message({ tasks: [] }) }
+  else if (leadPhase === 'solver') {
     assert.ok(!(body.tools ?? []).some(t=>['write','edit','apply_patch','bash','desktop_execute','browser_navigate_page'].includes(t.name)), 'Solver must investigate without changing files or bypassing controls')
     item=message({summary:'El contrato y los archivos guardados permiten continuar sin repetir efectos.',findings:['La sesión del trabajador y sus comandos registrados se conservan.'],nextStep:'El Lead debe indicar el paso pendiente y reanudar esa misma sesión con una corrección concreta.'})
   } else if (leadPhase === 'assessment') {
@@ -279,7 +305,7 @@ Object.assign(env, {
   USERPROFILE: profile, HOME: profile, APPDATA: profile, LOCALAPPDATA: profile,
   XDG_DATA_HOME: join(profile, "data"), XDG_CONFIG_HOME: join(profile, "config"), XDG_CACHE_HOME: join(profile, "cache"), XDG_STATE_HOME: join(profile, "state"),
   OPENCODE_CONFIG_DIR: join(profile, "config", "opencode"), OPENCODE_DISABLE_EXTERNAL_SKILLS: "true", OPENCODE_DISABLE_PROJECT_CONFIG: "true", OPENCODE_SERVER_PASSWORD: "qa-password",
-  OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: { "desktop_*": "deny", "browser_*": "deny" }, mcp: { desktop: { type: "remote", url: `http://127.0.0.1:${mock.address().port}/mcp/desktop`, oauth: false } }, enabled_providers: ["openai"], provider: { openai: { options: { apiKey: "qa-fake-key", baseURL: `http://127.0.0.1:${mock.address().port}/v1` }, models: Object.fromEntries(["qa-lead", "qa-backend", "qa-frontend", "qa-invalid-review"].map((id) => [id, { name: id, modalities: { input: ["text", "image"], output: ["text"] }, limit: { context: 200000, output: 16000 } }])) } }, agent: { title: { disable: true }, summary: { disable: true } } }),
+  OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: { "desktop_*": "deny", "browser_*": "deny" }, mcp: { desktop: { type: "remote", url: `http://127.0.0.1:${mock.address().port}/mcp/desktop`, oauth: false } }, enabled_providers: ["openai"], provider: { openai: { options: { apiKey: "qa-fake-key", baseURL: `http://127.0.0.1:${mock.address().port}/v1` }, models: Object.fromEntries(["qa-lead", "qa-backend", "qa-frontend", "qa-invalid-review"].map((id) => [id, { name: id, tool_call: true, reasoning: true, modalities: { input: ["text", "image"], output: ["text"] }, limit: { context: 200000, output: 16000 } }])) } }, agent: { title: { disable: true }, summary: { disable: true } } }),
 })
 await mkdir(env.OPENCODE_CONFIG_DIR, { recursive: true })
 const reserve=tcpServer()
@@ -330,9 +356,16 @@ try {
     await new Promise(done => proxy.listen(0, "127.0.0.1", done))
     testOrigin = `http://127.0.0.1:${proxy.address().port}`
   }
-  const cargo = spawn("cargo", ["test", "--manifest-path", "src-tauri/Cargo.toml", "--release", "--lib", "--features", "desktop-e2e", "teams::integration::native_team_end_to_end", "--", "--ignored", "--nocapture", "--test-threads=1"], { env: { ...process.env, GUILLE_TEAM_TEST_CYCLE: circularWait ? "1" : "0", GUILLE_TEAM_TEST_HELP: leadHelp ? "1" : "0", GUILLE_TEAM_TEST_TRANSPORT: transportFaults ? "1" : "0", GUILLE_TEAM_TEST_AUTO: autonomous?'1':'0', GUILLE_TEAM_TEST_SUPERVISION:supervision?'1':'0', GUILLE_TEAM_TEST_ENGINE: testOrigin, GUILLE_TEAM_TEST_REPO: repo,GUILLE_TEAM_TEST_NO_GIT:noGit?'1':'0',GUILLE_TEAM_TEST_CAPTURE_URL:`http://127.0.0.1:${mock.address().port}/app`,GUILLE_TEAM_TEST_ARTIFACTS:resolve(noGit?'test-results/native-team-evidence-no-git':'test-results/native-team-evidence') }, windowsHide: true, stdio: "inherit" })
+  const cargo = spawn("cargo", ["test", "--manifest-path", "src-tauri/Cargo.toml", "--release", "--lib", "--features", "desktop-e2e", "teams::integration::native_team_end_to_end", "--", "--ignored", "--nocapture", "--test-threads=1"], { env: { ...process.env, GUILLE_TEAM_TEST_ROUTING:routed?"1":"0", GUILLE_TEAM_TEST_PLAN_V2:planV2?"1":"0", GUILLE_TEAM_TEST_INVALID_PLAN_V2:invalidPlanV2?"1":"0", GUILLE_TEAM_TEST_CYCLE: circularWait ? "1" : "0", GUILLE_TEAM_TEST_HELP: leadHelp ? "1" : "0", GUILLE_TEAM_TEST_TRANSPORT: transportFaults ? "1" : "0", GUILLE_TEAM_TEST_AUTO: autonomous?'1':'0', GUILLE_TEAM_TEST_SUPERVISION:supervision?'1':'0', GUILLE_TEAM_TEST_ENGINE: testOrigin, GUILLE_TEAM_TEST_REPO: repo,GUILLE_TEAM_TEST_NO_GIT:noGit?'1':'0',GUILLE_TEAM_TEST_CAPTURE_URL:`http://127.0.0.1:${mock.address().port}/app`,GUILLE_TEAM_TEST_ARTIFACTS:resolve(noGit?'test-results/native-team-evidence-no-git':'test-results/native-team-evidence') }, windowsHide: true, stdio: "inherit" })
   const code = await new Promise((done) => cargo.once("exit", done))
   assert.equal(code, 0, `Native runner failed\n${log}`)
+  if (invalidPlanV2) { assert.equal(invalidPlanCalls,60); assert.equal(parallelWorkers.size,0); console.log("Verified: 20 invalid plans, 40 bounded repairs, zero worker dispatches."); }
+  else if (planV2) {
+    assert.equal(parallelWorkers.size,2)
+    if (noGit) await assert.rejects(() => stat(join(repo,".git")),{code:"ENOENT"})
+    console.log("Verified: native V2 discovery, independent coverage gate, plan review, preview/apply/idempotency, user guidance patch, real workers, durable revisions and precommitted checks.")
+  }
+  else {
   if (transportFaults) {
     assert.equal(failedReads, 3)
     assert.ok(lostAcknowledgements.has("worker"))
@@ -378,6 +411,7 @@ try {
   assert.deepEqual([...models].sort(), ["qa-backend", "qa-frontend", "qa-invalid-review", "qa-lead"])
   assert.ok(reviews >= 9, `parallel reviewers must verify both dispatched tasks, including both invalid verdicts (saw ${reviews})`)
   console.log(`Verified: native planning → distinct worker models → real file writes + commands → Lead correction → immutable evidence → completed without user intervention; ${noGit ? "folder remained Git-free" : "pre-existing Git index intact"}.`)
+  }
   }
 } finally {
   if (proxy) { proxy.closeAllConnections(); await new Promise(done => proxy.close(done)) }
