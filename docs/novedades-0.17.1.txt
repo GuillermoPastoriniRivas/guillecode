@@ -1,0 +1,11 @@
+Flufy 0.17.1 incorpora Plan Vivo V2 para Equipos IA, que se activa desde Configuración → Plan Vivo V2. Cada objetivo se convierte en un contrato con requisitos, alcance y criterios observables antes de despachar trabajadores. Las revisiones del plan son inmutables y quedan registradas con su autor y motivo.
+
+Si una propuesta sigue siendo inválida después de dos reparaciones, la ejecución queda en «Plan bloqueado» y no se inicia ningún trabajador. Antes de empezar se validan cobertura de requisitos, dependencias, alcances y permisos, y podés revisar el plan y decidir cuándo iniciarlo.
+
+Las ejecuciones V2 abren un tablero compartido entre la app y la PWA: estados reales por agente, dependencias, revisiones y el modelo de cada intento. Podés agregar, corregir, dividir, reasignar, priorizar o cancelar pendientes, con alternativa por teclado y sin aprobar QA por arrastre.
+
+El ruteo de modelos es opcional: asigna modelos a los trabajadores según las capacidades observadas de tu cuenta, con alternativas configuradas antes de crear cada sesión. El Lead mantiene la selección manual para planificar y coordinar.
+
+Esta versión incluye OpenCode 1.19.5. Si la base del motor fue creada por OpenCode 2.x, Flufy hace una copia consistente de la base y repone el esquema 1.x en una sola transacción antes de iniciar el motor, sin modificar chats ni credenciales. Si no puede respaldar o completar el cambio, se detiene e informa dónde quedó la copia.
+
+Los equipos existentes conservan su comportamiento: las funciones V2 y el ruteo comienzan desactivados y no alteran ejecuciones históricas ni en curso.
