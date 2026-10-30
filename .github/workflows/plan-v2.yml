@@ -37,7 +37,8 @@ jobs:
       - run: npm run build:pwa
       - run: npm run release:engine
       - run: npm run release:whisper
-      - run: cargo test --manifest-path src-tauri/Cargo.toml --release --lib --features desktop-e2e teams:: -- --test-threads=2
+      - run: |
+          cargo test --manifest-path src-tauri/Cargo.toml --release --lib --features desktop-e2e teams:: -- --test-threads=2
       - run: npx playwright install msedge
       - run: npx playwright test tests/e2e/teams.spec.ts tests/e2e/pwa-teams.spec.ts tests/e2e/pwa-live.spec.ts --workers=1
       - run: npm run benchmark:plan-v2
