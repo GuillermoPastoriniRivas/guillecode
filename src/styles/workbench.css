@@ -233,10 +233,6 @@
 }
 /* En foco-chat el centro no se renderiza: un relleno flexible absorbe el espacio
    libre y deja el chat a la derecha, sin desbordar en ventanas angostas. */
-.focus-filler {
-  flex: 1;
-  min-width: 0;
-}
 .sash:hover,
 .sash.active {
   background: var(--accent);
@@ -440,8 +436,19 @@ body.resizing-y * {
   border-top: 1px solid var(--border);
   background: rgba(0, 0, 0, 0.1);
 }
+.quota-popover-section + .quota-popover-section {
+  border-top: 1px solid var(--border-strong);
+}
+.quota-popover-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px 2px;
+}
+.quota-popover-section .quota-popover-rows { padding-top: 0; }
 .quota-popover-note {
-  padding: 0 4px 9px;
+  padding: 0 18px 10px;
   color: var(--fg-faint);
   font-size: 10.5px;
   line-height: 1.4;
@@ -1006,6 +1013,8 @@ body.resizing-y * {
 }
 .no-project h1 {
   font-size: 22px;
+  font-family: var(--display);
+  letter-spacing: -0.02em;
   color: var(--fg);
 }
 .no-project p {

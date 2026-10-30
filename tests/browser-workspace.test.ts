@@ -11,7 +11,7 @@ function page(id: number, windowId: number, target = `t${id}`) {
     createCDPSession: async () => ({ send: async (name: string) => name === "Target.getTargetInfo" ? { targetInfo: { targetId: target } } : { windowId }, detach: async () => {} }) } }
 }
 
-test("Chrome assignment rejects foreign tabs, shared windows and recycled window IDs", async () => {
+test("Chrome assignment scopes tabs per window, allows sharing and rejects recycled window IDs", async () => {
   const dir = await mkdtemp(join(tmpdir(), "gc-workspace-"))
   try {
     const file = pathToFileURL(join(dir, "workspaces.json"))
@@ -20,7 +20,11 @@ test("Chrome assignment rejects foreign tabs, shared windows and recycled window
     const context = { createPagesSnapshot: async () => {}, getPages: () => pages, selectPage: () => {} }
     const ws = new Workspaces(file)
     await ws.scope(context, { session: "a", action: "assign", pageId: 1 })
-    await assert.rejects(ws.scope(context, { session: "b", action: "assign", pageId: 2 }), /otra conversación/)
+    const shared = { session: "b", action: "assign", pageId: 2 } as Record<string, unknown> & { state?: { windowId: number | null } }
+    await ws.scope(context, shared)
+    assert.equal(shared.state?.windowId, 100)
+    const sharedScope = await ws.scope(context, { session: "b" })
+    assert.deepEqual(sharedScope.getPages(), [first, second])
     const scoped = await ws.scope(context, { session: "a" })
     assert.deepEqual(scoped.getPages(), [first, second])
     assert.throws(() => scoped.getPageById(3), /no pertenece/)

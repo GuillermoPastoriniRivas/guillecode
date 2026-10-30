@@ -200,14 +200,63 @@
 .team-chat-message .team-lead-answer p { margin:0 0 8px; }
 .team-browser-body { display:flex; flex-direction:column; padding:0; overflow:hidden; }
 .team-browser { display:flex; flex-direction:column; flex:1; min-height:0; }
-.team-browser-tabs { display:flex; gap:4px; overflow:auto; padding:8px; flex-shrink:0; }
-.team-browser-tabs button { border:1px solid var(--border); border-radius:5px; background:var(--bg-side); padding:6px 10px; white-space:nowrap; cursor:pointer; }
-.team-browser-tabs button[aria-selected=true] { color:var(--accent-strong); border-color:var(--accent); }
-.team-browser-toolbar { display:flex; gap:5px; padding:8px; flex-shrink:0; }
-.team-browser-toolbar input { flex:1; min-width:0; }
-.team-browser-surface { flex:1; min-height:240px; background:var(--bg); }
+.team-browser-tabs {
+  display:flex;
+  gap:6px;
+  overflow:auto;
+  padding:8px 10px;
+  flex-shrink:0;
+  border-bottom:1px solid var(--border);
+  background: var(--bg-side);
+}
+.team-browser-tabs button {
+  height:26px;
+  padding:0 10px;
+  white-space:nowrap;
+  cursor:pointer;
+  border:1px solid var(--border);
+  border-radius:7px;
+  background:transparent;
+  color: var(--fg-dim);
+  font-size:12px;
+}
+.team-browser-tabs button:hover { background: var(--bg-hover); color: var(--fg); }
+.team-browser-tabs button[aria-selected=true] { color: var(--fg); background: var(--bg-active); border-color: var(--border-strong); }
+.team-browser-toolbar {
+  display:flex;
+  gap:6px;
+  padding:8px 10px;
+  flex-shrink:0;
+  align-items:center;
+  border-bottom:1px solid var(--border);
+  background: var(--bg-side);
+}
+.team-browser-toolbar input {
+  flex:1;
+  min-width:0;
+  height:30px;
+  padding:0 10px;
+  background: var(--bg-input);
+  color: var(--fg);
+  border:1px solid var(--border-strong);
+  border-radius:7px;
+  font-size:12.5px;
+}
+.team-browser-toolbar input:focus {
+  outline:none;
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px rgba(124, 140, 255, 0.14);
+}
+.team-browser-toolbar .btn.btn-xs { height:30px; min-width:30px; padding:0 8px; }
+.team-browser-toolbar button[type="submit"] {
+  background: var(--accent-bg);
+  border-color: transparent;
+  color: var(--accent-strong);
+  font-weight:600;
+}
+.team-browser-toolbar button[type="submit"]:hover:not(:disabled) { background: var(--accent-bg-strong); }
+.team-browser-surface { flex:1; min-height:240px; background: var(--editor-bg); }
 .team-browser-surface > p { padding:24px; color:var(--fg-dim); }
+.browser-editor { height:100%; min-height:0; display:flex; flex-direction:column; }
 
 .team-chat-expanded .team-browser-body {padding:0;}
-.team-browser-toolbar {border-bottom:1px solid var(--border);background:var(--bg-side);}
-.team-browser-toolbar input {font-size:14px;padding:8px 10px;}

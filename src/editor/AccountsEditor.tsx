@@ -200,7 +200,17 @@ export function AccountsEditor({ onboarding = false, onContinue }: { onboarding?
   const go = providers.find((p) => p.id === "opencode-go")
   const zenOn = !!entries?.some((e) => e.id === ZEN)
   const canContinue = modelsLoaded && !modelsError && models.length > 0 && waitingFor === 0
+  // El primer arranque puede tardar en conectar con el motor: durante unos
+  // segundos mostramos el loader y recién después un error accionable.
+  const [waitedOut, setWaitedOut] = useState(false)
+  useEffect(() => {
+    if (modelsLoaded) return
+    const timer = setTimeout(() => setWaitedOut(true), 7000)
+    return () => clearTimeout(timer)
+  }, [modelsLoaded])
   const loading = !connected && providers.length === 0
+  const waiting = !modelsLoaded && !waitedOut
+  const showError = !modelsLoaded && waitedOut
 
   const openai = providers.find((p) => p.id === CHATGPT)
   const link = openai ? (openai.oauth ? "subscription" : "apiKey") : null
@@ -273,7 +283,8 @@ export function AccountsEditor({ onboarding = false, onContinue }: { onboarding?
       <section className="doc-section remote-section">
         <p className="remote-text">Usá solamente ChatGPT, solamente OpenCode o ambos. Conectar una sola cuenta alcanza; podés agregar la otra cuando quieras.</p>
         <p className="remote-text">OpenCode viene incluido como motor interno de Flufy. Si elegís ChatGPT, no necesitás una cuenta ni una clave de OpenCode.</p>
-        {modelsError && <div className="view-error">No se pudieron verificar tus cuentas: {modelsError}. Usá «Recargar modelos» para reintentar.</div>}
+        {waiting && <p className="remote-text"><Icon name="loading" spin /> Consultando tus cuentas…</p>}
+        {showError && <div className="view-error">No se pudieron verificar tus cuentas: {modelsError ?? "el motor no respondió"}. Usá «Recargar modelos» para reintentar.</div>}
         <p className="remote-text">
           Con tu suscripción de ChatGPT Plus o Pro el agente usa los modelos de OpenAI sin API key y sin pagar por token: consume los límites de uso de tu plan, los mismos que Codex.
         </p>
@@ -369,7 +380,7 @@ export function AccountsEditor({ onboarding = false, onContinue }: { onboarding?
           </select>
         </div>}
         {onboarding && <button type="button" className="btn btn-primary btn-lg" disabled={!canContinue || savingKey || !!starting || !!flow} onClick={onContinue}><Icon name="arrow-right" /> Continuar con Flufy</button>}
-        {onboarding && !canContinue && !modelsError && <p className="remote-text">Conectá al menos un proveedor para continuar.</p>}
+        {onboarding && !canContinue && !modelsError && !waiting && <p className="remote-text">Conectá al menos un proveedor para continuar.</p>}
         <ProviderList />
         <div className="remote-note">
           <Icon name="info" />

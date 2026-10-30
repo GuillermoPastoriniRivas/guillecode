@@ -2,21 +2,29 @@ import { useEffect, useRef, useState } from "react"
 import { call, errorMessage, isTauri } from "../lib/tauri"
 import { Icon } from "../components/ui"
 import { notify } from "../state/toasts"
-import { patchSessionRuntime, useSessionRuntime } from "../state/session-runtime"
+import { draftRuntimeKey, patchSessionRuntime, useSessionRuntime } from "../state/session-runtime"
+import { openEditor } from "../state/editors"
+import { useProject } from "../state/project"
+import { windowLabel } from "../lib/windows"
 
 type Page = { id: number; windowId: number | null; url: string }
 type Workspace = { internal?: boolean; assigned: boolean; missing: boolean; windowId: number | null; pages: Page[] }
 
-// All tabs in the chosen window belong to the agent's workspace. The Chrome
-// profile (cookies/accounts) is shared; personal tabs should be in other windows.
-export function BrowserWorkspace({ sessionId, shared = false }: { sessionId: string; shared?: boolean }) {
+// El agente usa una ventana completa de Chrome o el navegador interno de Flufy.
+// En una conversación nueva la elección queda guardada y se aplica al enviar.
+export function BrowserWorkspace({ sessionId, shared = false }: { sessionId: string | null; shared?: boolean }) {
+  const root = useProject((s) => s.root)
+  const runtimeKey = sessionId ?? draftRuntimeKey(root, windowLabel())
+  const runtime = useSessionRuntime(runtimeKey)
+  const draft = !sessionId
+  const choice = draft ? runtime.browserChoice : undefined
   const [state, setState] = useState<Workspace | null>(null)
+  const [chrome, setChrome] = useState<Workspace | null>(null)
   const [busy, setBusy] = useState(false)
   const [open, setOpen] = useState(false)
   const [error, setError] = useState("")
   const [url, setUrl] = useState("")
   const host = useRef<HTMLDivElement>(null)
-  const runtime = useSessionRuntime(sessionId)
   useEffect(() => {
     if (!open) return
     const outside = (event: PointerEvent) => { if (!host.current?.contains(event.target as Node)) setOpen(false) }
@@ -27,20 +35,46 @@ export function BrowserWorkspace({ sessionId, shared = false }: { sessionId: str
   }, [open])
 
   const inspect = async () => {
+    if (!sessionId) return
     setBusy(true); setError("")
     try { setState(await call<Workspace>("browser_workspace", { session: sessionId, pageId: null })) }
     catch (e) { setError(errorMessage(e)); setState(null) }
     finally { setBusy(false) }
   }
 
-  if (!isTauri) return null
+  const inspectChrome = async () => {
+    try { setChrome(await call<Workspace>("browser_chrome_workspace", { session: runtimeKey })) }
+    catch { setChrome(null) }
+  }
 
-  const assign = async (page: Page) => {
+  useEffect(() => {
+    if (sessionId) void inspect()
+    else void inspectChrome()
+    // La asignación vive en el backend: al abrir la conversación hay que
+    // reflejar si ya estaba usando Chrome o el navegador interno.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId])
+
+  if (!isTauri || (shared && !sessionId)) return null
+
+  const refresh = () => { void inspect(); void inspectChrome() }
+
+  const chooseDraft = (value: NonNullable<typeof runtime.browserChoice>) => {
+    patchSessionRuntime(runtimeKey, { browserChoice: value })
+    setOpen(false)
+  }
+
+  const assign = async (page: Page, tabs = 1) => {
+    if (draft) {
+      chooseDraft({ kind: "chrome", pageId: page.id, windowId: page.windowId ?? 0, tabs })
+      return
+    }
     setBusy(true)
     try {
+      if (state?.internal) await call("browser_internal_off", { session: sessionId })
       const workspace = await call<Workspace>("browser_workspace", { session: sessionId, pageId: page.id })
       setState(workspace)
-      if (workspace.assigned && workspace.windowId !== null) patchSessionRuntime(sessionId, { browserWindow: workspace.windowId })
+      if (workspace.assigned && workspace.windowId !== null) patchSessionRuntime(runtimeKey, { browserWindow: workspace.windowId })
       setOpen(false)
     } catch (e) {
       notify.error("No se pudo asignar la ventana del browser", errorMessage(e))
@@ -49,74 +83,123 @@ export function BrowserWorkspace({ sessionId, shared = false }: { sessionId: str
     }
   }
 
+  const openBrowserTab = () => {
+    if (!sessionId) return
+    openEditor({ kind: "browser", sessionId })
+    setOpen(false)
+  }
+
   const openInternal = async () => {
+    if (draft) { chooseDraft({ kind: "internal" }); return }
+    if (state?.internal) { openBrowserTab(); return }
     setBusy(true); setError("")
     try {
-      await call("browser_internal_open", { session: sessionId, url: url.trim() || null })
-      setState({internal:true, assigned:true, missing:false, windowId:null, pages:[]})
+      await call("browser_internal_open", { session: sessionId, url: null })
+      setState({ internal: true, assigned: true, missing: false, windowId: null, pages: [] })
+      if (!shared) { openEditor({ kind: "browser", sessionId }); setOpen(false) }
     } catch (e) { setError(errorMessage(e)) }
     finally { setBusy(false) }
   }
 
-  const controlInternal = async (action: string) => {
-    try { await call("browser_internal_control", {session: sessionId, action}) }
-    catch (e) { setError(errorMessage(e)) }
+  const leaveInternal = async () => {
+    setBusy(true); setError("")
+    try {
+      await call("browser_internal_off", { session: sessionId })
+      setState(null)
+      await inspect()
+    } catch (e) { setError(errorMessage(e)) }
+    finally { setBusy(false) }
   }
+
+  const chromePages = (draft || state?.internal ? chrome : state ?? chrome)?.pages ?? []
   const windows = new Map<number, Page[]>()
-  for (const page of state?.pages ?? []) {
+  for (const page of chromePages) {
     if (page.windowId == null) continue
     windows.set(page.windowId, [...(windows.get(page.windowId) ?? []), page])
   }
+  const groups = [...windows.entries()].map(([id, pages]) => ({
+    id,
+    pages,
+    host: (pages[0]?.url ?? "").replace(/^https?:\/\//, "").split("/")[0],
+  }))
   const owned = state?.assigned ? state.pages.filter(page => page.windowId === state.windowId) : []
+  const internalChosen = draft ? choice?.kind === "internal" : !!state?.internal
+  const chromeChoice = choice?.kind === "chrome" ? choice : null
+  const pillSet = draft ? !!choice : !!state?.assigned
+  const label = busy ? "Consultando navegador…"
+    : draft ? (choice?.kind === "internal" ? "Navegador interno" : choice?.kind === "chrome" ? `Navegador · ${choice.tabs} pestaña${choice.tabs === 1 ? "" : "s"}` : "Elegir navegador")
+    : state?.internal ? `Navegador interno${state.pages.length ? ` · ${state.pages.length} pág.` : ""}` : state?.assigned ? `Navegador · ${owned.length} pestañas` : state?.missing ? "Navegador: elegí ventana" : runtime.browserWindow !== undefined ? "Navegador asignado" : shared ? "Navegador del equipo" : "Elegir navegador"
 
   return (
     <div className="composer-workspace" ref={host}>
       <button
         type="button"
-        className={`composer-pill${state?.assigned ? " set" : state?.missing ? " warn" : ""}`}
-        title={state?.internal ? "Navegador propio de GuilleCode con el perfil de este equipo" : state?.assigned
-          ? "El agente puede usar todas las pestañas de la ventana asignada. Conservá tus pestañas personales en otra ventana."
-          : "Elegí una ventana del browser para que el agente trabaje ahí sin interrumpirte."}
+        className={`composer-pill${pillSet ? " set" : state?.missing ? " warn" : ""}`}
+        title={internalChosen ? "Navegador propio de Flufy con perfil separado de tu Chrome" : state?.assigned
+          ? "El agente puede usar todas las pestañas de la ventana asignada. Podés compartirla con otra conversación."
+          : "Elegí una ventana de Chrome o el navegador interno para que el agente trabaje ahí."}
         aria-expanded={open}
         disabled={busy}
-        onClick={() => { setOpen((v) => !v); if (!open && !shared) void inspect() }}
+        onClick={() => { setOpen((v) => !v); if (!open && !shared) refresh() }}
       >
         <Icon name="globe" />
-        <span>{busy ? "Consultando navegador…" : state?.internal ? "Navegador interno" : state?.assigned ? `Navegador · ${owned.length} pestañas` : state?.missing ? "Navegador: elegí ventana" : runtime.browserWindow !== undefined ? "Navegador asignado" : shared ? "Navegador del equipo" : "Elegir navegador"}</span>
+        <span>{label}</span>
       </button>
       {open && (
         <div className="composer-popover">
-          <div className="composer-popover-title">Ventana del navegador para {shared ? "este equipo" : "esta conversación"}</div>
-          {shared && <>
-            <p>El navegador interno abre una ventana propia de GuilleCode. El equipo trabaja ahí mientras vos seguís con lo tuyo. Sus cuentas se guardan en el perfil de este equipo.</p>
-            <input aria-label="Página para el navegador interno" placeholder="https://…" value={url} onChange={e => setUrl(e.target.value)} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); void openInternal() } }} />
-            <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void openInternal()}>{state?.internal ? "Mostrar / abrir página" : "Abrir navegador interno"}</button>
-            {state?.internal && <div className="team-actions">{[["back", "Atrás"], ["forward", "Adelante"], ["reload", "Recargar"], ["show", "Ver navegador"]].map(([action,label]) => <button key={action} type="button" className="btn btn-xs" onClick={() => void controlInternal(action)}>{label}</button>)}</div>}
-            <button type="button" className="btn btn-xs" disabled={busy} onClick={() => void inspect()}>Consultar páginas del equipo</button>
-          </>}
-          {!shared && <p>{shared ? "El Lead y los especialistas comparten esta ventana y trabajan en pestañas propias. " : "El agente usará todas sus pestañas. "}Cookies y cuentas son compartidas.</p>}
-          {error && <div role="alert">{error}</div>}
-          {!shared && !busy && !error && windows.size === 0 && (
-            <div className="composer-suggestion-desc">No veo pestañas del browser. Habilitá las DevTools remotas del navegador y volvé a abrir esta lista.</div>
+          <div className="composer-popover-title">{shared ? "Navegador del equipo" : "Navegador para esta conversación"}</div>
+          {shared ? (
+            <>
+              <p>El navegador interno usa un perfil propio de Flufy, separado de tu Chrome personal. El equipo trabaja ahí mientras vos seguís con lo tuyo.</p>
+              <input aria-label="Página para el navegador interno" placeholder="https://…" value={url} onChange={e => setUrl(e.target.value)} />
+              <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void openInternal()}>Abrir navegador interno</button>
+              <button type="button" className="btn btn-xs" disabled={busy} onClick={() => void inspect()}>Consultar páginas</button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                className={`composer-suggestion${internalChosen ? " selected" : ""}`}
+                disabled={busy}
+                title={internalChosen ? "Abrir la pestaña del navegador interno" : "Usar el navegador interno de Flufy"}
+                onClick={() => void openInternal()}
+              >
+                <Icon name="globe" />
+                <span className="composer-suggestion-label">Navegador interno{internalChosen ? " · en uso" : ""}</span>
+                <span className="composer-suggestion-desc">{draft ? "Se abre al enviar el primer mensaje" : "Perfil propio de Flufy, sin tocar tu Chrome"}</span>
+              </button>
+              <div className="composer-popover-title">Ventanas de Chrome</div>
+              {!busy && groups.length === 0 && (
+                <div className="composer-suggestion-desc">No veo ventanas de Chrome. Habilitá las DevTools remotas del navegador y volvé a abrir esta lista.</div>
+              )}
+              {groups.map((group, i) => {
+                const assigned = draft ? chromeChoice?.windowId === group.id : !state?.internal && state?.assigned && group.id === state.windowId
+                return (
+                  <button
+                    type="button"
+                    key={group.id}
+                    className={`composer-suggestion${assigned ? " selected" : ""}`}
+                    disabled={busy}
+                    title={`Asignar la ventana completa (${group.pages.length} pestañas)`}
+                    onClick={() => void assign(group.pages[0], group.pages.length)}
+                  >
+                    <Icon name="globe" />
+                    <span className="composer-suggestion-label">Ventana {i + 1}{assigned ? " · asignada" : ""}</span>
+                    <span className="composer-suggestion-desc">
+                      {group.pages.length} pestaña{group.pages.length === 1 ? "" : "s"}{group.host ? ` · ${group.host}` : ""}
+                    </span>
+                  </button>
+                )
+              })}
+              {!draft && state?.internal && (
+                <div className="team-actions">
+                  <button type="button" className="btn btn-xs" disabled={busy} onClick={openBrowserTab}>Ver en una pestaña</button>
+                  <button type="button" className="btn btn-xs" disabled={busy} onClick={() => void leaveInternal()}>Volver a mi Chrome</button>
+                </div>
+              )}
+            </>
           )}
-          {[...windows.entries()].map(([win, pages], i) => (
-            <div key={win}>
-              <div className="composer-suggestion-desc">{state?.assigned && win === state.windowId ? `Ventana ${i + 1} · asignada` : `Ventana ${i + 1}`}</div>
-              {pages.map((page) => (
-                <button
-                  type="button"
-                  key={page.id}
-                  className={`composer-suggestion${state?.assigned && page.windowId === state.windowId ? " selected" : ""}`}
-                  disabled={busy}
-                  title={`Asignar la ventana que contiene ${page.url}`}
-                  onClick={() => void assign(page)}
-                >
-                  <Icon name="globe" />
-                  <span className="composer-suggestion-label">{page.url || "(sin título)"}</span>
-                </button>
-              ))}
-            </div>
-          ))}
+          {error && <div role="alert">{error}</div>}
         </div>
       )}
     </div>

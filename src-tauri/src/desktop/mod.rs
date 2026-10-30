@@ -234,7 +234,7 @@ fn agent_config(state: &DesktopState) -> Value {
     // burbuja elige solo y que también se puede elegir en el selector del chat.
     let mut config = json!({
         "mcp": mcp,
-        "permission": { "desktop_*": "deny", "browser_*": "deny" },
+        "permission": { "desktop_*": "deny" },
         "agent": {
             "escritorio": {
                 "mode": "primary",

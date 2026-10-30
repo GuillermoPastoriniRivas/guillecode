@@ -495,7 +495,9 @@
 .welcome-hero h1 {
   font-size: 26px;
   font-weight: 700;
-  background: var(--gradient);
+  font-family: var(--display);
+  letter-spacing: -0.02em;
+  background: linear-gradient(135deg, #a78bfa 0%, #8b84ff 55%, #7c8cff 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;

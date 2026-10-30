@@ -23,6 +23,7 @@ import { CONTINUE_INTERRUPTED_TURN, isRetryableProviderError, latestFailedAssist
 import { reconcileHistory } from "../lib/history"
 import { isBubbleWindow, windowLabel } from "../lib/windows"
 import { draftRuntimeKey, patchSessionRuntime, sessionRuntime } from "./session-runtime"
+import { openEditor } from "./editors"
 import { desktopContextText, prepareDesktopContext } from "../lib/desktop-context"
 import { desktopCaptureMarker, INTERNAL_SCREENSHOT_FILENAME } from "../lib/internal-context"
 
@@ -74,6 +75,7 @@ export type SessionView = { messages: ChatMessage[]; loading: boolean; hasMore: 
 type AgentState = {
   connected: boolean
   modelsLoaded: boolean
+  modelsLoading: boolean
   modelsError: string | null
   sessions: Session[]
   allSessions: Session[]
@@ -111,6 +113,7 @@ const OAUTH_DUMMY_KEY = "opencode-oauth-dummy-key"
 export const useAgent = create<AgentState>(() => ({
   connected: false,
   modelsLoaded: false,
+  modelsLoading: false,
   modelsError: null,
   sessions: [],
   allSessions: [],
@@ -593,6 +596,7 @@ async function statusesEverywhere(): Promise<Record<string, SessionStatus>> {
 
 export async function loadAgentMeta(): Promise<void> {
   const generation = ++metaGeneration
+  useAgent.setState({ modelsLoading: true })
   const [providers, agents, commands, permissions, questions, statuses] = await Promise.allSettled([
     api<{
       providers: Array<{
@@ -664,7 +668,7 @@ export async function loadAgentMeta(): Promise<void> {
   if (commands.status === "fulfilled") patch.commands = commands.value
   if (permissions.status === "fulfilled") patch.permissions = permissions.value
   if (questions.status === "fulfilled") patch.questions = questions.value
-  useAgent.setState(patch)
+  useAgent.setState({ ...patch, modelsLoading: false })
   if (statuses.status === "fulfilled") syncStatuses(statuses.value)
 }
 
@@ -1195,6 +1199,20 @@ export async function sendPrompt(
         views: { ...st.views, [created.id]: { messages: [], loading: false, hasMore: false, error: null } },
       }
     })
+  }
+  if (!sessionId && isTauri && id) {
+    const pendingBrowser = sessionRuntime(runtimeKey).browserChoice
+    if (pendingBrowser) {
+      try {
+        if (pendingBrowser.kind === "internal") {
+          await call("browser_internal_open", { session: id, url: null })
+          openEditor({ kind: "browser", sessionId: id })
+        } else {
+          await call("browser_workspace", { session: id, pageId: pendingBrowser.pageId })
+        }
+      } catch { /* El agente puede seguir y pedir la ventana si no quedó asignada. */ }
+      patchSessionRuntime(runtimeKey, { browserChoice: undefined })
+    }
   }
   const contextParts = contextToParts(root, s.context, s.includeActiveFile ? activeFile : null)
   const trimmed = text.trim()

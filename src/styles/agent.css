@@ -1700,10 +1700,45 @@ html.is-bubble #root {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
   background: var(--bg-side);
   border: 1px solid var(--border-strong);
   border-radius: 12px;
 }
+/* Tiradores de redimensión: la ventana sin bordes no trae marco nativo. */
+.bubble-resize {
+  position: absolute;
+  z-index: 20;
+}
+.bubble-resize-n,
+.bubble-resize-s {
+  left: 10px;
+  right: 10px;
+  height: 6px;
+  cursor: ns-resize;
+}
+.bubble-resize-n { top: 0; }
+.bubble-resize-s { bottom: 0; }
+.bubble-resize-e,
+.bubble-resize-w {
+  top: 10px;
+  bottom: 10px;
+  width: 6px;
+  cursor: ew-resize;
+}
+.bubble-resize-e { right: 0; }
+.bubble-resize-w { left: 0; }
+.bubble-resize-ne,
+.bubble-resize-nw,
+.bubble-resize-se,
+.bubble-resize-sw {
+  width: 14px;
+  height: 14px;
+}
+.bubble-resize-ne { top: 0; right: 0; cursor: nesw-resize; }
+.bubble-resize-nw { top: 0; left: 0; cursor: nwse-resize; }
+.bubble-resize-se { bottom: 0; right: 0; cursor: nwse-resize; }
+.bubble-resize-sw { bottom: 0; left: 0; cursor: nesw-resize; }
 .bubble-head {
   flex-shrink: 0;
   display: flex;
@@ -1765,8 +1800,26 @@ html.is-bubble #root {
   font-size: 11px;
 }
 .bubble-context label, .bubble-task { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.bubble-context select { flex: 1; min-width: 0; background: transparent; color: inherit; border: 0; font: inherit; text-overflow: ellipsis; }
-.bubble-context option { background: var(--bg); color: var(--text); }
+.bubble-target {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.bubble-target:hover:not(:disabled) { background: var(--bg-hover); }
+.bubble-target:disabled { color: var(--fg-faint); cursor: default; }
+.bubble-target-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bubble-target .codicon { flex-shrink: 0; font-size: 12px; color: var(--fg-faint); }
 .bubble-task { margin-top: 5px; justify-content: space-between; }
 .bubble-task span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bubble-task button { font: inherit; cursor: pointer; }
@@ -1798,6 +1851,7 @@ html.is-bubble #root {
 .composer-workspace .composer-popover { position: static; margin-top: 6px; max-height: 240px; overflow: auto; }
 .composer-workspace .composer-popover p,
 .composer-workspace [role="alert"] { margin: 8px 12px; font-size: 12px; white-space: normal; }
+.composer-workspace .composer-popover p { color: var(--fg-dim); }
 .composer-workspace [role="alert"] { color: var(--errorForeground, #f48771); }
 .composer-workspace button.composer-suggestion { width: 100%; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .composer-workspace button.composer-suggestion:focus-visible { outline: 1px solid var(--focusBorder, #007fd4); outline-offset: -1px; }

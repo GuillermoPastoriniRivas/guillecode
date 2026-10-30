@@ -9,6 +9,7 @@ export type SessionRuntime = {
   voiceStarted?: number; voiceEnded?: number; transcribedAt?: number
   submittedAt?: number; preparedAt?: number
   browserWindow?: number
+  browserChoice?: { kind: "internal" } | { kind: "chrome"; pageId: number; windowId: number; tabs: number }
   transfer?: { id: string; source: string; target: string; expires: number; state: "pending" | "received" | "cancelled" }
 }
 export function draftRuntimeKey(root: string | null, window: string) { return `draft:${root ?? ""}:${window}` }

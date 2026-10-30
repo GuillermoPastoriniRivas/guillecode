@@ -1,7 +1,7 @@
 import { create } from "zustand"
 import { loadJson, saveJson } from "../lib/persist"
 
-export type ViewId = "explorer" | "search" | "scm" | "agents" | "prs" | "routines" | "memory" | "plane" | "teams"
+export type ViewId = "explorer" | "search" | "scm" | "agents" | "prs" | "routines" | "memory" | "teams"
 export type PanelTab = "terminal" | "output"
 
 type LayoutData = {
@@ -117,7 +117,11 @@ function clampToViewport(s: LayoutData): Widths {
 }
 
 const persisted = loadJson<Partial<LayoutData>>(STORAGE_KEY, {})
-const INITIAL: LayoutData = { ...DEFAULTS, ...persisted, focusChat: false }
+// Un layout guardado con una vista que ya no existe (p. ej. "plane") dejaría
+// el sidebar en blanco: se vuelve a la vista por defecto.
+const knownViews: readonly string[] = ["explorer", "search", "scm", "agents", "prs", "routines", "memory", "teams"]
+const activeView = persisted.activeView && knownViews.includes(persisted.activeView) ? persisted.activeView : DEFAULTS.activeView
+const INITIAL: LayoutData = { ...DEFAULTS, ...persisted, activeView, focusChat: false }
 
 export const useLayout = create<LayoutState>((set, get) => ({
   ...INITIAL,

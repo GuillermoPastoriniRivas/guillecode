@@ -560,6 +560,20 @@ pub async fn browser_workspace(app: tauri::AppHandle, session: String, page_id: 
     tauri::async_runtime::spawn_blocking(move || workspace(&session, page_id)).await.map_err(|e| e.to_string())?
 }
 
+// Inspecciona siempre el Chrome del usuario, aunque la conversación esté usando
+// el navegador interno: así el selector puede ofrecer las dos opciones juntas.
+#[tauri::command]
+pub async fn browser_chrome_workspace(app: tauri::AppHandle, session: String) -> Result<Value, String> {
+    if session.trim().is_empty() { return Err("Falta la conversación del navegador".into()); }
+    super::gate(&app)?;
+    if !super::config(&app).browser { return Err("El navegador está desactivado".into()); }
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = call("list_pages", json!({ "_guillecode": { "session": session, "action": "inspect" } }))?;
+        if failed(&result) { return Err(text_of(&result)); }
+        serde_json::from_str(&text_of(&result)).map_err(|e| format!("No se pudo leer el espacio de Chrome: {}", e))
+    }).await.map_err(|e| e.to_string())?
+}
+
 fn text_of(result: &Value) -> String {
     result["content"].as_array().map(|items| items.iter().filter_map(|i| i["text"].as_str()).collect::<Vec<_>>().join("\n")).unwrap_or_default()
 }

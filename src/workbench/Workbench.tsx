@@ -35,7 +35,6 @@ import { AgentsView } from "../views/AgentsView"
 import { PullRequestsView } from "../views/PullRequestsView"
 import { RoutinesView } from "../views/RoutinesView"
 import { MemoryView } from "../views/MemoryView"
-import { PlaneView } from "../views/PlaneView"
 import { Sash } from "../components/Sash"
 import { QuickInput } from "../components/QuickInput"
 import { ContextMenuHost } from "../components/ContextMenu"
@@ -56,7 +55,6 @@ const VIEW_COMPONENTS: Record<ViewId, () => React.ReactElement> = {
   routines: RoutinesView,
   teams: TeamsView,
   memory: MemoryView,
-  plane: PlaneView,
 }
 
 let booted = false
@@ -105,7 +103,7 @@ function boot() {
 
 function SideBar() {
   const view = useLayout((s) => s.activeView)
-  const View = VIEW_COMPONENTS[view]
+  const View = VIEW_COMPONENTS[view] ?? ExplorerView
   return (
     <aside className="side-bar">
       <View />
@@ -181,7 +179,7 @@ export function Workbench() {
       <div className="boot">
         <Logo size={80} className="welcome-logo-svg pulse" />
         <Spinner size={18} />
-        <span>Levantando opencode…</span>
+        <span>Levantando Fluws…</span>
       </div>
     )
 
@@ -250,19 +248,20 @@ export function Workbench() {
         )}
         {agentVisible && (
           <>
-            {focusChat && <div className="focus-filler" />}
-            <Sash
-              orientation="vertical"
-              onDrag={(delta) => {
-                if (start.current === 0) start.current = useLayout.getState().agentWidth
-                useLayout.getState().setAgentWidth(start.current - delta)
-              }}
-              onDragEnd={() => {
-                start.current = 0
-              }}
-              onDoubleClick={() => useLayout.getState().applyPreset(agentWidth > window.innerWidth * 0.5 ? "balanced" : "agent")}
-            />
-            <div className="agent-slot" style={focusChat || root ? { width: agentWidth } : { flex: 1 }}>
+            {!focusChat && (
+              <Sash
+                orientation="vertical"
+                onDrag={(delta) => {
+                  if (start.current === 0) start.current = useLayout.getState().agentWidth
+                  useLayout.getState().setAgentWidth(start.current - delta)
+                }}
+                onDragEnd={() => {
+                  start.current = 0
+                }}
+                onDoubleClick={() => useLayout.getState().applyPreset(agentWidth > window.innerWidth * 0.5 ? "balanced" : "agent")}
+              />
+            )}
+            <div className="agent-slot" style={focusChat || !root ? { flex: 1 } : { width: agentWidth }}>
               <AgentPanel />
             </div>
           </>

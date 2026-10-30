@@ -1096,12 +1096,6 @@ body.resizing-split .cm-merge-divider::after {
 .memory-textarea.tall {
   min-height: 260px;
 }
-.plane-textarea {
-  min-height: 420px;
-  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
-  font-size: 12.5px;
-  tab-size: 2;
-}
 .composer-pill.memory-pill.on {
   color: var(--accent-strong);
   border-color: var(--accent-strong);

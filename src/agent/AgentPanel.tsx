@@ -224,7 +224,6 @@ export function AgentPanel() {
             { label: "Chat normal", icon: "comment-discussion", run: () => { useTeams.setState({ activeChatId: null }); newSession() } },
             { label: "Modo equipo", icon: "organization", run: () => void newTeamChat() },
           ])} />
-          <IconButton icon="history" title="Historial de sesiones" onClick={() => useLayout.getState().showView("agents", false)} />
           <IconButton
             icon={focusChat ? "screen-normal" : "screen-full"}
             title={focusChat ? "Salir del foco en el chat (Ctrl+Alt+M)" : "Foco en el chat (Ctrl+Alt+M)"}
@@ -236,7 +235,7 @@ export function AgentPanel() {
       </div>
       {!connected && (
         <div className="agent-offline">
-          <Icon name="debug-disconnect" /> Conectando con opencode…
+          <Icon name="debug-disconnect" /> Conectando con Fluws…
         </div>
       )}
       {teamChatId ? <TeamChat key={teamChatId} chatId={teamChatId} /> : <SessionPane sessionId={activeId} variant="panel" />}

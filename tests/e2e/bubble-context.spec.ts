@@ -13,6 +13,8 @@ async function setup(page: Page, image = true) {
   await page.addInitScript(({ image }) => {
     let id = 0
     let pinned = false
+    let browserAssigned = false
+    const browserPages = [{ id: 1, windowId: 100, url: "https://agent/1" }, { id: 2, windowId: 100, url: "https://agent/2" }, { id: 3, windowId: 200, url: "https://personal/" }]
     const callbacks = new Map<number, (event: unknown) => void>()
     const subscriptions = new Map<number, { event: string; handler: number }>()
     const deliver = (event: string, payload: unknown) => {
@@ -43,8 +45,13 @@ async function setup(page: Page, image = true) {
           await new Promise<void>(resolve => { (window as any).qaVoiceDone = resolve })
           return "Audio conservado"
         }
-        if (command === "browser_workspace") return { assigned: true, missing: false, windowId: 100,
-          pages: [{ id: 1, windowId: 100, url: "https://agent/1" }, { id: 2, windowId: 100, url: "https://agent/2" }, { id: 3, windowId: 200, url: "https://personal/" }] }
+        if (command === "browser_workspace") {
+          if (args.pageId) browserAssigned = true
+          return browserAssigned
+            ? { assigned: true, missing: false, windowId: 100, pages: browserPages }
+            : { assigned: false, missing: false, windowId: null, pages: browserPages }
+        }
+        if (command === "browser_chrome_workspace") return { assigned: false, missing: false, windowId: null, pages: browserPages }
         if (command === "window_bubble_info") return { session: "s-bubble", origin: "main" }
         if (command === "server_config") return { url: `${location.origin}/test-oc`, username: "qa", password: "qa", worktree: "C:/qa/bubble" }
         if (command === "desktop_context_get") return { enabled: true, pinned, target, choices: [target] }
@@ -104,7 +111,8 @@ for (const image of [true, false]) {
   test(`bubble submits scene and selection with vision=${image}`, async ({ page }) => {
     const { prompts } = await setup(page, image)
     await expect(page.getByLabel("Aplicación objetivo")).toContainText("Reporte - Bloc de notas")
-    await page.getByLabel("Aplicación objetivo").selectOption("w123")
+    await page.getByLabel("Aplicación objetivo").click()
+    await page.getByRole("button", { name: "Reporte - Bloc de notas · notepad.exe" }).click()
     const composer = page.locator("textarea").first()
     await expect(composer).toBeEnabled()
     await composer.fill("Agregá una línea al final")
@@ -245,7 +253,6 @@ test("another conversation's settings and attachments do not leak into the submi
     agent.addContext({ kind: "selection", path: "C:/qa/bubble/b.txt", startLine: 1, endLine: 1, text: "ADJUNTO AJENO" })
     agent.selectSession("s-bubble")
   })
-  await expect(page.locator(".agent-pill")).toContainText("escritorio")
   await expect(page.getByRole("button", { name: "alto", exact: true })).toBeVisible()
   await expect(page.locator(".context-chip")).toContainText("a.txt")
   await page.locator("textarea").first().fill("Revisá mi adjunto")
@@ -262,7 +269,7 @@ test("Browser picker counts only assigned tabs and submitted context excludes pe
   const { prompts } = await setup(page)
   await expect(page.locator("textarea").first()).toBeEnabled()
   await page.getByRole("button", { name: "Elegir navegador", exact: true }).click()
-  await page.getByRole("button", { name: "https://agent/1", exact: true }).click()
+  await page.getByRole("button", { name: /^Ventana 1/ }).click()
   await expect(page.getByRole("button", { name: "Navegador · 2 pestañas", exact: true })).toBeVisible()
   await page.locator("textarea").first().fill("Revisá esa página")
   await page.locator("textarea").first().press("Enter")

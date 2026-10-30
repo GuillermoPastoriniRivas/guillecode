@@ -1,7 +1,6 @@
 import { registerCommands, type Command } from "./registry"
 import { useLayout } from "../state/layout"
 import { openMemory } from "../state/memory"
-import { openPlane } from "../state/plane"
 import { newTeamChat } from "../state/teams"
 import { showQuickOpen } from "../state/quickinput"
 import {
@@ -423,13 +422,6 @@ export function registerBuiltinCommands(): void {
       category: "Flufy",
       icon: "library",
       run: () => openMemory(),
-    },
-    {
-      id: "app.plane",
-      title: "Plano del agente (editar la política y las guías del propio agente)",
-      category: "Flufy",
-      icon: "hubot",
-      run: () => openPlane(),
     },
     {
       id: "accounts.chatgpt",

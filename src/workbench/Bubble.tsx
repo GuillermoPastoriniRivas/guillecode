@@ -6,14 +6,47 @@ import { dockBubble, minimizeBubble, listenBubbleDock } from "../state/bubbles"
 import { listenWindowClose } from "../state/hub"
 import { SessionPane } from "../agent/AgentPanel"
 import { DialogHost } from "../components/Dialog"
-import { ContextMenuHost } from "../components/ContextMenu"
+import { ContextMenuHost, openMenuAt } from "../components/ContextMenu"
 import { QuickInput } from "../components/QuickInput"
 import { ImageLightbox } from "../components/ImageLightbox"
 import { Toasts } from "../components/Toasts"
 import { Icon, IconButton, Spinner } from "../components/ui"
 import { call, onEvent } from "../lib/tauri"
+import { getCurrentWindow } from "@tauri-apps/api/window"
 import type { DesktopContext, DesktopTask } from "../lib/desktop-context"
 import { abortSession } from "../state/agent"
+
+type ResizeDir = "East" | "North" | "NorthEast" | "NorthWest" | "South" | "SouthEast" | "SouthWest" | "West"
+
+const RESIZE_EDGES: Array<[ResizeDir, string]> = [
+  ["North", "n"],
+  ["South", "s"],
+  ["East", "e"],
+  ["West", "w"],
+  ["NorthEast", "ne"],
+  ["NorthWest", "nw"],
+  ["SouthEast", "se"],
+  ["SouthWest", "sw"],
+]
+
+// La ventana es sin bordes, así que Windows no ofrece el marco para
+// redimensionar: los tiradores llaman al arrastre de resize nativo.
+function BubbleResizers() {
+  return (
+    <>
+      {RESIZE_EDGES.map(([direction, side]) => (
+        <div
+          key={direction}
+          className={`bubble-resize bubble-resize-${side}`}
+          onMouseDown={(e) => {
+            e.preventDefault()
+            void getCurrentWindow().startResizeDragging(direction)
+          }}
+        />
+      ))}
+    </>
+  )
+}
 
 function BubbleContext({ sessionId }: { sessionId: string }) {
   const [context, setContext] = useState<DesktopContext | null>(null)
@@ -44,14 +77,30 @@ function BubbleContext({ sessionId }: { sessionId: string }) {
     } catch (e) { setError(String(e)) }
   }
   const running = task?.status === "running"
+  const targetLabel = !context?.enabled
+    ? "Control de la PC apagado"
+    : context.target
+      ? `${context.pinned ? "" : "Auto · "}${context.target.title}`
+      : "Automático"
+  const chooseTarget = (e: React.MouseEvent<HTMLButtonElement>) => {
+    if (!context?.enabled) return
+    openMenuAt(e.currentTarget, [
+      { label: "Automático", icon: context.pinned ? undefined : "check", run: () => void select("") },
+      ...context.choices.map((choice) => ({
+        label: `${choice.title} · ${choice.process}`,
+        icon: context.pinned && context.target?.window === choice.window ? "check" : undefined,
+        run: () => void select(choice.window),
+      })),
+    ])
+  }
   return <div className="bubble-context">
     <label>
       <Icon name="eye" />
       <span>Viendo:</span>
-      <select aria-label="Aplicación objetivo" value={context?.pinned ? context.target?.window ?? "" : ""} onChange={(e) => void select(e.target.value)} disabled={!context?.enabled}>
-        <option value="">{context?.enabled ? context.target ? `Auto · ${context.target.title}` : "Elegí una aplicación" : "Control de la PC apagado"}</option>
-        {context?.choices.map((target) => <option key={target.window} value={target.window}>{target.title} · {target.process}</option>)}
-      </select>
+      <button type="button" className="bubble-target" onClick={chooseTarget} disabled={!context?.enabled} aria-label="Aplicación objetivo" aria-haspopup="menu" title={targetLabel}>
+        <span className="bubble-target-text">{targetLabel}</span>
+        <Icon name="chevron-down" />
+      </button>
     </label>
     {(error || context?.error) && <div role="alert">{error || context?.error}</div>}
     {task && <div className="bubble-task">
@@ -118,6 +167,7 @@ export function BubbleApp({ sessionId, origin }: { sessionId: string; origin: st
 
   return (
     <div className="bubble">
+      <BubbleResizers />
       <BubbleHead sessionId={sessionId} origin={origin} />
       <BubbleContext sessionId={sessionId} />
       <div className="bubble-body">
@@ -126,7 +176,7 @@ export function BubbleApp({ sessionId, origin }: { sessionId: string; origin: st
         ) : (
           <div className="bubble-loading">
             <Spinner size={16} />
-            <span>Conectando con opencode…</span>
+            <span>Conectando con Fluws…</span>
           </div>
         )}
         {ready && !connected && (

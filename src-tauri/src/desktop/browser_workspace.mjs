@@ -84,10 +84,8 @@ export class Workspaces {
     if (meta.action === 'assign') {
       const chosen = pages.find(p => p.id === meta.pageId)
       if (!chosen) throw new Error('La pestaña ya no existe. Volvé a elegir la ventana de Chrome.')
-      if (Object.entries(this.sessions).some(([session, w]) => session !== meta.session && w.windowId === chosen.windowId &&
-        Array.isArray(w.targets) && pages.some(p => w.targets.includes(p.target) && p.windowId === w.windowId))) {
-        throw new Error('Esa ventana ya está asignada a otra conversación. Elegí una ventana dedicada.')
-      }
+      // Varias conversaciones pueden compartir la misma ventana: cada una
+      // conserva su propia pestaña seleccionada.
       this.sessions[meta.session] = { windowId: chosen.windowId, targets: pages.filter(p => p.windowId === chosen.windowId).map(p => p.target), selected: chosen.target }
       await this.save()
     }

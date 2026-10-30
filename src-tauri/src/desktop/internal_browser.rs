@@ -35,18 +35,28 @@ pub struct Bounds {
 }
 
 pub(super) fn profile(session: &str) -> Result<PathBuf, String> {
-    let id = session
-        .strip_prefix("team:")
-        .ok_or("El navegador interno necesita un chat de equipo")?;
-    if id.is_empty() || id.len() > 80 || !id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-')
-    {
-        return Err("Identificador del equipo inválido".into());
-    }
+    let folder = match session.strip_prefix("team:") {
+        Some(id) => {
+            if id.is_empty() || id.len() > 80 || !id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-') {
+                return Err("Identificador del equipo inválido".into());
+            }
+            id.to_string()
+        }
+        // Chats normales: cada conversación tiene su propio perfil interno e
+        // independiente del Chrome personal. El nombre se deriva del hash para
+        // aceptar cualquier id de sesión.
+        None => {
+            if session.is_empty() || session.len() > 200 {
+                return Err("Identificador de chat inválido".into());
+            }
+            format!("chat-{}", actor_key(session))
+        }
+    };
     crate::proc::app()
         .ok_or("GuilleCode no está iniciado")?
         .path()
         .app_local_data_dir()
-        .map(|p| p.join("internal-browser").join(id))
+        .map(|p| p.join("internal-browser").join(folder))
         .map_err(|e| e.to_string())
 }
 
@@ -266,8 +276,9 @@ pub async fn browser_internal_open(
             }
             return Ok(json!(page));
         }
-        let p = open_actor(&app, &session, "user", url.as_deref(), false)?;
-        super::browser::claim_internal(&session, "user")?;
+        let actor = if session.starts_with("team:") { "user".to_string() } else { session.clone() };
+        let p = open_actor(&app, &session, &actor, url.as_deref(), false)?;
+        super::browser::claim_internal(&session, &actor)?;
         Ok(json!(p))
     })
     .await
@@ -276,8 +287,7 @@ pub async fn browser_internal_open(
 
 #[tauri::command]
 pub fn browser_internal_pages(app: tauri::AppHandle, session: String) -> Result<Value, String> {
-    profile(&session)?;
-    Ok(json!(registry()
+    profile(&session)?;    Ok(json!(registry()
         .lock()
         .unwrap()
         .pages
@@ -360,6 +370,26 @@ pub async fn browser_internal_view(
             view.set_size(tauri::PhysicalSize::new(b.width, b.height))
                 .map_err(|e| e.to_string())?;
             view.show().map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn browser_internal_off(app: tauri::AppHandle, session: String) -> Result<(), String> {
+    let dir = profile(&session)?;
+    let _ = std::fs::remove_file(dir.join("enabled"));
+    let labels: Vec<String> = registry()
+        .lock()
+        .unwrap()
+        .pages
+        .iter()
+        .filter(|p| p.session == session)
+        .map(|p| p.label.clone())
+        .collect();
+    for label in labels {
+        if let Some(view) = app.get_webview(&label) {
+            let _ = view.hide();
         }
     }
     Ok(())

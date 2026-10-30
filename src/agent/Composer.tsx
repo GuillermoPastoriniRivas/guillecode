@@ -539,13 +539,15 @@ export function Composer({
         }}
       />
       {voiceSetup && <VoiceSetup onClose={() => setVoiceSetup(false)} onRecord={recorder.start} />}
-      {shownAgent === BUBBLE_AGENT && sessionId && <BrowserWorkspace key={sessionId} sessionId={sessionId} />}
+      <BrowserWorkspace key={sessionId ?? "draft"} sessionId={sessionId} />
       <div className="composer-footer">
         <div className="composer-options">
-          <button type="button" className="composer-pill agent-pill" onClick={() => void chooseAgent()} title={isBubble ? "La burbuja maneja la PC" : "Modo del agente"}>
-            <Icon name={shownAgent === "plan" ? "checklist" : "hubot"} />
-            <span>{shownAgent}</span>
-          </button>
+          {!isBubble && (
+            <button type="button" className="composer-pill agent-pill" onClick={() => void chooseAgent()} title="Modo del agente">
+              <Icon name={shownAgent === "plan" ? "checklist" : "hubot"} />
+              <span>{shownAgent}</span>
+            </button>
+          )}
           <button type="button" className="composer-pill" onClick={() => void chooseModel()} title="Elegir modelo">
             <Icon name="sparkle" />
             <span className="composer-pill-text">{modelName}</span>
@@ -572,15 +574,17 @@ export function Composer({
               <Icon name="eye" />
             </button>
           )}
-          <button type="button" className="composer-icon" title="Mencionar archivo (@)" onClick={() => {
-            const el = ref.current
-            const caret = el?.selectionStart ?? text.length
-            const next = `${text.slice(0, caret)}${caret > 0 && !/\s$/.test(text.slice(0, caret)) ? " " : ""}@${text.slice(caret)}`
-            updateText(next, next.length - text.slice(caret).length)
-            el?.focus()
-          }}>
-            <Icon name="mention" />
-          </button>
+          {!isBubble && (
+            <button type="button" className="composer-icon" title="Mencionar archivo (@)" onClick={() => {
+              const el = ref.current
+              const caret = el?.selectionStart ?? text.length
+              const next = `${text.slice(0, caret)}${caret > 0 && !/\s$/.test(text.slice(0, caret)) ? " " : ""}@${text.slice(caret)}`
+              updateText(next, next.length - text.slice(caret).length)
+              el?.focus()
+            }}>
+              <Icon name="mention" />
+            </button>
+          )}
           <button type="button" className="composer-icon" title="Adjuntar imagen" onClick={() => fileInput.current?.click()}>
             <Icon name="attach" />
           </button>

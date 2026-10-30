@@ -68,7 +68,7 @@ async function setup(page: Page, open = ["s1", "c1", "s2"]) {
     return route.fulfill({ json: [] })
   })
   await page.goto("/")
-  await page.getByTitle("Historial de sesiones").click()
+  await page.getByTitle(/Sesiones del agente/).click()
   await expect(row(page, "Conversación vieja")).toBeVisible()
   return state
 }
@@ -76,18 +76,13 @@ async function setup(page: Page, open = ["s1", "c1", "s2"]) {
 const row = (page: Page, title: string) => page.locator(".session-row", { hasText: title })
 const tab = (page: Page, title: string) => page.locator(".agent-tab", { hasText: title })
 
-test("el historial recupera conversaciones de otras carpetas sin cambiar ni borrar las locales", async ({ page }) => {
+test("el historial muestra solo la carpeta actual y no consulta ni modifica otras", async ({ page }) => {
   const state = await setup(page)
   state.sessions.push({ ...session("foreign", "Conversación de otra carpeta"), directory: "E:/otro-proyecto" })
-  await expect(row(page, "Conversación de otra carpeta")).toHaveCount(0)
-  await page.getByLabel("Todas las carpetas", { exact: true }).check()
-  await expect(row(page, "Conversación de otra carpeta")).toBeVisible()
-  await expect(row(page, "Conversación de otra carpeta")).toContainText("E:/otro-proyecto")
   await expect(row(page, "Conversación vieja")).toBeVisible()
-  expect(state.globalRequests).toHaveLength(2)
-  expect(state.globalRequests.every(r => r.directory === null && !r.header)).toBe(true)
-  await page.getByLabel("Todas las carpetas", { exact: true }).uncheck()
+  await expect(row(page, "Conversación actual")).toBeVisible()
   await expect(row(page, "Conversación de otra carpeta")).toHaveCount(0)
+  expect(state.globalRequests).toHaveLength(0)
   expect(state.mutations).toHaveLength(0)
 })
 

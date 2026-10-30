@@ -14,6 +14,7 @@ import { useAgent, sessionStatus, toggleFavoriteModel } from "../state/agent"
 import { useAttention, testAlert, silenceSound, focusPending } from "../state/attention"
 import { useUnseen } from "../state/unseen"
 import {
+  GO_PROVIDER,
   USAGE_WINDOWS,
   chatgptWorst,
   fiveHourRelease,
@@ -31,6 +32,9 @@ import {
   setUsageLimits,
   usageRatio,
   useUsage,
+  type ChatgptUsage,
+  type GoUsage,
+  type ProviderUsage,
   type UsageLimits,
 } from "../state/usage"
 import { CHATGPT } from "../state/accounts"
@@ -63,7 +67,6 @@ const VIEWS: Array<{ id: ViewId; icon: string; title: string; keys: string }> = 
   { id: "prs", icon: "git-pull-request", title: "Pull requests", keys: "" },
   { id: "routines", icon: "calendar", title: "Rutinas", keys: "" },
   { id: "memory", icon: "library", title: "Memoria", keys: "" },
-  { id: "plane", icon: "hubot", title: "Plano del agente", keys: "" },
 ]
 
 export function ActivityBar() {
@@ -229,21 +232,76 @@ async function editUsageLimits(current: UsageLimits) {
 }
 
 function QuotaStatus() {
-  const onChatgpt = useAgent((s) => s.model.providerID === CHATGPT)
-  return onChatgpt ? <ChatgptQuotaStatus /> : <GoQuotaStatus />
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null)
+  const providers = useAgent((s) => s.providers)
+  const activeProvider = useAgent((s) => s.model.providerID)
+  const chatgpt = useUsage((s) => s.chatgpt)
+  const chatgptError = useUsage((s) => s.chatgptError)
+  const go = useUsage((s) => s.go)
+  const goError = useUsage((s) => s.goError)
+  const localError = useUsage((s) => s.error)
+  const usage = useUsage((s) => s.usage)
+  const limits = useUsage((s) => s.limits)
+  const hasChatgpt = providers.some((p) => p.id === CHATGPT)
+  const hasGo = providers.some((p) => p.id === GO_PROVIDER)
+
+  useEffect(() => { if (hasChatgpt) void refreshChatgptUsage() }, [hasChatgpt])
+  useEffect(() => { if (hasGo) { void refreshGoUsage(); void refreshUsage() } }, [hasGo])
+
+  const sections: QuotaSection[] = []
+  if (hasChatgpt) sections.push(chatgptSection(chatgpt, chatgptError, () => setAnchor(null)))
+  if (hasGo) sections.push(goSection(go, usage, limits, goError, localError))
+  if (sections.length === 0) return null
+
+  const section = sections.find((s) => s.id === (activeProvider === CHATGPT ? "chatgpt" : "go")) ?? sections[0]
+  const worst = section.rows.length ? section.rows.reduce((a, b) => (b.ratio > a.ratio ? b : a), section.rows[0]) : null
+  const tone = worst && worst.ratio >= 1 ? "error" : section.error || (worst && worst.ratio >= 0.8) ? "warn" : undefined
+  const resets = chatgpt?.resetsAvailable ?? 0
+  const exhausted = !!chatgpt && (chatgpt.limitReached || chatgptWorst(chatgpt) >= 100)
+  const resetsTag = section.id === "chatgpt" && exhausted && resets > 0 ? ` · ${resetsCountLabel(resets)}` : ""
+  const label = section.id === "chatgpt"
+    ? worst ? `ChatGPT ${percent(worst.ratio)}${resetsTag}` : "Cuota ChatGPT"
+    : worst ? `Go ${percent(worst.ratio)}` : "Cuota Go"
+  const refreshAll = () => {
+    if (hasChatgpt) void refreshChatgptUsage()
+    if (hasGo) { void refreshGoUsage(); void refreshUsage() }
+  }
+  const actions = [
+    { label: "Cuentas de IA", icon: "account", run: () => void openEditor({ kind: "accounts" }) },
+    ...(hasGo ? [{ label: "Topes de Go", icon: "settings-gear", run: () => void editUsageLimits(limits) }] : []),
+    { label: "Actualizar", icon: "refresh", run: refreshAll },
+  ]
+  return (
+    <>
+      <StatusItem
+        icon="credit-card"
+        label={label}
+        title={section.note}
+        tone={tone}
+        expanded={!!anchor}
+        onClick={(e) => { setAnchor(anchor ? null : e.currentTarget); if (!anchor) refreshAll() }}
+      />
+      {anchor && <QuotaPopover anchor={anchor} onClose={() => setAnchor(null)} sections={sections} actions={actions} />}
+    </>
+  )
 }
 
 type QuotaRow = { key: string; label: string; ratio: number; detail?: string }
 
-function QuotaPopover({ anchor, onClose, title, badge, rows, extra, note, error, actions }: {
-  anchor: HTMLElement
-  onClose: () => void
+type QuotaSection = {
+  id: string
   title: string
   badge?: string
   rows: QuotaRow[]
   extra?: ReactNode
   note: string
   error?: string | null
+}
+
+function QuotaPopover({ anchor, onClose, sections, actions }: {
+  anchor: HTMLElement
+  onClose: () => void
+  sections: QuotaSection[]
   actions: Array<{ label: string; icon: string; run: () => void }>
 }) {
   const ref = useRef<HTMLDivElement>(null)
@@ -291,35 +349,39 @@ function QuotaPopover({ anchor, onClose, title, badge, rows, extra, note, error,
   }, [anchor, onClose])
 
   return createPortal(
-    <div ref={ref} className="quota-popover" role="dialog" aria-label={title} style={{ left: position?.left ?? 0, top: position?.top ?? 0, visibility: position ? "visible" : "hidden" }}>
+    <div ref={ref} className="quota-popover" role="dialog" aria-label="Cuotas de proveedores" style={{ left: position?.left ?? 0, top: position?.top ?? 0, visibility: position ? "visible" : "hidden" }}>
       <div className="quota-popover-head">
-        <div>
-          <div className="quota-popover-eyebrow">CUOTA UTILIZADA</div>
-          <div className="quota-popover-title">{title}</div>
-        </div>
-        {badge && <span className="quota-popover-badge">{badge}</span>}
+        <div className="quota-popover-eyebrow">CUOTA UTILIZADA</div>
       </div>
-      <div className="quota-popover-rows">
-        {rows.map((row) => {
-          const tone = row.ratio >= 1 ? "error" : row.ratio >= 0.8 ? "warn" : "normal"
-          return (
-            <div className={`quota-popover-row ${tone}`} key={row.key}>
-              <div className="quota-popover-line">
-                <span>{row.label}</span>
-                <strong>{percent(row.ratio)}</strong>
-              </div>
-              <div className="quota-popover-track" role="progressbar" aria-label={row.label} aria-valuenow={Math.max(0, Math.min(100, Math.round(row.ratio * 100)))} aria-valuemin={0} aria-valuemax={100}>
-                <span style={{ width: `${Math.max(0, Math.min(100, row.ratio * 100))}%` }} />
-              </div>
-              {row.detail && <div className="quota-popover-detail">{row.detail}</div>}
-            </div>
-          )
-        })}
-      </div>
-      {extra}
-      {error && <div className="quota-popover-error"><Icon name="warning" /> Última lectura fallida: {error}</div>}
+      {sections.map((section) => (
+        <section className="quota-popover-section" key={section.id}>
+          <div className="quota-popover-section-head">
+            <div className="quota-popover-title">{section.title}</div>
+            {section.badge && <span className="quota-popover-badge">{section.badge}</span>}
+          </div>
+          <div className="quota-popover-rows">
+            {section.rows.map((row) => {
+              const rowTone = row.ratio >= 1 ? "error" : row.ratio >= 0.8 ? "warn" : "normal"
+              return (
+                <div className={`quota-popover-row ${rowTone}`} key={row.key}>
+                  <div className="quota-popover-line">
+                    <span>{row.label}</span>
+                    <strong>{percent(row.ratio)}</strong>
+                  </div>
+                  <div className="quota-popover-track" role="progressbar" aria-label={row.label} aria-valuenow={Math.max(0, Math.min(100, Math.round(row.ratio * 100)))} aria-valuemin={0} aria-valuemax={100}>
+                    <span style={{ width: `${Math.max(0, Math.min(100, row.ratio * 100))}%` }} />
+                  </div>
+                  {row.detail && <div className="quota-popover-detail">{row.detail}</div>}
+                </div>
+              )
+            })}
+          </div>
+          {section.extra}
+          {section.error && <div className="quota-popover-error"><Icon name="warning" /> Última lectura fallida: {section.error}</div>}
+          <div className="quota-popover-note">{section.note}</div>
+        </section>
+      ))}
       <div className="quota-popover-footer">
-        <div className="quota-popover-note">{note}</div>
         <div className="quota-popover-actions">
           {actions.map((action) => (
             <button key={action.label} type="button" onClick={() => { onClose(); action.run() }}>
@@ -380,80 +442,28 @@ function ChatgptResets({ exhausted, onUse }: { exhausted: boolean; onUse: () => 
   )
 }
 
-function ChatgptQuotaStatus() {
-  const [anchor, setAnchor] = useState<HTMLElement | null>(null)
-  const usage = useUsage((s) => s.chatgpt)
-  const error = useUsage((s) => s.chatgptError)
-  useEffect(() => { void refreshChatgptUsage() }, [])
+function chatgptSection(usage: ChatgptUsage | null, error: string | null, onUse: () => void): QuotaSection {
   if (!usage) {
-    return (
-      <>
-        <StatusItem
-          icon="credit-card"
-          label="Cuota ChatGPT"
-          title="Ver cuota de ChatGPT"
-          tone={error ? "warn" : undefined}
-          expanded={!!anchor}
-          onClick={(e) => { setAnchor(anchor ? null : e.currentTarget); if (!anchor) void refreshChatgptUsage() }}
-        />
-        {anchor && <QuotaPopover
-          anchor={anchor}
-          onClose={() => setAnchor(null)}
-          title="ChatGPT"
-          rows={[]}
-          note={error ? "No se pudo obtener la cuota. Podés reintentar o revisar tu cuenta." : "Consultando la cuota de tu cuenta…"}
-          error={error}
-          actions={[{ label: "Cuentas de IA", icon: "account", run: () => void openEditor({ kind: "accounts" }) }, { label: "Actualizar", icon: "refresh", run: () => void refreshChatgptUsage() }]}
-        />}
-      </>
-    )
+    return { id: "chatgpt", title: "ChatGPT", rows: [], note: error ? "No se pudo obtener la cuota. Podés reintentar o revisar tu cuenta." : "Consultando la cuota de tu cuenta…", error }
   }
   const worst = chatgptWorst(usage)
   const exhausted = usage.limitReached || worst >= 100
-  const tone = exhausted ? "error" : worst >= 80 ? "warn" : undefined
-  const plan = usage.plan ? ` ${usage.plan[0].toUpperCase()}${usage.plan.slice(1)}` : ""
-  const summary = usage.windows.map((w) => `${quotaWindowLabel(w.windowSeconds).toLowerCase()} ${percent(w.usedPercent / 100)}`).join(" · ")
-  const resets = usage.resetsAvailable ?? 0
-  const resetsNote = resets > 0 ? `. Tenés ${resetsCountLabel(resets)} guardado${resets === 1 ? "" : "s"}` : ""
-  return (
-    <>
-      <StatusItem
-        icon="credit-card"
-        label={`ChatGPT ${percent(worst / 100)}${exhausted && resets > 0 ? ` · ${resetsCountLabel(resets)}` : ""}`}
-        title={`Cuota de tu plan${plan} de ChatGPT, compartida con Codex: ${summary}${resetsNote}. Medida a las ${clockTime(usage.measuredAt)}`}
-        tone={tone}
-        expanded={!!anchor}
-        onClick={(e) => setAnchor(anchor ? null : e.currentTarget)}
-      />
-      {anchor && <QuotaPopover
-        anchor={anchor}
-        onClose={() => setAnchor(null)}
-        title="ChatGPT"
-        badge={usage.plan || undefined}
-        rows={usage.windows.map((w) => ({ key: String(w.windowSeconds), label: quotaWindowLabel(w.windowSeconds), ratio: w.usedPercent / 100, detail: w.resetsAt ? `Se renueva ${renewalLabel(w.resetsAt)}` : undefined }))}
-        extra={<ChatgptResets exhausted={exhausted} onUse={() => setAnchor(null)} />}
-        note={`Cuota real compartida con Codex · medida a las ${clockTime(usage.measuredAt)}${usage.limitReached ? " · Límite alcanzado" : ""}`}
-        error={error}
-        actions={[{ label: "Cuentas de IA", icon: "account", run: () => void openEditor({ kind: "accounts" }) }, { label: "Actualizar", icon: "refresh", run: () => void refreshChatgptUsage() }]}
-      />}
-    </>
-  )
+  return {
+    id: "chatgpt",
+    title: "ChatGPT",
+    badge: usage.plan || undefined,
+    rows: usage.windows.map((w) => ({ key: String(w.windowSeconds), label: quotaWindowLabel(w.windowSeconds), ratio: w.usedPercent / 100, detail: w.resetsAt ? `Se renueva ${renewalLabel(w.resetsAt)}` : undefined })),
+    extra: <ChatgptResets exhausted={exhausted} onUse={onUse} />,
+    note: `Cuota real compartida con Codex · medida a las ${clockTime(usage.measuredAt)}${usage.limitReached ? " · Límite alcanzado" : ""}`,
+    error,
+  }
 }
 
-function GoQuotaStatus() {
-  const [anchor, setAnchor] = useState<HTMLElement | null>(null)
-  const go = useUsage((s) => s.go)
-  const goError = useUsage((s) => s.goError)
-  const localError = useUsage((s) => s.error)
-  const usage = useUsage((s) => s.usage)
-  const limits = useUsage((s) => s.limits)
-  useEffect(() => { void refreshGoUsage(); void refreshUsage() }, [])
-
+function goSection(go: GoUsage | null, usage: ProviderUsage | null, limits: UsageLimits, goError: string | null, localError: string | null): QuotaSection {
   let rows: QuotaRow[] = []
   let note = "Todavía no hay datos de cuota de OpenCode Go. Podés actualizar o revisar tus cuentas de IA."
   let error: string | null = goError || localError
   let badge: string | undefined
-  let summary = ""
   if (go) {
     rows = goRows(go).map((r) => ({
       key: r.id,
@@ -463,7 +473,6 @@ function GoQuotaStatus() {
     }))
     note = `Cuota real de OpenCode Go (montos según tus topes) · medida a las ${clockTime(go.measuredAt)}`
     error = goError
-    summary = "Cuota real de OpenCode Go"
   } else if (usage) {
     const release = fiveHourRelease(usage)
     rows = USAGE_WINDOWS.map((w) => ({
@@ -474,37 +483,8 @@ function GoQuotaStatus() {
     }))
     note = `Según el historial local · medida a las ${clockTime(usage.measuredAt)}`
     badge = "Estimado"
-    summary = "Cuota de OpenCode Go, estimada con el historial local"
   }
-
-  const worst = rows.length ? rows.reduce((a, b) => (b.ratio > a.ratio ? b : a), rows[0]) : null
-  const tone = worst && worst.ratio >= 1 ? "error" : error || (worst && worst.ratio >= 0.8) ? "warn" : undefined
-  const refresh = () => {
-    void refreshGoUsage()
-    void refreshUsage()
-  }
-  return (
-    <>
-      <StatusItem
-        icon="credit-card"
-        label={worst ? `Go ${percent(worst.ratio)}` : "Cuota Go"}
-        title={worst ? `${summary}: ${percent(worst.ratio)} en ${worst.label.toLowerCase()}` : "Ver cuota de OpenCode Go"}
-        tone={tone}
-        expanded={!!anchor}
-        onClick={(e) => setAnchor(anchor ? null : e.currentTarget)}
-      />
-      {anchor && <QuotaPopover
-        anchor={anchor}
-        onClose={() => setAnchor(null)}
-        title="OpenCode Go"
-        badge={badge}
-        rows={rows}
-        note={note}
-        error={error}
-        actions={[{ label: worst ? "Editar topes" : "Cuentas de IA", icon: worst ? "settings-gear" : "account", run: () => { if (worst) void editUsageLimits(limits); else void openEditor({ kind: "accounts" }) } }, { label: "Actualizar", icon: "refresh", run: refresh }]}
-      />}
-    </>
-  )
+  return { id: "go", title: "OpenCode Go", badge, rows, note, error }
 }
 
 export function StatusBar() {
@@ -560,7 +540,7 @@ export function StatusBar() {
   return (
     <footer className="status-bar">
       <div className="status-left">
-        <StatusItem icon="remote" label={connected ? "opencode" : "desconectado"} title={connected ? "Conectado al servidor de opencode" : "Reconectando con opencode…"} tone={connected ? "remote" : "remote offline"} />
+        <StatusItem icon="remote" label={connected ? "fluws" : "desconectado"} title={connected ? "Conectado al motor de Fluws" : "Reconectando con Fluws…"} tone={connected ? "remote" : "remote offline"} />
         {ws && workspaceCount > 1 && (
           <StatusItem
             icon={ws.kind === "main" ? "home" : "worktree"}

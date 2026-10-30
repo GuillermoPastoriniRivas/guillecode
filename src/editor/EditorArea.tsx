@@ -37,7 +37,7 @@ import { useTeams } from "../state/teams"
 import { RemoteEditor } from "./RemoteEditor"
 import { DesktopEditor } from "./DesktopEditor"
 import { MemoryEditor } from "./MemoryEditor"
-import { PlaneEditor } from "./PlaneEditor"
+import { BrowserEditor } from "./BrowserEditor"
 import { AccountsEditor } from "./AccountsEditor"
 import { FeatureCreateEditor, FeatureIntegrateEditor } from "./FeatureEditor"
 import { SessionPane } from "../agent/AgentPanel"
@@ -76,8 +76,8 @@ function tabIcon(input: EditorInput) {
       return <Icon name="vm" className="tab-icon" />
     case "memory":
       return <Icon name="library" className="tab-icon" />
-    case "plane":
-      return <Icon name="hubot" className="tab-icon" />
+    case "browser":
+      return <Icon name="globe" className="tab-icon" />
     case "accounts":
       return <Icon name="account" className="tab-icon" />
     case "featureCreate":
@@ -318,8 +318,8 @@ function EditorContent({ tab }: { tab: Tab }) {
       return <AiReviewEditor key={tab.id} input={input} />
     case "memory":
       return <MemoryEditor key={tab.id} />
-    case "plane":
-      return <PlaneEditor key={tab.id} />
+    case "browser":
+      return <BrowserEditor key={tab.id} sessionId={input.sessionId} />
     case "routine":
       return <RoutineEditor key={tab.id} id={input.id} />
     case "team":
