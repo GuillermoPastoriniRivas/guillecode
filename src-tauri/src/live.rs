@@ -387,6 +387,11 @@ fn broadcast(app: &AppHandle, session: Option<&str>, message: &str) {
     });
 }
 
+/// Invalidation only: authenticated clients reload a durable board snapshot.
+pub fn teams_changed(app: &AppHandle) {
+    if app.try_state::<LiveState>().is_some() { broadcast(app,None,&json!({"type":"team.changed"}).to_string()); }
+}
+
 pub fn disconnect_all(app: &AppHandle) {
     app.state::<LiveState>().subscribers.lock().unwrap().clear();
 }

@@ -37,6 +37,10 @@ fn native_team_end_to_end() {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if std::env::var("GUILLE_TEAM_TEST_PLAN_V2").as_deref() == Ok("1") {
+                plan_v2_team_scenario(&handle,&repo);
+                return;
+            }
             if std::env::var("GUILLE_TEAM_TEST_CYCLE").as_deref() == Ok("1") || std::env::var("GUILLE_TEAM_TEST_HELP").as_deref() == Ok("1") {
                 circular_team_scenario(&handle, &repo);
                 return;
@@ -467,6 +471,94 @@ fn native_team_end_to_end() {
     if let Err(error) = result {
         std::panic::resume_unwind(error);
     }
+}
+
+fn plan_v2_team_scenario(app: &AppHandle, repo: &str) {
+    let invalid = std::env::var("GUILLE_TEAM_TEST_INVALID_PLAN_V2").as_deref() == Ok("1");
+    let routed = std::env::var("GUILLE_TEAM_TEST_ROUTING").as_deref() == Ok("1");
+    let mut team = domain::tests::team();
+    team.project_root = repo.into(); team.allowed_repositories = vec![repo.into()];
+    team.plan_v2.enabled = true; team.plan_v2.review_before_start = !invalid;
+    team.members[0].model.model_id = "qa-lead".into();
+    if routed {
+        team.plan_v2.routing.enabled=true;
+        for (category,model) in [("code","qa-backend"),("visual","qa-frontend"),("review","qa-lead")] {
+            let candidate=|model:&str| routing::ModelCandidate{runtime_id:"opencode".into(),provider_id:"openai".into(),model_id:model.into(),capability_scope:"provider:openai".into(),variant:None};
+            team.plan_v2.routing.routes.push(routing::CategoryRoute{category:category.into(),candidates:vec![candidate("not-available"),candidate(model)]});
+        }
+    }
+    for role in ["backend","frontend"] {
+        let mut member = team.members[0].clone(); member.id = role.into(); member.name = role.into();
+        member.model.model_id = format!("qa-{role}"); member.tools = vec!["read".into(),"write".into(),"edit".into(),"bash".into()];
+        team.members.push(member);
+    }
+    let team = teams_save(app.clone(),team).unwrap();
+    let chat = team_chats_create(app.clone(),team.id).unwrap();
+    let wait = |run_id: &str, status: &str| -> Run {
+        let deadline = Instant::now() + Duration::from_secs(180);
+        loop {
+            let r = run(app,run_id).unwrap();
+            if r.status == status { return r; }
+            assert!(!["blocked","failed","planning_blocked"].contains(&r.status.as_str()),"Expected {status}, got {:?}",r);
+            assert!(Instant::now() < deadline,"Plan V2 timed out: {:?}",r);
+            let client = runner::test_client(app,repo).unwrap();
+            for permission in client.get("/permission").unwrap().as_array().into_iter().flatten() {
+                client.post(&format!("/permission/{}/reply",permission["id"].as_str().unwrap()),serde_json::json!({"reply":"once"})).unwrap();
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    };
+    if invalid {
+        for i in 0..20 {
+            let id = team_runs_start(app.clone(),chat.id.clone(),format!("Invalid V2 fixture {i}")).unwrap();
+            let blocked = wait(&id,"planning_blocked");
+            assert!(blocked.tasks.is_empty());
+            assert!(!blocked.plan_v2.validation.unwrap().valid);
+            assert_eq!(blocked.plan_v2.rejected_proposals.len(),3);
+        }
+        return;
+    }
+    let missing_id = team_runs_start(app.clone(),chat.id.clone(),"Requisito omitido de cobertura: validar refresh expirado".into()).unwrap();
+    let missing = wait(&missing_id,"planning_blocked");
+    assert!(missing.tasks.is_empty());
+    assert_eq!(missing.plan_v2.revision_number,0);
+    assert!(missing.plan_v2.validation.unwrap().issues.iter().any(|i| i.code == plan_v2::PlanErrorCode::MissingCoverage));
+    let id = team_runs_start(app.clone(),chat.id.clone(),"Crear backend y frontend comprobables · Plan V2".into()).unwrap();
+    let ready = wait(&id,"plan_ready");
+    assert!(ready.tasks.iter().all(|t| t.attempts.is_empty()));
+    assert_eq!(ready.plan_v2.revision_number,1);
+    assert!(!ready.plan_v2.discovery.is_empty());
+    let patch = plan_v2::PlanPatch { operation_id:domain::id(),run_id:id.clone(),expected_revision:1,expected_digest:ready.plan_v2.digest,
+        reason:"Priorizar Frontend antes de despachar el plan".into(),operations:vec![plan_v2::PlanOperation::ReprioritizePending { task_id:"frontend".into(),priority:1 }] };
+    let preview = preview_plan_patch(app.clone(),patch.clone()).unwrap();
+    assert_eq!(preview.number,2);
+    assert_eq!(run(app,&id).unwrap().plan_v2.revision_number,1);
+    let remote_receipt = crate::remote::test_teams_board(app,&chat.id,patch.clone());
+    let receipt = apply_plan_patch(app.clone(),patch.clone()).unwrap();
+    assert_eq!(remote_receipt["id"],receipt.id);
+    assert_eq!(apply_plan_patch(app.clone(),patch).unwrap().id,receipt.id);
+    update_run(app,&id,|r| { r.guidance.push("Priorizar Backend antes del despacho".into()); r.plan_v2.pending_change = true; Ok(()) }).unwrap();
+    assert!(!plan_v2::apply_guidance(app,&id).unwrap().is_empty());
+    assert_eq!(run(app,&id).unwrap().plan_v2.revision_number,3);
+    assert!(!run(app,&id).unwrap().plan_v2.pending_change);
+    control(app,&id,"start_plan").unwrap();
+    let finished = wait(&id,"completed");
+    assert_eq!(finished.plan_v2.revision_number,3);
+    assert!(finished.tasks.iter().all(|t| t.status == "completed" && !t.attempts.is_empty()));
+    assert!(finished.tasks.iter().all(|t| plan_v2::verification_passed(t,&t.attempts.last().unwrap().commands,&t.attempts.last().unwrap().observations)));
+    assert_ne!(finished.status,"qa_approved");
+    if routed {
+        for task in &finished.tasks {
+            let attempt=task.attempts.last().unwrap();let receipt=attempt.routing.as_ref().expect("durable routing receipt");
+            assert_eq!(receipt.selected.model_id,format!("qa-{}",task.id));assert_eq!(receipt.considered[0].reason,"not_connected_or_unavailable");
+            assert_eq!(receipt.selected.model_id,attempt.agent.model.model_id);
+        }
+        assert!(finished.support_reports.iter().all(|r| r.routing.is_some()));
+    }
+    let reloaded = read_db(&db(app).unwrap()).unwrap();
+    let durable = reloaded.chats.iter().flat_map(|c| &c.runs).find(|r| r.id == id).unwrap();
+    assert_eq!(durable.plan_v2.revisions[1].id,receipt.id);
+    assert_eq!(durable.plan_v2.digest,plan_v2::plan_digest(durable));
 }
 
 fn circular_team_scenario(handle: &tauri::AppHandle, repo: &str) {

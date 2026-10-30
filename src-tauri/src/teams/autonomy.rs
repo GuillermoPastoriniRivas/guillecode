@@ -95,6 +95,7 @@ pub(super) fn request_help(r: &mut Run, task_id: &str, boundary: Option<Vec<Stri
     let task = r.tasks.iter_mut().find(|t| t.id == task_id).unwrap();
     let attempt_id = if let Some(previous) = previous.filter(|a| a.session_id.is_some()) {
         let attempt = Attempt {
+            routing: previous.routing,
             id: id(),
             agent: previous.agent,
             session_id: previous.session_id,

@@ -1,0 +1,9 @@
+{
+  "commit": "eba1f55758792f972014987da17af8ab891ed16c",
+  "files": [
+    "src-tauri/src/teams/domain.rs",
+    "src-tauri/src/teams/runner.rs"
+  ],
+  "excerptsSha256": "a4e1c990ca1e557da9dc330091526ef235f5704ca949c6f3ec4ba4c8a3b2a26c",
+  "repairBoundary": "Final proposal after the same two repair opportunities. This benchmark does not sample inference."
+}

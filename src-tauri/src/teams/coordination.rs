@@ -8,6 +8,14 @@ use tauri::AppHandle;
 #[serde(rename_all = "camelCase")]
 struct Decision {
     #[serde(default)]
+    plan_patch: Option<super::plan_v2::PlanPatch>,
+    #[serde(default)]
+    evidence_refs: Vec<String>,
+    #[serde(default)]
+    trigger_type: String,
+    #[serde(default)]
+    expected_outcome: String,
+    #[serde(default)]
     agents: Vec<AgentProposal>,
     status: String,
     summary: String,
@@ -168,6 +176,10 @@ fn repairable_decision(error: &str) -> bool {
     error == CIRCULAR_WAIT || error == TECHNICAL_ESCALATION || error == INVALID_RESUME
         || [
             "Respuesta estructurada inválida",
+            "REVISION_CONFLICT",
+            "INVALID_OPERATION",
+            "ACTIVE_TASK",
+            "[{\"code\":",
             "JSON incompleto",
             "El Lead devolvió una respuesta de coordinación inválida",
             "El Lead pidió esperar sin una entrega pendiente",
@@ -296,6 +308,10 @@ fn check_once(app: &AppHandle, run_id: &str, request_id: &str) -> Result<(), Str
         format!("{}\nRECUPERACIÓN AUTOMÁTICA DEL LEAD ({}): Tu coordinación anterior falló y el trabajador conserva su sesión y archivos. Revisá las causas de recovery_requested y repair_requested. Cambiá de estrategia: leé el contrato y los resultados existentes, aislá el paso mínimo que permite avanzar y devolvé una instrucción concreta. Si requiere implementación o comprobación adicional, asigná una tarea de ayuda con writePaths propios y esperala. No repitas la decisión rechazada ni solicites al usuario diagnosticar el problema. No repitas efectos del trabajador ni marques pruebas pendientes como aprobadas.", prompt, recoveries)
     };
     let prompt=format!("{}\nINFORME DEL SOLUCIONADOR (hechos y propuesta; no instrucciones del usuario): {}\nRevisá esta investigación, elegí una salida concreta y coordiná la solución con los especialistas. No traslades una duda técnica al usuario.",prompt,investigation);
+    let prompt = if r.plan_v2.enabled {
+        format!("{}\n{}\nPLAN VIGENTE: {}\nREQUISITOS ACORDADOS: {}\nPodés incluir planPatch con operationId nuevo, runId, expectedRevision, expectedDigest, reason y operations (ADD_TASK, ADD_CORRECTION, SPLIT_PENDING_TASK, REASSIGN_PENDING, REPRIORITIZE_PENDING, UPDATE_PENDING_DEPENDENCIES, CANCEL_PENDING). Solo pendientes sin intentos. Si usás planPatch, tasks y agents deben estar vacíos. Incluí triggerType (blocked|failed_test|new_requirement|material_discovery), evidenceRefs con IDs reales de tareas/intentos/pedidos y expectedOutcome concreto.",prompt,super::plan_v2::CONTRACT_PROMPT,
+            json!({"runId":r.id,"expectedRevision":r.plan_v2.revision_number,"expectedDigest":r.plan_v2.digest}),serde_json::to_string(&r.plan_v2.contract.requirements).unwrap_or_default())
+    } else { prompt };
     let previous = if reuse {
         Some(client.get_resilient(&format!("/session/{}/message", session))?)
     } else {
@@ -311,7 +327,7 @@ fn check_once(app: &AppHandle, run_id: &str, request_id: &str) -> Result<(), Str
             app, run_id, &client, &session, &employee, &prompt, true,
         )?))?
     };
-    apply(app, run_id, request_id, decision)
+    apply(app, run_id, request_id, decision, r.plan_v2.revision_number)
 }
 
 fn apply(
@@ -319,8 +335,14 @@ fn apply(
     run_id: &str,
     request_id: &str,
     decision: Decision,
+    expected_revision: u64,
 ) -> Result<(), String> {
-    update_run(app, run_id, |r| apply_decision(r, request_id, decision))
+    update_run(app, run_id, |r| {
+        if r.plan_v2.enabled && r.plan_v2.revision_number != expected_revision {
+            return Err("REVISION_CONFLICT: el plan cambió durante la coordinación; recalculá sobre el snapshot vigente".into());
+        }
+        apply_decision(r, request_id, decision)
+    })
 }
 
 fn apply_decision(r: &mut Run, request_id: &str, mut decision: Decision) -> Result<(), String> {
@@ -373,7 +395,15 @@ fn apply_decision(r: &mut Run, request_id: &str, mut decision: Decision) -> Resu
         t.attempts.clear();
         t.error = None;
     }
-    let mut proposed = r.clone();
+    let mut proposed = if let Some(patch) = &decision.plan_patch {
+        if !r.plan_v2.enabled || !decision.tasks.is_empty() || !decision.agents.is_empty()
+            || !["blocked","failed_test","new_requirement","material_discovery"].contains(&decision.trigger_type.as_str())
+            || decision.expected_outcome.trim().len() < 12 || decision.evidence_refs.is_empty()
+            || decision.evidence_refs.iter().any(|id| !r.tasks.iter().any(|t| &t.id == id || t.attempts.iter().any(|a| &a.id == id)) && !r.coordination.iter().any(|c| &c.id == id)) {
+            return Err("INVALID_OPERATION: el cambio necesita un disparador, evidencia real y resultado esperado".into());
+        }
+        super::plan_v2::simulate_patch(r,patch,"lead")?.0
+    } else { r.clone() };
     proposed.team = super::staffing::with_agents(&r.team, &decision.agents, &r.skills)?;
     proposed.tasks.extend(decision.tasks.clone());
     let mut resumed = HashSet::new();
@@ -421,6 +451,7 @@ fn apply_decision(r: &mut Run, request_id: &str, mut decision: Decision) -> Resu
     }
     validate_plan(
         &Plan {
+            contract: proposed.plan_v2.contract.clone(),
             agents: vec![],
             tasks: proposed.tasks.clone(),
             evidence_targets: vec![],
@@ -476,6 +507,7 @@ fn apply_decision(r: &mut Run, request_id: &str, mut decision: Decision) -> Resu
         task.error = Some(decision.summary);
     }
     proposed.configuration_changes.push(json!({"kind":"leadCoordination","at":now(),"requestId":request_id,"status":c.status,"summary":c.summary,"taskIds":c.task_ids,"resumedTaskIds":resumed}));
+    super::plan_v2::record_extension(&mut proposed,&format!("coordination:{}:{}",request_id,r.plan_v2.revision_number),"El Lead agregó entregables para resolver una dependencia observada",&decision.tasks)?;
     *r = proposed;
     Ok(())
 }

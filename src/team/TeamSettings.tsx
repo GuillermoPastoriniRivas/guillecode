@@ -2,6 +2,7 @@ import { useAgent } from "../state/agent"
 import { modelKey } from "../lib/opencode"
 import { variantLabel } from "../state/agent"
 import type { Employee, Team, TeamRun } from "./types"
+import { ModelRouting } from "./ModelRouting"
 import { teamCall } from "../state/teams"
 
 function ModelDetails({ agent }: { agent: Employee }) {
@@ -20,6 +21,12 @@ export function TeamSettings({ team, run, chatId, pending }: { team: Team; run?:
   const roster = run?.team ?? team
   return <section className="team-settings">
     <h3>Configuración del equipo</h3>
+    <section className="team-card"><h4>Plan Vivo V2 · experimental</h4>
+      <p className="team-note">Se aplica a los próximos objetivos. Cada ejecución conserva su planificador original. Desactivado inicialmente.</p>
+      <label className="team-board-density"><input type="checkbox" disabled={pending} checked={team.planV2?.enabled ?? false} onChange={e => void teamCall("team_chats_planner", { chatId, config: { ...team.planV2, enabled: e.target.checked, reviewBeforeStart: team.planV2?.reviewBeforeStart ?? false } })} /> Activar Plan Vivo V2</label>
+      <label className="team-board-density"><input type="checkbox" disabled={pending || !team.planV2?.enabled} checked={team.planV2?.reviewBeforeStart ?? false} onChange={e => void teamCall("team_chats_planner", { chatId, config: { ...team.planV2, enabled: team.planV2?.enabled ?? false, reviewBeforeStart: e.target.checked } })} /> Revisar plan antes de iniciar</label>
+    </section>
+    <ModelRouting team={team} chatId={chatId} pending={pending} />
     <p className="team-note">El Lead y los especialistas pueden consultar la web, usar el navegador elegido en este chat y manejar apps con el control de la PC activado. Las acciones y sus resultados se pueden abrir desde Actividad.</p>
     <p className="team-note">{run ? "Modelos asignados en esta ejecución. Los intentos conservan el modelo con el que comenzaron." : "Modelos del equipo antes de empezar."}</p>
     {roster.autonomous && <p className="team-note">El Lead elige los especialistas al organizar tu pedido. Los nuevos integrantes heredan su modelo y razonamiento.</p>}

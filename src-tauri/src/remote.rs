@@ -227,6 +227,17 @@ fn proxy(app: &AppHandle, mut req: Request, target_path: &str) {
 
 fn hub_api(app: &AppHandle, mut req: Request, url: &str, path: &str) {
     let method = req.method().as_str().to_string();
+    if path == "/hub/teams" || path.starts_with("/hub/teams/") {
+        let mut bytes = Vec::new();
+        if Read::take(req.as_reader(),1_048_577).read_to_end(&mut bytes).is_err() || bytes.len() > 1_048_576 {
+            return respond_json(req,413,json!({"error":"Solicitud de equipos demasiado grande"}));
+        }
+        let body = if bytes.is_empty() { json!(null) } else {
+            match serde_json::from_slice(&bytes) { Ok(body)=>body,Err(_)=>return respond_json(req,400,json!({"error":"JSON inválido"})) }
+        };
+        let result = crate::teams::remote::request(app,&method,path,&query_param(url,"chat").unwrap_or_default(),&query_param(url,"run").unwrap_or_default(),body);
+        return match result { Ok(value)=>respond_json(req,200,value),Err(error)=>respond_json(req,if error.contains("REVISION_CONFLICT") {409} else {400},json!({"error":error})) };
+    }
     #[cfg(windows)]
     if path.starts_with("/hub/desktop/stream") {
         if method == "GET" && path == "/hub/desktop/stream/displays" {
@@ -451,6 +462,44 @@ fn handle(app: &AppHandle, req: Request) {
     } else {
         serve_static(app, req, &path)
     }
+}
+
+#[cfg(all(test, feature = "desktop-e2e"))]
+pub(crate) fn test_teams_board(app: &AppHandle, chat: &str, patch: crate::teams::plan_v2::PlanPatch) -> serde_json::Value {
+    use std::sync::atomic::{AtomicBool,Ordering};
+    let token=new_token();
+    app.manage(RemoteState {config:Mutex::new(RemoteConfig{enabled:true,port:0,token:token.clone()}),server:Mutex::new(None),error:Mutex::new(None),prefs:Mutex::new(json!({}))});
+    let server=Server::http(("127.0.0.1",0)).unwrap();
+    let url=format!("http://{}",server.server_addr().to_ip().unwrap());
+    struct Stop(Arc<AtomicBool>);
+    impl Drop for Stop { fn drop(&mut self) {self.0.store(true,Ordering::SeqCst);} }
+    let stop=Stop(Arc::new(AtomicBool::new(false)));
+    let halted=stop.0.clone();let handle_app=app.clone();
+    let thread=std::thread::spawn(move || {while !halted.load(Ordering::SeqCst) {if let Some(req)=server.recv_timeout(Duration::from_millis(100)).unwrap() {handle(&handle_app,req)}}});
+    let send=|method:&str,path:&str,auth:Option<&str>,body:Option<serde_json::Value>| {
+        let mut request=ureq::request(method,&format!("{url}{path}")).timeout(Duration::from_secs(20));
+        if let Some(auth)=auth { request=request.set("Authorization",&format!("Bearer {auth}")); }
+        let response=match body {Some(body)=>request.send_json(body),None=>request.call()};
+        let response=match response {Ok(r)=>r,Err(ureq::Error::Status(_,r))=>r,Err(e)=>panic!("{e}")};
+        (response.status(),response.into_json::<serde_json::Value>().unwrap())
+    };
+    assert_eq!(send("GET","/hub/teams",None,None).0,401);
+    let path=format!("/hub/teams/run?chat={chat}&run={}",patch.run_id);
+    let (status,snapshot)=send("GET",&path,Some(&token),None);assert_eq!(status,200);assert!(snapshot["run"].get("baseline").is_none());
+    assert_eq!(send("GET",&format!("/hub/teams/run?chat=foreign&run={}",patch.run_id),Some(&token),None).0,400);
+    assert_eq!(send("POST","/hub/teams/control",Some(&token),Some(json!({"chatId":chat,"runId":patch.run_id,"action":"approve","status":"completed"}))).0,400);
+    assert_eq!(send("POST","/hub/teams/evidence",Some(&token),Some(json!({"chatId":chat,"runId":patch.run_id,"path":"../../teams.sqlite"}))).0,400);
+    let mut stale=patch.clone();stale.expected_revision=0;
+    assert_eq!(send("POST","/hub/teams/patch",Some(&token),Some(json!({"chatId":chat,"patch":stale}))).0,409);
+    let (status,receipt)=send("POST","/hub/teams/patch",Some(&token),Some(json!({"chatId":chat,"patch":patch})));assert_eq!(status,200);
+    assert_eq!(send("POST","/hub/teams/patch",Some(&token),Some(json!({"chatId":chat,"patch":patch}))).1["id"],receipt["id"]);
+    let rotated=new_token();app.state::<RemoteState>().config.lock().unwrap().token=rotated.clone();
+    assert_eq!(send("GET",&path,Some(&token),None).0,401);
+    assert_eq!(send("GET",&path,Some(&rotated),None).0,200);
+    app.state::<RemoteState>().config.lock().unwrap().enabled=false;
+    assert_eq!(send("GET",&path,Some(&rotated),None).0,403);
+    drop(stop);thread.join().unwrap();
+    receipt
 }
 
 fn start_server(app: &AppHandle) -> Result<(), String> {

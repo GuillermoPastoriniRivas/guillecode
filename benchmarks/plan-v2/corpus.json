@@ -1,0 +1,489 @@
+{
+  "schemaVersion": 1,
+  "scope": "planner-admission-and-routing",
+  "cases": [
+    {
+      "id": "01-typescript-dto-valid",
+      "stack": "typescript-dto",
+      "goal": "Validar DTO de registro y rechazar correo inválido",
+      "expectedValid": true,
+      "mutation": "none",
+      "proposal": "{\"agents\": [], \"requirements\": [{\"id\": \"R1\", \"description\": \"Validar DTO de registro y rechazar correo inválido\", \"limitation\": null}], \"tasks\": [{\"id\": \"T1\", \"title\": \"Validar DTO de registro y rechazar correo inválido\", \"objective\": \"Validar DTO de registro y rechazar correo inválido\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [], \"expectedFiles\": [\"api/register.ts\"], \"writePaths\": [\"api/register.ts\"], \"acceptanceCriteria\": [\"Validar DTO de registro y rechazar correo inválido; el caso positivo y el negativo pasan\"], \"requirementIds\": [\"R1\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"code\"}], \"evidenceTargets\": []}",
+      "routeCategory": "code",
+      "difficulty": "low",
+      "scenarioTags": [
+        "typescript-dto"
+      ],
+      "agreedRequirementIds": [
+        "R1"
+      ]
+    },
+    {
+      "id": "02-nestjs-auth-valid",
+      "stack": "nestjs-auth",
+      "goal": "Comprobar autorización de usuario antes de modificar perfiles",
+      "expectedValid": true,
+      "mutation": "none",
+      "proposal": "{\"agents\": [], \"requirements\": [{\"id\": \"R1\", \"description\": \"Comprobar autorización de usuario antes de modificar perfiles\", \"limitation\": null}], \"tasks\": [{\"id\": \"T1\", \"title\": \"Comprobar autorización de usuario antes de modificar perfiles\", \"objective\": \"Comprobar autorización de usuario antes de modificar perfiles\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [], \"expectedFiles\": [\"api/profile.ts\"], \"writePaths\": [\"api/profile.ts\"], \"acceptanceCriteria\": [\"Comprobar autorización de usuario antes de modificar perfiles; el caso positivo y el negativo pasan\"], \"requirementIds\": [\"R1\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"code\"}], \"evidenceTargets\": []}",
+      "routeCategory": "deep",
+      "difficulty": "medium",
+      "scenarioTags": [
+        "nestjs-auth"
+      ],
+      "agreedRequirementIds": [
+        "R1"
+      ]
+    },
+    {
+      "id": "03-react-form-valid",
+      "stack": "react-form",
+      "goal": "Mostrar errores y preservar datos del formulario al fallar",
+      "expectedValid": true,
+      "mutation": "none",
+      "proposal": "{\"agents\": [], \"requirements\": [{\"id\": \"R1\", \"description\": \"Mostrar errores y preservar datos del formulario al fallar\", \"limitation\": null}], \"tasks\": [{\"id\": \"T1\", \"title\": \"Mostrar errores y preservar datos del formulario al fallar\", \"objective\": \"Mostrar errores y preservar datos del formulario al fallar\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [], \"expectedFiles\": [\"web/form.tsx\"], \"writePaths\": [\"web/form.tsx\"], \"acceptanceCriteria\": [\"Mostrar errores y preservar datos del formulario al fallar; el caso positivo y el negativo pasan\"], \"requirementIds\": [\"R1\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"code\"}], \"evidenceTargets\": []}",
+      "routeCategory": "visual",
+      "difficulty": "high",
+      "scenarioTags": [
+        "react-form"
+      ],
+      "agreedRequirementIds": [
+        "R1"
+      ]
+    },
+    {
+      "id": "04-graphql-pagination-valid",
+      "stack": "graphql-pagination",
+      "goal": "Paginar resultados sin duplicar elementos en el resolver",
+      "expectedValid": true,
+      "mutation": "none",
+      "proposal": "{\"agents\": [], \"requirements\": [{\"id\": \"R1\", \"description\": \"Paginar resultados sin duplicar elementos en el resolver\", \"limitation\": null}], \"tasks\": [{\"id\": \"T1\", \"title\": \"Paginar resultados sin duplicar elementos en el resolver\", \"objective\": \"Paginar resultados sin duplicar elementos en el resolver\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [], \"expectedFiles\": [\"api/resolver.ts\"], \"writePaths\": [\"api/resolver.ts\"], \"acceptanceCriteria\": [\"Paginar resultados sin duplicar elementos en el resolver; el caso positivo y el negativo pasan\"], \"requirementIds\": [\"R1\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"code\"}], \"evidenceTargets\": []}",
+      "routeCategory": "review",
+      "difficulty": "low",
+      "scenarioTags": [
+        "graphql-pagination"
+      ],
+      "agreedRequirementIds": [
+        "R1"
+      ]
+    },
+    {
+      "id": "05-rust-paths-valid",
+      "stack": "rust-paths",
+      "goal": "Rechazar rutas que escapan de la carpeta autorizada",
+      "expectedValid": true,
+      "mutation": "none",
+      "proposal": "{\"agents\": [], \"requirements\": [{\"id\": \"R1\", \"description\": \"Rechazar rutas que escapan de la carpeta autorizada\", \"limitation\": null}], \"tasks\": [{\"id\": \"T1\", \"title\": \"Rechazar rutas que escapan de la carpeta autorizada\", \"objective\": \"Rechazar rutas que escapan de la carpeta autorizada\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [], \"expectedFiles\": [\"native/path.rs\"], \"writePaths\": [\"native/path.rs\"], \"acceptanceCriteria\": [\"Rechazar rutas que escapan de la carpeta autorizada; el caso positivo y el negativo pasan\"], \"requirementIds\": [\"R1\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"code\"}], \"evidenceTargets\": []}",
+      "routeCategory": "quick",
+      "difficulty": "medium",
+      "scenarioTags": [
+        "rust-paths"
+      ],
+      "agreedRequirementIds": [
+        "R1"
+      ]
+    },
+    {
+      "id": "06-python-parser-valid",
+      "stack": "python-parser",
+      "goal": "Rechazar documentos truncados y conservar entradas válidas",
+      "expectedValid": true,
+      "mutation": "none",
+      "proposal": "{\"agents\": [], \"requirements\": [{\"id\": \"R1\", \"description\": \"Rechazar documentos truncados y conservar entradas válidas\", \"limitation\": null}], \"tasks\": [{\"id\": \"T1\", \"title\": \"Rechazar documentos truncados y conservar entradas válidas\", \"objective\": \"Rechazar documentos truncados y conservar entradas válidas\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [], \"expectedFiles\": [\"service/parser.py\"], \"writePaths\": [\"service/parser.py\"], \"acceptanceCriteria\": [\"Rechazar documentos truncados y conservar entradas válidas; el caso positivo y el negativo pasan\"], \"requirementIds\": [\"R1\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"code\"}], \"evidenceTargets\": []}",
+      "routeCategory": "code",
+      "difficulty": "high",
+      "scenarioTags": [
+        "python-parser"
+      ],
+      "agreedRequirementIds": [
+        "R1"
+      ]
+    },
+    {
+      "id": "07-multistack-contract-valid",
+      "stack": "multistack-contract",
+      "goal": "Mantener contrato de errores compartido entre cliente y servicio",
+      "expectedValid": true,
+      "mutation": "none",
+      "proposal": "{\"agents\": [], \"requirements\": [{\"id\": \"R1\", \"description\": \"Mantener contrato de errores compartido entre cliente y servicio\", \"limitation\": null}], \"tasks\": [{\"id\": \"T1\", \"title\": \"Mantener contrato de errores compartido entre cliente y servicio\", \"objective\": \"Mantener contrato de errores compartido entre cliente y servicio\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [], \"expectedFiles\": [\"shared/contract.ts\"], \"writePaths\": [\"shared/contract.ts\"], \"acceptanceCriteria\": [\"Mantener contrato de errores compartido entre cliente y servicio; el caso positivo y el negativo pasan\"], \"requirementIds\": [\"R1\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"code\"}], \"evidenceTargets\": []}",
+      "routeCategory": "deep",
+      "difficulty": "low",
+      "scenarioTags": [
+        "multistack-contract"
+      ],
+      "agreedRequirementIds": [
+        "R1"
+      ]
+    },
+    {
+      "id": "08-failing-test-valid",
+      "stack": "failing-test",
+      "goal": "Corregir prueba negativa del cálculo de descuento",
+      "expectedValid": true,
+      "mutation": "none",
+      "proposal": "{\"agents\": [], \"requirements\": [{\"id\": \"R1\", \"description\": \"Corregir prueba negativa del cálculo de descuento\", \"limitation\": null}], \"tasks\": [{\"id\": \"T1\", \"title\": \"Corregir prueba negativa del cálculo de descuento\", \"objective\": \"Corregir prueba negativa del cálculo de descuento\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [], \"expectedFiles\": [\"domain/discount.ts\"], \"writePaths\": [\"domain/discount.ts\"], \"acceptanceCriteria\": [\"Corregir prueba negativa del cálculo de descuento; el caso positivo y el negativo pasan\"], \"requirementIds\": [\"R1\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"code\"}], \"evidenceTargets\": []}",
+      "routeCategory": "visual",
+      "difficulty": "medium",
+      "scenarioTags": [
+        "failing-test"
+      ],
+      "agreedRequirementIds": [
+        "R1"
+      ]
+    },
+    {
+      "id": "09-no-git-valid",
+      "stack": "no-git",
+      "goal": "Agregar validación al script dentro de carpeta sin Git",
+      "expectedValid": true,
+      "mutation": "none",
+      "proposal": "{\"agents\": [], \"requirements\": [{\"id\": \"R1\", \"description\": \"Agregar validación al script dentro de carpeta sin Git\", \"limitation\": null}], \"tasks\": [{\"id\": \"T1\", \"title\": \"Agregar validación al script dentro de carpeta sin Git\", \"objective\": \"Agregar validación al script dentro de carpeta sin Git\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [], \"expectedFiles\": [\"scripts/import.mjs\"], \"writePaths\": [\"scripts/import.mjs\"], \"acceptanceCriteria\": [\"Agregar validación al script dentro de carpeta sin Git; el caso positivo y el negativo pasan\"], \"requirementIds\": [\"R1\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"code\"}], \"evidenceTargets\": []}",
+      "routeCategory": "review",
+      "difficulty": "high",
+      "scenarioTags": [
+        "no-git"
+      ],
+      "agreedRequirementIds": [
+        "R1"
+      ]
+    },
+    {
+      "id": "10-recovery-valid",
+      "stack": "recovery",
+      "goal": "Conservar identificador del intento y evitar efectos duplicados al recuperar",
+      "expectedValid": true,
+      "mutation": "none",
+      "proposal": "{\"agents\": [], \"requirements\": [{\"id\": \"R1\", \"description\": \"Conservar identificador del intento y evitar efectos duplicados al recuperar\", \"limitation\": null}], \"tasks\": [{\"id\": \"T1\", \"title\": \"Conservar identificador del intento y evitar efectos duplicados al recuperar\", \"objective\": \"Conservar identificador del intento y evitar efectos duplicados al recuperar\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [], \"expectedFiles\": [\"native/recovery.rs\"], \"writePaths\": [\"native/recovery.rs\"], \"acceptanceCriteria\": [\"Conservar identificador del intento y evitar efectos duplicados al recuperar; el caso positivo y el negativo pasan\"], \"requirementIds\": [\"R1\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"code\"}], \"evidenceTargets\": []}",
+      "routeCategory": "quick",
+      "difficulty": "low",
+      "scenarioTags": [
+        "recovery"
+      ],
+      "agreedRequirementIds": [
+        "R1"
+      ]
+    },
+    {
+      "id": "11-typescript-dto-malformed",
+      "stack": "typescript-dto",
+      "goal": "Rechazar tokens de refresh expirados sin invalidar la sesión vigente",
+      "expectedValid": false,
+      "mutation": "bad_json",
+      "proposal": "{not json",
+      "routeCategory": "code",
+      "difficulty": "medium",
+      "scenarioTags": [
+        "typescript-dto"
+      ],
+      "agreedRequirementIds": [
+        "R1"
+      ]
+    },
+    {
+      "id": "12-nestjs-auth-empty",
+      "stack": "nestjs-auth",
+      "goal": "Agregar filtro por estado a consultas paginadas de pedidos",
+      "expectedValid": false,
+      "mutation": "empty_tasks",
+      "proposal": "{\"agents\": [], \"requirements\": [{\"id\": \"R1\", \"description\": \"Agregar filtro por estado a consultas paginadas de pedidos\", \"limitation\": null}], \"tasks\": [], \"evidenceTargets\": []}",
+      "routeCategory": "deep",
+      "difficulty": "high",
+      "scenarioTags": [
+        "nestjs-auth"
+      ],
+      "agreedRequirementIds": [
+        "R1"
+      ]
+    },
+    {
+      "id": "13-react-form-missing-owner",
+      "stack": "react-form",
+      "goal": "Mostrar reintento al fallar la carga sin duplicar solicitudes",
+      "expectedValid": false,
+      "mutation": "owner",
+      "proposal": "{\"agents\": [], \"requirements\": [{\"id\": \"R1\", \"description\": \"Mostrar reintento al fallar la carga sin duplicar solicitudes\", \"limitation\": null}], \"tasks\": [{\"id\": \"T1\", \"title\": \"Mostrar reintento al fallar la carga sin duplicar solicitudes\", \"objective\": \"Mostrar reintento al fallar la carga sin duplicar solicitudes\", \"assignedAgentId\": \"unknown\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [], \"expectedFiles\": [\"web/form.tsx\"], \"writePaths\": [\"web/form.tsx\"], \"acceptanceCriteria\": [\"Mostrar reintento al fallar la carga sin duplicar solicitudes; el caso positivo y el negativo pasan\"], \"requirementIds\": [\"R1\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"code\"}], \"evidenceTargets\": []}",
+      "routeCategory": "visual",
+      "difficulty": "low",
+      "scenarioTags": [
+        "react-form",
+        "ambiguous-requirements"
+      ],
+      "agreedRequirementIds": [
+        "R1"
+      ]
+    },
+    {
+      "id": "14-graphql-pagination-unauthorized-root",
+      "stack": "graphql-pagination",
+      "goal": "Validar fecha inicial anterior a fecha final en el servicio de reservas",
+      "expectedValid": false,
+      "mutation": "root",
+      "proposal": "{\"agents\": [], \"requirements\": [{\"id\": \"R1\", \"description\": \"Validar fecha inicial anterior a fecha final en el servicio de reservas\", \"limitation\": null}], \"tasks\": [{\"id\": \"T1\", \"title\": \"Validar fecha inicial anterior a fecha final en el servicio de reservas\", \"objective\": \"Validar fecha inicial anterior a fecha final en el servicio de reservas\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/unauthorized\", \"dependencies\": [], \"expectedFiles\": [\"api/resolver.ts\"], \"writePaths\": [\"api/resolver.ts\"], \"acceptanceCriteria\": [\"Validar fecha inicial anterior a fecha final en el servicio de reservas; el caso positivo y el negativo pasan\"], \"requirementIds\": [\"R1\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"code\"}], \"evidenceTargets\": []}",
+      "routeCategory": "review",
+      "difficulty": "medium",
+      "scenarioTags": [
+        "graphql-pagination"
+      ],
+      "agreedRequirementIds": [
+        "R1"
+      ]
+    },
+    {
+      "id": "15-rust-paths-unknown-dependency",
+      "stack": "rust-paths",
+      "goal": "Conservar selección al actualizar opciones del componente de búsqueda",
+      "expectedValid": false,
+      "mutation": "dependency",
+      "proposal": "{\"agents\": [], \"requirements\": [{\"id\": \"R1\", \"description\": \"Conservar selección al actualizar opciones del componente de búsqueda\", \"limitation\": null}], \"tasks\": [{\"id\": \"T1\", \"title\": \"Conservar selección al actualizar opciones del componente de búsqueda\", \"objective\": \"Conservar selección al actualizar opciones del componente de búsqueda\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [\"unknown\"], \"expectedFiles\": [\"native/path.rs\"], \"writePaths\": [\"native/path.rs\"], \"acceptanceCriteria\": [\"Conservar selección al actualizar opciones del componente de búsqueda; el caso positivo y el negativo pasan\"], \"requirementIds\": [\"R1\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"code\"}], \"evidenceTargets\": []}",
+      "routeCategory": "quick",
+      "difficulty": "high",
+      "scenarioTags": [
+        "rust-paths"
+      ],
+      "agreedRequirementIds": [
+        "R1"
+      ]
+    },
+    {
+      "id": "16-python-parser-path-escape",
+      "stack": "python-parser",
+      "goal": "Normalizar importes monetarios sin errores de redondeo acumulativo",
+      "expectedValid": false,
+      "mutation": "escape",
+      "proposal": "{\"agents\": [], \"requirements\": [{\"id\": \"R1\", \"description\": \"Normalizar importes monetarios sin errores de redondeo acumulativo\", \"limitation\": null}], \"tasks\": [{\"id\": \"T1\", \"title\": \"Normalizar importes monetarios sin errores de redondeo acumulativo\", \"objective\": \"Normalizar importes monetarios sin errores de redondeo acumulativo\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [], \"expectedFiles\": [\"service/parser.py\"], \"writePaths\": [\"../escape\"], \"acceptanceCriteria\": [\"Normalizar importes monetarios sin errores de redondeo acumulativo; el caso positivo y el negativo pasan\"], \"requirementIds\": [\"R1\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"code\"}], \"evidenceTargets\": []}",
+      "routeCategory": "code",
+      "difficulty": "low",
+      "scenarioTags": [
+        "python-parser"
+      ],
+      "agreedRequirementIds": [
+        "R1"
+      ]
+    },
+    {
+      "id": "17-multistack-contract-empty-acceptance",
+      "stack": "multistack-contract",
+      "goal": "Acordar el formato de error de permisos entre API y pantalla",
+      "expectedValid": false,
+      "mutation": "acceptance",
+      "proposal": "{\"agents\": [], \"requirements\": [{\"id\": \"R1\", \"description\": \"Acordar el formato de error de permisos entre API y pantalla\", \"limitation\": null}], \"tasks\": [{\"id\": \"T1\", \"title\": \"Acordar el formato de error de permisos entre API y pantalla\", \"objective\": \"Acordar el formato de error de permisos entre API y pantalla\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [], \"expectedFiles\": [\"shared/contract.ts\"], \"writePaths\": [\"shared/contract.ts\"], \"acceptanceCriteria\": [], \"requirementIds\": [\"R1\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"code\"}], \"evidenceTargets\": []}",
+      "routeCategory": "deep",
+      "difficulty": "medium",
+      "scenarioTags": [
+        "multistack-contract"
+      ],
+      "agreedRequirementIds": [
+        "R1"
+      ]
+    },
+    {
+      "id": "18-failing-test-duplicate-id",
+      "stack": "failing-test",
+      "goal": "Corregir zona horaria del vencimiento con prueba de cambio de día",
+      "expectedValid": false,
+      "mutation": "duplicate",
+      "proposal": "{\"agents\": [], \"requirements\": [{\"id\": \"R1\", \"description\": \"Corregir zona horaria del vencimiento con prueba de cambio de día\", \"limitation\": null}], \"tasks\": [{\"id\": \"T1\", \"title\": \"Corregir zona horaria del vencimiento con prueba de cambio de día\", \"objective\": \"Corregir zona horaria del vencimiento con prueba de cambio de día\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [], \"expectedFiles\": [\"domain/discount.ts\"], \"writePaths\": [\"domain/discount.ts\"], \"acceptanceCriteria\": [\"Corregir zona horaria del vencimiento con prueba de cambio de día; el caso positivo y el negativo pasan\"], \"requirementIds\": [\"R1\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"code\"}, {\"id\": \"T1\", \"title\": \"Corregir zona horaria del vencimiento con prueba de cambio de día\", \"objective\": \"Corregir zona horaria del vencimiento con prueba de cambio de día\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [], \"expectedFiles\": [\"domain/discount.ts\"], \"writePaths\": [\"domain/discount.ts\"], \"acceptanceCriteria\": [\"Corregir zona horaria del vencimiento con prueba de cambio de día; el caso positivo y el negativo pasan\"], \"requirementIds\": [\"R1\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"code\"}], \"evidenceTargets\": []}",
+      "routeCategory": "visual",
+      "difficulty": "high",
+      "scenarioTags": [
+        "failing-test"
+      ],
+      "agreedRequirementIds": [
+        "R1"
+      ]
+    },
+    {
+      "id": "19-no-git-cycle",
+      "stack": "no-git",
+      "goal": "Procesar archivos vacíos sin modificar datos en carpeta sin Git",
+      "expectedValid": false,
+      "mutation": "cycle",
+      "proposal": "{\"agents\": [], \"requirements\": [{\"id\": \"R1\", \"description\": \"Procesar archivos vacíos sin modificar datos en carpeta sin Git\", \"limitation\": null}], \"tasks\": [{\"id\": \"T1\", \"title\": \"Procesar archivos vacíos sin modificar datos en carpeta sin Git\", \"objective\": \"Procesar archivos vacíos sin modificar datos en carpeta sin Git\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [\"T1\"], \"expectedFiles\": [\"scripts/import.mjs\"], \"writePaths\": [\"scripts/import.mjs\"], \"acceptanceCriteria\": [\"Procesar archivos vacíos sin modificar datos en carpeta sin Git; el caso positivo y el negativo pasan\"], \"requirementIds\": [\"R1\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"code\"}], \"evidenceTargets\": []}",
+      "routeCategory": "review",
+      "difficulty": "low",
+      "scenarioTags": [
+        "no-git"
+      ],
+      "agreedRequirementIds": [
+        "R1"
+      ]
+    },
+    {
+      "id": "20-recovery-missing-verification",
+      "stack": "recovery",
+      "goal": "Reanudar una importación interrumpida conservando el lote aplicado",
+      "expectedValid": false,
+      "mutation": "verification",
+      "proposal": "{\"agents\": [], \"requirements\": [{\"id\": \"R1\", \"description\": \"Reanudar una importación interrumpida conservando el lote aplicado\", \"limitation\": null}], \"tasks\": [{\"id\": \"T1\", \"title\": \"Reanudar una importación interrumpida conservando el lote aplicado\", \"objective\": \"Reanudar una importación interrumpida conservando el lote aplicado\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [], \"expectedFiles\": [\"native/recovery.rs\"], \"writePaths\": [\"native/recovery.rs\"], \"acceptanceCriteria\": [\"Reanudar una importación interrumpida conservando el lote aplicado; el caso positivo y el negativo pasan\"], \"requirementIds\": [\"R1\"], \"verificationPlan\": [], \"risk\": \"medium\", \"category\": \"code\"}], \"evidenceTargets\": []}",
+      "routeCategory": "quick",
+      "difficulty": "medium",
+      "scenarioTags": [
+        "recovery"
+      ],
+      "agreedRequirementIds": [
+        "R1"
+      ]
+    },
+    {
+      "id": "21-typescript-dto-missing-requirement-links",
+      "stack": "typescript-dto",
+      "goal": "Validar límite de tamaño de adjuntos y explicar el rechazo",
+      "expectedValid": false,
+      "mutation": "links",
+      "proposal": "{\"agents\": [], \"requirements\": [{\"id\": \"R1\", \"description\": \"Validar límite de tamaño de adjuntos y explicar el rechazo\", \"limitation\": null}], \"tasks\": [{\"id\": \"T1\", \"title\": \"Validar límite de tamaño de adjuntos y explicar el rechazo\", \"objective\": \"Validar límite de tamaño de adjuntos y explicar el rechazo\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [], \"expectedFiles\": [\"api/register.ts\"], \"writePaths\": [\"api/register.ts\"], \"acceptanceCriteria\": [\"Validar límite de tamaño de adjuntos y explicar el rechazo; el caso positivo y el negativo pasan\"], \"requirementIds\": [], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"code\"}], \"evidenceTargets\": []}",
+      "routeCategory": "code",
+      "difficulty": "high",
+      "scenarioTags": [
+        "typescript-dto"
+      ],
+      "agreedRequirementIds": [
+        "R1"
+      ]
+    },
+    {
+      "id": "22-nestjs-auth-uncovered-requirement",
+      "stack": "nestjs-auth",
+      "goal": "Cubrir requisito de auditoría al cambiar el correo de la cuenta",
+      "expectedValid": false,
+      "mutation": "coverage",
+      "proposal": "{\"agents\": [], \"requirements\": [{\"id\": \"R1\", \"description\": \"Cubrir requisito de auditoría al cambiar el correo de la cuenta\", \"limitation\": null}, {\"id\": \"R2\", \"description\": \"También rechazar cargas vacías\", \"limitation\": null}], \"tasks\": [{\"id\": \"T1\", \"title\": \"Cubrir requisito de auditoría al cambiar el correo de la cuenta\", \"objective\": \"Cubrir requisito de auditoría al cambiar el correo de la cuenta\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [], \"expectedFiles\": [\"api/profile.ts\"], \"writePaths\": [\"api/profile.ts\"], \"acceptanceCriteria\": [\"Cubrir requisito de auditoría al cambiar el correo de la cuenta; el caso positivo y el negativo pasan\"], \"requirementIds\": [\"R1\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"code\"}], \"evidenceTargets\": []}",
+      "routeCategory": "deep",
+      "difficulty": "low",
+      "scenarioTags": [
+        "nestjs-auth"
+      ],
+      "agreedRequirementIds": [
+        "R1"
+      ]
+    },
+    {
+      "id": "23-react-form-vague-acceptance",
+      "stack": "react-form",
+      "goal": "Precisar orden estable de resultados cuando dos fechas coinciden",
+      "expectedValid": false,
+      "mutation": "vague",
+      "proposal": "{\"agents\": [], \"requirements\": [{\"id\": \"R1\", \"description\": \"Precisar orden estable de resultados cuando dos fechas coinciden\", \"limitation\": null}], \"tasks\": [{\"id\": \"T1\", \"title\": \"Precisar orden estable de resultados cuando dos fechas coinciden\", \"objective\": \"Precisar orden estable de resultados cuando dos fechas coinciden\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [], \"expectedFiles\": [\"web/form.tsx\"], \"writePaths\": [\"web/form.tsx\"], \"acceptanceCriteria\": [\"funciona\"], \"requirementIds\": [\"R1\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"code\"}], \"evidenceTargets\": []}",
+      "routeCategory": "visual",
+      "difficulty": "medium",
+      "scenarioTags": [
+        "react-form",
+        "ambiguous-requirements"
+      ],
+      "agreedRequirementIds": [
+        "R1"
+      ]
+    },
+    {
+      "id": "24-graphql-pagination-unknown-risk",
+      "stack": "graphql-pagination",
+      "goal": "Rechazar una transición de estado incompatible en el dominio",
+      "expectedValid": false,
+      "mutation": "risk",
+      "proposal": "{\"agents\": [], \"requirements\": [{\"id\": \"R1\", \"description\": \"Rechazar una transición de estado incompatible en el dominio\", \"limitation\": null}], \"tasks\": [{\"id\": \"T1\", \"title\": \"Rechazar una transición de estado incompatible en el dominio\", \"objective\": \"Rechazar una transición de estado incompatible en el dominio\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [], \"expectedFiles\": [\"api/resolver.ts\"], \"writePaths\": [\"api/resolver.ts\"], \"acceptanceCriteria\": [\"Rechazar una transición de estado incompatible en el dominio; el caso positivo y el negativo pasan\"], \"requirementIds\": [\"R1\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"unknown\", \"category\": \"code\"}], \"evidenceTargets\": []}",
+      "routeCategory": "review",
+      "difficulty": "high",
+      "scenarioTags": [
+        "graphql-pagination"
+      ],
+      "agreedRequirementIds": [
+        "R1"
+      ]
+    },
+    {
+      "id": "25-rust-paths-unscoped-file",
+      "stack": "rust-paths",
+      "goal": "Mantener cambios limitados al módulo de inventario autorizado",
+      "expectedValid": false,
+      "mutation": "scope",
+      "proposal": "{\"agents\": [], \"requirements\": [{\"id\": \"R1\", \"description\": \"Mantener cambios limitados al módulo de inventario autorizado\", \"limitation\": null}], \"tasks\": [{\"id\": \"T1\", \"title\": \"Mantener cambios limitados al módulo de inventario autorizado\", \"objective\": \"Mantener cambios limitados al módulo de inventario autorizado\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [], \"expectedFiles\": [\"native/path.rs\"], \"writePaths\": [\"unrelated/\"], \"acceptanceCriteria\": [\"Mantener cambios limitados al módulo de inventario autorizado; el caso positivo y el negativo pasan\"], \"requirementIds\": [\"R1\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"code\"}], \"evidenceTargets\": []}",
+      "routeCategory": "quick",
+      "difficulty": "low",
+      "scenarioTags": [
+        "rust-paths"
+      ],
+      "agreedRequirementIds": [
+        "R1"
+      ]
+    },
+    {
+      "id": "26-python-parser-missing-requirements",
+      "stack": "python-parser",
+      "goal": "Enumerar requisitos de la exportación CSV antes de implementarla",
+      "expectedValid": false,
+      "mutation": "requirements",
+      "proposal": "{\"agents\": [], \"requirements\": [], \"tasks\": [{\"id\": \"T1\", \"title\": \"Enumerar requisitos de la exportación CSV antes de implementarla\", \"objective\": \"Enumerar requisitos de la exportación CSV antes de implementarla\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [], \"expectedFiles\": [\"service/parser.py\"], \"writePaths\": [\"service/parser.py\"], \"acceptanceCriteria\": [\"Enumerar requisitos de la exportación CSV antes de implementarla; el caso positivo y el negativo pasan\"], \"requirementIds\": [\"R1\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"code\"}], \"evidenceTargets\": []}",
+      "routeCategory": "code",
+      "difficulty": "medium",
+      "scenarioTags": [
+        "python-parser",
+        "ambiguous-requirements"
+      ],
+      "agreedRequirementIds": [
+        "R1"
+      ]
+    },
+    {
+      "id": "27-multistack-contract-unknown-category",
+      "stack": "multistack-contract",
+      "goal": "Renderizar nombres largos conservando navegación por teclado",
+      "expectedValid": false,
+      "mutation": "category",
+      "proposal": "{\"agents\": [], \"requirements\": [{\"id\": \"R1\", \"description\": \"Renderizar nombres largos conservando navegación por teclado\", \"limitation\": null}], \"tasks\": [{\"id\": \"T1\", \"title\": \"Renderizar nombres largos conservando navegación por teclado\", \"objective\": \"Renderizar nombres largos conservando navegación por teclado\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [], \"expectedFiles\": [\"shared/contract.ts\"], \"writePaths\": [\"shared/contract.ts\"], \"acceptanceCriteria\": [\"Renderizar nombres largos conservando navegación por teclado; el caso positivo y el negativo pasan\"], \"requirementIds\": [\"R1\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"invented\"}], \"evidenceTargets\": []}",
+      "routeCategory": "deep",
+      "difficulty": "high",
+      "scenarioTags": [
+        "multistack-contract"
+      ],
+      "agreedRequirementIds": [
+        "R1"
+      ]
+    },
+    {
+      "id": "28-failing-test-unknown-requirement",
+      "stack": "failing-test",
+      "goal": "Conservar trazabilidad del requisito de eliminación de cuenta",
+      "expectedValid": false,
+      "mutation": "unknown_link",
+      "proposal": "{\"agents\": [], \"requirements\": [{\"id\": \"R1\", \"description\": \"Conservar trazabilidad del requisito de eliminación de cuenta\", \"limitation\": null}], \"tasks\": [{\"id\": \"T1\", \"title\": \"Conservar trazabilidad del requisito de eliminación de cuenta\", \"objective\": \"Conservar trazabilidad del requisito de eliminación de cuenta\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [], \"expectedFiles\": [\"domain/discount.ts\"], \"writePaths\": [\"domain/discount.ts\"], \"acceptanceCriteria\": [\"Conservar trazabilidad del requisito de eliminación de cuenta; el caso positivo y el negativo pasan\"], \"requirementIds\": [\"R404\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"code\"}], \"evidenceTargets\": []}",
+      "routeCategory": "visual",
+      "difficulty": "low",
+      "scenarioTags": [
+        "failing-test"
+      ],
+      "agreedRequirementIds": [
+        "R1"
+      ]
+    },
+    {
+      "id": "29-no-git-unjustified-fanout",
+      "stack": "no-git",
+      "goal": "Dividir migración y compatibilidad sin multiplicar tareas independientes",
+      "expectedValid": false,
+      "mutation": "fanout",
+      "proposal": "{\"agents\": [], \"requirements\": [{\"id\": \"R1\", \"description\": \"Dividir migración y compatibilidad sin multiplicar tareas independientes\", \"limitation\": null}], \"tasks\": [{\"id\": \"T1\", \"title\": \"Dividir migración y compatibilidad sin multiplicar tareas independientes\", \"objective\": \"Dividir migración y compatibilidad sin multiplicar tareas independientes\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [], \"expectedFiles\": [\"part1/main.ts\"], \"writePaths\": [\"part1/\"], \"acceptanceCriteria\": [\"Dividir migración y compatibilidad sin multiplicar tareas independientes; el caso positivo y el negativo pasan\"], \"requirementIds\": [\"R1\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"code\"}, {\"id\": \"T2\", \"title\": \"Dividir migración y compatibilidad sin multiplicar tareas independientes\", \"objective\": \"Dividir migración y compatibilidad sin multiplicar tareas independientes\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [], \"expectedFiles\": [\"part2/main.ts\"], \"writePaths\": [\"part2/\"], \"acceptanceCriteria\": [\"Dividir migración y compatibilidad sin multiplicar tareas independientes; el caso positivo y el negativo pasan\"], \"requirementIds\": [\"R1\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"code\"}, {\"id\": \"T3\", \"title\": \"Dividir migración y compatibilidad sin multiplicar tareas independientes\", \"objective\": \"Dividir migración y compatibilidad sin multiplicar tareas independientes\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [], \"expectedFiles\": [\"part3/main.ts\"], \"writePaths\": [\"part3/\"], \"acceptanceCriteria\": [\"Dividir migración y compatibilidad sin multiplicar tareas independientes; el caso positivo y el negativo pasan\"], \"requirementIds\": [\"R1\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"code\"}, {\"id\": \"T4\", \"title\": \"Dividir migración y compatibilidad sin multiplicar tareas independientes\", \"objective\": \"Dividir migración y compatibilidad sin multiplicar tareas independientes\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [], \"expectedFiles\": [\"part4/main.ts\"], \"writePaths\": [\"part4/\"], \"acceptanceCriteria\": [\"Dividir migración y compatibilidad sin multiplicar tareas independientes; el caso positivo y el negativo pasan\"], \"requirementIds\": [\"R1\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"code\"}, {\"id\": \"T5\", \"title\": \"Dividir migración y compatibilidad sin multiplicar tareas independientes\", \"objective\": \"Dividir migración y compatibilidad sin multiplicar tareas independientes\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [], \"expectedFiles\": [\"part5/main.ts\"], \"writePaths\": [\"part5/\"], \"acceptanceCriteria\": [\"Dividir migración y compatibilidad sin multiplicar tareas independientes; el caso positivo y el negativo pasan\"], \"requirementIds\": [\"R1\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"code\"}, {\"id\": \"T6\", \"title\": \"Dividir migración y compatibilidad sin multiplicar tareas independientes\", \"objective\": \"Dividir migración y compatibilidad sin multiplicar tareas independientes\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [], \"expectedFiles\": [\"part6/main.ts\"], \"writePaths\": [\"part6/\"], \"acceptanceCriteria\": [\"Dividir migración y compatibilidad sin multiplicar tareas independientes; el caso positivo y el negativo pasan\"], \"requirementIds\": [\"R1\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"code\"}], \"evidenceTargets\": []}",
+      "routeCategory": "review",
+      "difficulty": "medium",
+      "scenarioTags": [
+        "no-git"
+      ],
+      "agreedRequirementIds": [
+        "R1"
+      ]
+    },
+    {
+      "id": "30-recovery-overlap",
+      "stack": "recovery",
+      "goal": "Coordinar actualización de contrato compartido con integración final",
+      "expectedValid": false,
+      "mutation": "overlap",
+      "proposal": "{\"agents\": [], \"requirements\": [{\"id\": \"R1\", \"description\": \"Coordinar actualización de contrato compartido con integración final\", \"limitation\": null}], \"tasks\": [{\"id\": \"T1\", \"title\": \"Coordinar actualización de contrato compartido con integración final\", \"objective\": \"Coordinar actualización de contrato compartido con integración final\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [], \"expectedFiles\": [\"native/recovery.rs\"], \"writePaths\": [\"native/recovery.rs\"], \"acceptanceCriteria\": [\"Coordinar actualización de contrato compartido con integración final; el caso positivo y el negativo pasan\"], \"requirementIds\": [\"R1\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"code\"}, {\"id\": \"T2\", \"title\": \"Coordinar actualización de contrato compartido con integración final\", \"objective\": \"Coordinar actualización de contrato compartido con integración final\", \"assignedAgentId\": \"lead\", \"repository\": \"D:/benchmark/repo\", \"dependencies\": [], \"expectedFiles\": [\"native/recovery.rs\"], \"writePaths\": [\"native/recovery.rs\"], \"acceptanceCriteria\": [\"Coordinar actualización de contrato compartido con integración final; el caso positivo y el negativo pasan\"], \"requirementIds\": [\"R1\"], \"verificationPlan\": [{\"kind\": \"command\", \"command\": \"node --test benchmark.spec.mjs\", \"expected\": \"exitCode=0 y caso negativo aprobado\"}], \"risk\": \"medium\", \"category\": \"code\"}], \"evidenceTargets\": []}",
+      "routeCategory": "quick",
+      "difficulty": "high",
+      "scenarioTags": [
+        "recovery"
+      ],
+      "agreedRequirementIds": [
+        "R1"
+      ]
+    }
+  ]
+}
