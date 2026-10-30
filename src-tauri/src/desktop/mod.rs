@@ -585,10 +585,10 @@ mod tests {
     }
 
     #[test]
-    fn pc_tools_are_reserved_for_the_escritorio_agent() {
+    fn desktop_tools_are_reserved_and_browser_is_shared() {
         let config = agent_config(&state());
         assert_eq!(config["permission"]["desktop_*"], "deny");
-        assert_eq!(config["permission"]["browser_*"], "deny");
+        assert!(config["permission"].get("browser_*").is_none());
         assert!(config["agent"].get("pc").is_none());
         let esc = &config["agent"]["escritorio"];
         assert_eq!(esc["mode"], "primary");
