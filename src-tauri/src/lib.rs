@@ -11,6 +11,7 @@ pub mod accounts;
 pub mod approvals;
 pub mod desktop;
 pub mod features;
+mod engine_db_compat;
 mod engine_integrity;
 pub mod fs;
 pub mod gh;
@@ -151,6 +152,8 @@ fn recent_projects(app: tauri::AppHandle) -> Vec<String> {
 }
 
 fn spawn_server(app: &tauri::AppHandle, state: &ServerState, worktree: &str) -> Result<ServerConfig, String> {
+    engine_db_compat::prepare_legacy_engine_database()
+        .map_err(|e| format!("No se pudo preparar de forma segura la base de OpenCode: {}", e))?;
     let port = TcpListener::bind(("127.0.0.1", 0))
         .and_then(|l| l.local_addr())
         .map(|a| a.port())
