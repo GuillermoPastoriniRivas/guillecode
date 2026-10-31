@@ -199,7 +199,8 @@ pub fn session_enabled(app: &AppHandle, session: &str) -> bool {
     if session.is_empty() {
         return true;
     }
-    let state = app.state::<MemoryState>();
+    // Integration hosts may build a Tauri app without the memory plugin.
+    let Some(state) = app.try_state::<MemoryState>() else { return true };
     let config = state.config.lock().unwrap();
     config.sessions.get(session).copied().unwrap_or(true)
 }
@@ -208,7 +209,8 @@ pub fn set_session(app: &AppHandle, session: &str, enabled: bool) {
     if session.is_empty() {
         return;
     }
-    let state = app.state::<MemoryState>();
+    // Integration hosts may build a Tauri app without the memory plugin.
+    let Some(state) = app.try_state::<MemoryState>() else { return };
     let mut config = state.config.lock().unwrap();
     if enabled {
         config.sessions.remove(session);

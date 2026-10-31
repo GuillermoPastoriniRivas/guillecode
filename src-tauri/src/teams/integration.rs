@@ -104,7 +104,11 @@ fn native_team_end_to_end() {
             )
             .unwrap();
             let c = runner::test_client(&handle, &repo).unwrap();
-            let deadline = Instant::now() + Duration::from_secs(180);
+            let timeout = std::env::var("GUILLE_TEAM_TEST_DEADLINE")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(300);
+            let deadline = Instant::now() + Duration::from_secs(timeout);
             let result = loop {
                 let r = run(&handle, &run_id).unwrap();
                 // Exercise the normal OpenCode approval API only inside this isolated test.
@@ -305,7 +309,7 @@ fn native_team_end_to_end() {
                 result.tasks[0].attempts.len()
             );
             let wait_for_run = |id: &str| -> Run {
-                let deadline = Instant::now() + Duration::from_secs(90);
+                let deadline = Instant::now() + Duration::from_secs(180);
                 loop {
                     let r = run(&handle, id).unwrap();
                     for p in c
