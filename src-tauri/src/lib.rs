@@ -362,6 +362,7 @@ pub fn run() {
             teams::team_chats_create,
         teams::team_chats_auto,
             teams::team_chats_edit,
+            teams::team_chats_settings,
             teams::team_chats_model,
             teams::team_chats_planner,
             teams::team_routing_catalog,

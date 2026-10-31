@@ -730,8 +730,20 @@ test("navegador embebido queda dentro del chat y se retira al volver a conversar
   expect(calls.find(c=>c.command==="browser_internal_open")?.args.session).toBe("team:chat-0")
   expect(calls.filter(c=>c.command==="browser_workspace")).toHaveLength(0)
   await page.screenshot({path:test.info().outputPath("navegador-dentro-del-chat.png")})
+  const beforeOverlay = calls.length
+  await page.evaluate(async () => {
+    const { ask } = await import(/* @vite-ignore */ "/src/components/Dialog.tsx")
+    void ask("Prueba de modal", { message: "El navegador no debe taparlo", buttons: [{ id: "ok", label: "Entendido", primary: true }] })
+  })
+  await expect(page.locator(".dialog")).toBeVisible()
+  await expect.poll(()=>calls.slice(beforeOverlay).some(c=>c.command==="browser_internal_view" && c.args.label===null)).toBe(true)
+  const beforeRestore = calls.length
+  await page.getByRole("button", { name: "Entendido", exact: true }).click()
+  await expect(page.locator(".dialog")).toHaveCount(0)
+  await expect.poll(()=>calls.slice(beforeRestore).some(c=>c.command==="browser_internal_view" && c.args.label==="embedded-user" && !!c.args.bounds)).toBe(true)
+  const beforeChat = calls.length
   await page.getByRole("button",{name:"Chat",exact:true}).click()
-  await expect.poll(()=>calls.some(c=>c.command==="browser_internal_view" && c.args.label===null)).toBe(true)
+  await expect.poll(()=>calls.slice(beforeChat).some(c=>c.command==="browser_internal_view" && c.args.label===null)).toBe(true)
   await expect(page.locator(".team-composer")).toBeVisible()
 })
 

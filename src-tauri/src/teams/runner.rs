@@ -772,6 +772,7 @@ fn plan(app: &AppHandle, id: &str) -> Result<(), String> {
     } else {
         create_session(&client, &a, &format!("{} · plan", r.team.name), true)?
     };
+    crate::memory::set_session(app, &session, super::memory_for_run(app, id));
     update_run(app, id, |r| {
         r.plan_session_id = Some(session.clone());
         Ok(())
@@ -1020,6 +1021,7 @@ fn worker(app: &AppHandle, run_id: &str, task_id: &str) -> Result<(), String> {
         check_model(&client, &a)?;
         client.post("/session", json!({"title":format!("Equipo · {} · {} · {}", r.team.name, a.name, t.title), "permission":worker_permissions(&client,&a,&t.repository,&t.write_paths)?}))?["id"].as_str().map(String::from).ok_or("OpenCode no devolvió la sesión")?
     };
+    crate::memory::set_session(app, &session, super::memory_for_run(app, run_id));
     attempt_update(app, run_id, task_id, |_, at| {
         at.session_id = Some(session.clone())
     })?;
@@ -1366,6 +1368,7 @@ fn closeout(app: &AppHandle, id: &str) -> Result<bool, String> {
         &format!("{} · cierre e integración", r.team.name),
         true,
     )?;
+    crate::memory::set_session(app, &session, super::memory_for_run(app, id));
     update_run(app, id, |r| {
         r.closing_sessions.push(session.clone());
         Ok(())

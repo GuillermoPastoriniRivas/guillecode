@@ -350,6 +350,8 @@ fn sqlite_keeps_complete_revisions_and_rolls_back_a_failed_commit() {
         skills: vec![],
         created_at: 1,
         runs: vec![original.clone()],
+        memory: None,
+        auto_approve: None,
     });
     let mut db = rusqlite::Connection::open_in_memory().unwrap();
     db.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE team_store(id INTEGER PRIMARY KEY,document TEXT NOT NULL)").unwrap();

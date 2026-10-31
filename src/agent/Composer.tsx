@@ -30,35 +30,20 @@ import { rankFuzzy } from "../lib/fuzzy"
 import { basename, joinPath, relativePath } from "../lib/paths"
 import { modelKey } from "../lib/opencode"
 import { isBubbleWindow, windowLabel } from "../lib/windows"
-import { formatTokens, percent } from "../lib/format"
+import { clock, formatTokens, percent } from "../lib/format"
 import { FileIcon, Highlighted, Icon, Kbd } from "../components/ui"
 import { openImage } from "../state/lightbox"
 import { useVoiceRecorder } from "../lib/recorder"
+import { desktopTranscribe } from "../lib/transcribe"
 import { call, errorMessage } from "../lib/tauri"
 import { draftRuntimeKey, patchSessionRuntime, sessionRuntime, useSessionRuntime } from "../state/session-runtime"
 import { registerPendingInput } from "../lib/pending-input"
 import { BrowserWorkspace } from "./BrowserWorkspace"
 import { VoiceSetup } from "./VoiceSetup"
-import { invoke } from "@tauri-apps/api/core"
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024
 const CONNECT_CHATGPT = "__connect_chatgpt__"
 export const PATH_DRAG_TYPE = "application/x-guillecode-path"
-
-
-async function desktopTranscribe(wav: Blob): Promise<string> {
-  const bytes = new Uint8Array(await wav.arrayBuffer())
-  try {
-    return await invoke<string>("voice_transcribe", bytes)
-  } catch {
-    return await invoke<string>("voice_transcribe", { audio: Array.from(bytes) })
-  }
-}
-
-function clock(ms: number): string {
-  const s = Math.max(0, Math.floor(ms / 1000))
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`
-}
 
 function fileToImage(file: File): Promise<ContextItem | null> {
   return new Promise((resolve) => {

@@ -373,6 +373,11 @@ pub struct Chat {
     pub skills: Vec<Skill>,
     pub created_at: i64,
     pub runs: Vec<Run>,
+    // Optional so existing chats keep the safe defaults: memory on, approvals manual.
+    #[serde(default)]
+    pub memory: Option<bool>,
+    #[serde(default)]
+    pub auto_approve: Option<bool>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]

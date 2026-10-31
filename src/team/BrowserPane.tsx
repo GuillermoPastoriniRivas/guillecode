@@ -6,6 +6,22 @@ let presentationGeneration = Date.now() * 1000
 
 type BrowserPage = { label: string; actor: string; url: string }
 
+// La WebView2 nativa siempre se dibuja sobre el HTML del chat, así que un modal,
+// popover o menú que tape esta zona quedaría detrás de la página. En vez de
+// enumerar overlays, se comprueba que el host siga siendo el elemento de arriba
+// en varios puntos de su rectángulo.
+function unobstructed(host: HTMLElement, r: DOMRect) {
+  const inset = 4
+  const xs = [r.left + inset, r.left + r.width / 2, r.right - inset]
+  const ys = [r.top + inset, r.top + r.height / 2, r.bottom - inset]
+  for (const x of xs) for (const y of ys) {
+    if (x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) return false
+    const hit = document.elementFromPoint(x, y)
+    if (!hit || (hit !== host && !host.contains(hit))) return false
+  }
+  return true
+}
+
 // Superficie del navegador interno de Flufy. Las páginas viven en una WebView2
 // propia por conversación; este componente sólo les da lugar y navegación.
 export function BrowserPane({ session, names = {} }: { session: string; names?: Record<string, string> }) {
@@ -37,7 +53,7 @@ export function BrowserPane({ session, names = {} }: { session: string; names?: 
     const sync = async () => {
       if (disposed || running) return
       const r = host.getBoundingClientRect(), d = window.devicePixelRatio || 1
-      const visible = r.width > 0 && r.height > 0 && !document.querySelector("dialog[open], [role=dialog], .context-menu")
+      const visible = r.width > 0 && r.height > 0 && unobstructed(host, r)
       const bounds = visible ? {x:r.x*d,y:r.y*d,width:r.width*d,height:r.height*d} : null
       const key = JSON.stringify(bounds)
       if (key === last) return

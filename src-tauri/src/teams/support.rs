@@ -87,6 +87,7 @@ pub fn begin(
         ),
         true,
     )?;
+    crate::memory::set_session(app, &session, super::memory_for_run(app, id));
     let report = id_from_domain();
     update_run(app, id, |r| {
         r.support_reports.push(SupportReport {

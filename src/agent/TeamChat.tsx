@@ -167,6 +167,6 @@ export function TeamChat({ chatId }: { chatId: string }) {
       {view === "Configuración" && <><TeamFolderConflicts chatId={chatId} failure={runError} /><TeamSettings team={chat.team} run={run} chatId={chat.id} pending={pendingReply} /></>}
       {view === "Resultados / Comportamientos" && (run ? <Results key={run.id} run={run} history={chat.runs} /> : <p className="team-note">Las evidencias aparecerán al iniciar una ejecución.</p>)}
     </div>
-    {view === "Navegador" ? null : chat.archived ? <p className="team-note">Chat archivado. Restauralo desde Equipos IA para continuar.</p> : <TeamComposer ref={composer} key={chatId} chatId={chatId} label="Mensaje para el equipo" onBrowser={() => {setView("Navegador");setExpanded(true)}} pending={pendingReply} onSent={() => { setSelectedRunId(null); setView("Chat"); followLatest.current = true; requestAnimationFrame(() => bottom.current?.scrollIntoView({ block: "nearest" })) }} />}
+    {view === "Navegador" ? null : chat.archived ? <p className="team-note">Chat archivado. Restauralo desde Equipos IA para continuar.</p> : <TeamComposer ref={composer} key={chatId} chat={chat} label="Mensaje para el equipo" onBrowser={() => {setView("Navegador");setExpanded(true)}} pending={pendingReply} onSent={() => { setSelectedRunId(null); setView("Chat"); followLatest.current = true; requestAnimationFrame(() => bottom.current?.scrollIntoView({ block: "nearest" })) }} />}
   </section>
 }

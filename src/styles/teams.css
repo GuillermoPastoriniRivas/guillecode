@@ -101,6 +101,13 @@
 .lead-details[open] > summary { margin-bottom: 12px; }
 
 .team-composer-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.team-composer-options { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; flex-shrink: 0; }
+.team-composer-options .composer-pill { align-self: center; }
+.team-composer-options .composer-pill:disabled { opacity: .5; cursor: default; }
+.team-composer-tools, .team-composer-send { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.team-composer-send { margin-left: auto; }
+.team-composer .composer-icon, .team-composer .composer-pill { align-self: center; }
+.team-composer-send > button[type=submit] { margin-left: 0; align-self: center; }
 .team-chat-images { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0; }
 .team-chat-images figure { position: relative; width: 112px; margin: 0; }
 .team-chat-images figure > button:first-child { display: block; width: 100%; padding: 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-input); overflow: hidden; cursor: zoom-in; }

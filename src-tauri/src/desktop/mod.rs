@@ -30,6 +30,8 @@ pub mod stream;
 const ACTIVITY_MAX: usize = 80;
 const SKILL: &str = include_str!("skill.md");
 pub(crate) const AGENT_POLICY: &str = include_str!("../agent_policy.js");
+// No pasa por el plano editable: se reescribe en cada arranque.
+const AGENT_PACING: &str = include_str!("../agent_pacing.js");
 
 const DEFAULT_BLOCKED: &[&str] = &[
     "cmd.exe",
@@ -182,6 +184,9 @@ pub fn start(app: &AppHandle) {
     if let Some(path) = app_data_file(app, "desktop-session.js") {
         if let Err(e) = std::fs::write(path, include_str!("session_plugin.js")) { log::error!("[desktop] session plugin: {}", e); }
     }
+    if let Some(path) = app_data_file(app, "pacing.js") {
+        if let Err(e) = std::fs::write(path, AGENT_PACING) { log::error!("[desktop] pacing plugin: {}", e); }
+    }
     context::start(app);
 }
 
@@ -206,7 +211,8 @@ pub fn opencode_config(app: &AppHandle) -> Option<String> {
         return None;
     }
     let mut config = agent_config(&state);
-    if let Some(path) = app_data_file(app, "desktop-session.js") {
+    for name in ["pacing.js", "desktop-session.js"] {
+        let Some(path) = app_data_file(app, name) else { continue };
         let plugin = json!(format!("file://{}", path.to_string_lossy().replace('\\', "/")));
         if !config["plugin"].is_array() { config["plugin"] = json!([]); }
         config["plugin"].as_array_mut().unwrap().push(plugin);

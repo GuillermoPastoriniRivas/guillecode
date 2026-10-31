@@ -99,6 +99,28 @@ pub fn read(app: &AppHandle) -> Result<Store, String> {
     Ok(result)
 }
 
+fn chat_sessions(c: &Chat) -> Vec<String> {
+    let mut sessions = Vec::new();
+    for message in &c.messages {
+        if let Some(id) = &message.session_id { sessions.push(id.clone()); }
+    }
+    for run in &c.runs {
+        if let Some(id) = &run.plan_session_id { sessions.push(id.clone()); }
+        for report in &run.support_reports { sessions.push(report.session_id.clone()); }
+        sessions.extend(run.closing_sessions.iter().cloned());
+        for request in &run.coordination { sessions.extend(request.sessions.iter().cloned()); }
+        for task in &run.tasks {
+            for attempt in &task.attempts {
+                if let Some(id) = &attempt.session_id { sessions.push(id.clone()); }
+                if let Some(id) = &attempt.review_session_id { sessions.push(id.clone()); }
+            }
+        }
+    }
+    sessions.sort();
+    sessions.dedup();
+    sessions
+}
+
 fn owns_session(c: &Chat, session: &str) -> bool {
     !session.is_empty() && (c.messages.iter().any(|m| m.session_id.as_deref() == Some(session)) || c.runs.iter().any(|r| {
                     r.plan_session_id.as_deref() == Some(session)
@@ -117,6 +139,26 @@ fn owns_session(c: &Chat, session: &str) -> bool {
 pub fn is_team_session(app: &AppHandle, session: &str) -> bool {
     app.try_state::<TeamsState>().and_then(|state| state.store.lock().ok().map(|s|
         s.chats.iter().any(|c| owns_session(c, session)))).unwrap_or(false)
+}
+
+/// Explicit per-chat auto-approve for team sessions. Global auto-approve never
+/// widens a team's scoped permissions; only the chat's own switch can.
+pub fn auto_approve_session(app: &AppHandle, session: &str) -> Option<bool> {
+    let state = app.try_state::<TeamsState>()?;
+    let store = state.store.lock().ok()?;
+    let chat = store.chats.iter().find(|c| owns_session(c, session))?;
+    Some(chat.auto_approve.unwrap_or(false))
+}
+
+pub fn memory_for_run(app: &AppHandle, run_id: &str) -> bool {
+    let Some(state) = app.try_state::<TeamsState>() else { return true };
+    let Ok(store) = state.store.lock() else { return true };
+    store
+        .chats
+        .iter()
+        .find(|c| c.runs.iter().any(|r| r.id == run_id))
+        .and_then(|c| c.memory)
+        .unwrap_or(true)
 }
 
 /// The native session registry, never model arguments, assigns every team
@@ -351,6 +393,8 @@ pub fn team_chats_create(app: AppHandle, team_id: String) -> Result<Chat, String
             skills: s.skills.clone(),
             created_at: now(),
             runs: vec![],
+            memory: None,
+            auto_approve: None,
         };
         s.chats.push(chat.clone());
         Ok(chat)
@@ -428,6 +472,8 @@ pub fn team_chats_auto(
             skills: s.skills.clone(),
             created_at: now(),
             runs: vec![],
+            memory: None,
+            auto_approve: None,
         };
         s.chats.push(chat.clone());
         Ok(chat)
@@ -454,6 +500,20 @@ pub fn team_chats_edit(
         c.archived = archived;
         Ok(())
     })
+}
+
+#[tauri::command]
+pub fn team_chats_settings(app: AppHandle, chat_id: String, memory: bool, auto_approve: bool) -> Result<(), String> {
+    let sessions = update(&app, |s| {
+        let chat = s.chats.iter_mut().find(|c| c.id == chat_id).ok_or("Chat inexistente")?;
+        chat.memory = Some(memory);
+        chat.auto_approve = Some(auto_approve);
+        Ok(chat_sessions(chat))
+    })?;
+    for session in sessions {
+        crate::memory::set_session(&app, &session, memory);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -912,6 +972,24 @@ mod tests {
         chat.messages.push(serde_json::from_value(serde_json::json!({"id":"pending","role":"assistant","text":"","createdAt":2,"status":"pending"})).unwrap());
         assert!(change_chat_model(&mut chat, "lead", ModelRef { provider_id:"third".into(), model_id:"model".into() }, None).is_err());
         assert_eq!(chat.team.members[0].model.model_id, replacement.model_id);
+    }
+    #[test]
+    fn settings_cover_every_owned_session_and_legacy_chats_default_safe() {
+        let team = domain::tests::team();
+        let agent = team.members[0].clone();
+        let task = serde_json::json!({"id":"t","title":"t","objective":"t","assignedAgentId":"lead","repository":"C:/demo","dependencies":[],"expectedFiles":[],"acceptanceCriteria":[],"status":"running",
+            "attempts":[{"id":"a","agent":agent,"sessionId":"worker","reviewSessionId":"review","startedAt":1,"status":"running","summary":"","commands":[]}]});
+        let run = serde_json::json!({"id":"r","goal":"g","team":team,"skills":[],"status":"running","startedAt":1,"planSessionId":"plan","closingSessions":["closing"],
+            "supportReports":[{"id":"s","kind":"investigation","agent":agent,"sessionId":"support","repository":"C:/demo","taskId":null,"requestId":null,"startedAt":1,"finishedAt":null,"status":"running","summary":"","result":null}],
+            "coordination":[{"id":"c","fromTaskId":"t","message":"","taskIds":[],"status":"pending","summary":"","createdAt":1,"sessions":["coordination"]}],
+            "tasks":[task],"summary":"","evidenceDir":"unused","artifacts":[],"baseline":[],"notified":false});
+        let chat: Chat = serde_json::from_value(serde_json::json!({
+            "id":"chat","title":"chat","team":team,"skills":[],"archived":false,"createdAt":1,
+            "messages":[{"id":"m","role":"assistant","text":"","createdAt":1,"status":"complete","runId":null,"sessionId":"conversation"}],
+            "runs":[run]})).unwrap();
+        assert_eq!(chat.memory, None);
+        assert_eq!(chat.auto_approve, None);
+        assert_eq!(chat_sessions(&chat), vec!["closing", "conversation", "coordination", "plan", "review", "support", "worker"]);
     }
     #[test]
     fn chrome_workspace_belongs_to_chat_across_lead_workers_and_restart() {

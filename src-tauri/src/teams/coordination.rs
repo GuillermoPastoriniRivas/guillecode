@@ -269,6 +269,7 @@ fn check_once(app: &AppHandle, run_id: &str, request_id: &str) -> Result<(), Str
             true,
         )?
     };
+    crate::memory::set_session(app, &session, super::memory_for_run(app, run_id));
     let cycles = circular_tasks(&r);
     let cycle_note = if cycles.is_empty() {
         String::new()

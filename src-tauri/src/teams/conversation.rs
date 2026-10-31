@@ -511,22 +511,19 @@ fn respond(
     {
         return work(app, chat_id, reply_id, text, &images);
     }
+    // The chat-level Lead configuration drives conversation turns. Runs keep
+    // their own immutable snapshot for the work they already dispatched.
     let employee = chat
-        .runs
-        .last()
-        .map(runner::lead)
-        .transpose()?
-        .unwrap_or_else(|| {
-            chat.team
-                .members
-                .iter()
-                .find(|a| a.id == chat.team.lead_agent_id)
-                .unwrap()
-                .clone()
-        });
+        .team
+        .members
+        .iter()
+        .find(|a| a.id == chat.team.lead_agent_id)
+        .cloned()
+        .ok_or("Falta el Lead del equipo")?;
     let client = runner::client(app, &chat.team.project_root)?;
     super::attachments::ensure_vision(&client, &employee, &images)?;
     let session = runner::create_conversation_session(&client, &employee)?;
+    crate::memory::set_session(app, &session, chat.memory.unwrap_or(true));
     update(app, |s| {
         let m = s
             .chats

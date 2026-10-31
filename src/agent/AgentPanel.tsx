@@ -5,6 +5,7 @@ import {
   ensureSessionView,
   focusComposer,
   newSession,
+  queuedUserIds,
   selectSession,
   setSessionArchived,
   useAgent,
@@ -13,6 +14,7 @@ import { notify } from "../state/toasts"
 import { bubbleDraft, bubbleOut } from "../state/bubbles"
 import { permissionNeedsResponse, useApprovals } from "../state/approvals"
 import { percent } from "../lib/format"
+import { planIsCurrent } from "../lib/plan"
 import { useLayout } from "../state/layout"
 import { useProject } from "../state/project"
 import { Chat } from "./Chat"
@@ -47,6 +49,7 @@ export function SessionPane({ sessionId, variant }: { sessionId: string | null; 
   const approvals = useApprovals()
   const allSessions = useAgent((s) => s.allSessions)
   const todos = useAgent((s) => (sessionId ? s.todos[sessionId] : undefined))
+  const view = useAgent((s) => (sessionId ? s.views[sessionId] : undefined))
   const sessions = useAgent((s) => s.sessions)
   const root = useProject((s) => s.root)
   const busy = status === "busy" || status === "retry"
@@ -68,7 +71,10 @@ export function SessionPane({ sessionId, variant }: { sessionId: string | null; 
     }
   }, [permissions, questions, sessions, sessionId])
 
-  const view = useAgent((s) => (sessionId ? s.views[sessionId] : undefined))
+  const planCurrent = useMemo(() => {
+    const messages = view?.messages ?? []
+    return planIsCurrent(messages, queuedUserIds(messages, busy))
+  }, [view, busy])
   const changes = useMemo(() => {
     const byFile = new Map<string, { additions: number; deletions: number }>()
     for (const m of view?.messages ?? []) {
@@ -149,7 +155,7 @@ export function SessionPane({ sessionId, variant }: { sessionId: string | null; 
           .map((p) => (
             <PermissionCard key={p.id} request={p} />
           ))}
-        {todos && todos.length > 0 && <TodoList key={`${sessionId}-${busy}`} todos={todos} live={busy} />}
+        {todos && todos.length > 0 && planCurrent && <TodoList key={`${sessionId}-${busy}`} todos={todos} live={busy} />}
         {session && changes.files > 0 && (
           <ChangesBar sessionId={session.id} files={changes.files} additions={changes.additions} deletions={changes.deletions} />
         )}

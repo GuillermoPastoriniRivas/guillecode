@@ -1,0 +1,9 @@
+Flufy 0.18.0 mejora el chat con Equipos IA y el ritmo de trabajo del agente.
+
+El compositor de Equipos IA ahora tiene las mismas herramientas que el chat principal: selector del modelo del Lead, interruptor de memoria, aprobación automática por chat y dictado por voz. El modelo elegido se aplica a los próximos mensajes y las ejecuciones ya iniciadas conservan su configuración. La memoria y la aprobación automática se guardan por chat; la aprobación automática global no se aplica a los equipos, solo el interruptor de ese chat. El dictado transcribe y envía el mensaje cuando el Lead no tiene un pedido pendiente.
+
+El agente agrupa más herramientas por respuesta y evita mensajes de avance entre pasos, para que las tareas terminen con menos espera. El plan de una tarea terminada ya no queda fijo al empezar otra, y un mensaje en cola no oculta el plan que se está ejecutando.
+
+El navegador interno se oculta cuando un modal o menú lo tapa y vuelve a mostrarse al cerrarlo, sin quedar por encima de la interfaz.
+
+Esta versión mantiene OpenCode 1.19.5. Si actualizás desde 0.17.1, tus chats, equipos, evidencias y configuraciones se conservan.

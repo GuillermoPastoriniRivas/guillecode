@@ -173,6 +173,8 @@ mod tests {
             skills: store.skills.clone(),
             created_at: 0,
             runs: vec![],
+            memory: None,
+            auto_approve: None,
         });
         let original = serde_json::to_value(&store.chats).unwrap();
         upgrade(&mut store);
